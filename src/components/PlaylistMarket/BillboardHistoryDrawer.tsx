@@ -72,9 +72,7 @@ export function BillboardHistoryDrawer() {
 
       <DrawerContent className="max-h-[75vh]">
         <DrawerHeader className="flex items-center justify-between px-4 pb-2 pt-3">
-          <DrawerTitle className="text-base font-semibold">
-            历史周榜
-          </DrawerTitle>
+          <DrawerTitle className="font-semibold">历史周榜</DrawerTitle>
           <input
             type="month"
             value={ym}

@@ -188,7 +188,7 @@ export function BillboardEntryGrid({
             />
           </div>
           <div className="px-0.5">
-            <h3 className="text-[13px] font-medium leading-snug line-clamp-2 text-foreground/80 group-hover:text-primary transition-colors cursor-pointer">
+            <h3 className="text-sm font-medium leading-snug line-clamp-2 text-foreground/80 group-hover:text-primary transition-colors cursor-pointer">
               {entry.title}
             </h3>
             {group === "albums" && (

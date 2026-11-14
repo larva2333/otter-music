@@ -15,6 +15,15 @@ const shimmerDelay = (index: number) =>
   ((index % 3) + Math.floor(index / 3)) * 70;
 
 /**
+ * 卡片宽度：手机上 3 列、左右各 16px 内边距 + 12px 列间距 → 约 115 CSS px。
+ * 按屏幕像素比取图（上限 3x），6000px 的 4K 屏也不会去拉超大图。
+ */
+const COVER_SIZE =
+  typeof window === "undefined"
+    ? 350
+    : Math.round(115 * Math.min(window.devicePixelRatio || 1, 3));
+
+/**
  * memo：首页会把访问过的分类网格都保留在 DOM 里（只切换可见性），
  * 不 memo 的话每次父组件渲染都会重新 reconcile 几份网格。
  */
@@ -34,12 +43,13 @@ export const PlaylistGrid = memo(function PlaylistGrid({
             <CachedImage
               src={item.coverUrl}
               alt={item.name}
+              size={COVER_SIZE}
               shimmerDelay={shimmerDelay(index)}
               className="transition-transform duration-500 group-hover:scale-110"
             />
           </div>
           <div className="px-0.5">
-            <h3 className="text-[13px] font-medium leading-snug line-clamp-2 text-foreground/80 group-hover:text-primary transition-colors cursor-pointer">
+            <h3 className="text-sm font-medium leading-snug line-clamp-2 text-foreground/80 group-hover:text-primary transition-colors cursor-pointer">
               {item.name}
             </h3>
           </div>

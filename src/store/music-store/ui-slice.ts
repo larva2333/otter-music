@@ -9,6 +9,16 @@ import {
 export type FullScreenBackgroundMode = "theme" | "cover" | "texture";
 export type LyricAlign = "center" | "left" | "right";
 
+/**
+ * 「上次浏览位置」的出厂值：歌单广场第一个分类 = 全部。
+ * 退出应用 / 冷启动时都回到这里，App 不记忆上次停在哪个分类。
+ */
+export const DEFAULT_BROWSE_POSITION = {
+  lastPlaylistCategory: "全部",
+  lastFeaturedTab: "",
+  lastBillboardGroup: "songs",
+} as const;
+
 export interface AutoMatchContext {
   index: number;
   tried: Set<MusicSource>;
@@ -57,6 +67,12 @@ export interface UiSlice {
   ) => void;
   setLastFeaturedTab: (tab: string) => void;
   setLastBillboardGroup: (group: "songs" | "albums" | "artists") => void;
+  /**
+   * 把「上次浏览到哪儿」归零：分类回到第一个「全部」、精选子 tab 与榜单分组
+   * 回到默认。退出应用时调用，保证下次进来看不到上次停的位置。
+   * 注意只清位置，不清已缓存的数据（列表快照仍在，切回不会白屏）。
+   */
+  resetBrowsePosition: () => void;
   setPlaylistCategoryOrder: (order: string[]) => void;
   setEnableAutoMatch: (enable: boolean) => void;
   setAutoMatchFavorites: (enable: boolean) => void;
@@ -86,10 +102,10 @@ export const createUiSlice: StateCreator<MusicState, [], [], UiSlice> = (
   quality: "192",
   searchSource: "all",
   sourceConfigs: DEFAULT_SOURCE_CONFIGS,
-  lastPlaylistCategory: "全部",
+  lastPlaylistCategory: DEFAULT_BROWSE_POSITION.lastPlaylistCategory,
   lastMineTab: "recommend",
-  lastFeaturedTab: "",
-  lastBillboardGroup: "songs",
+  lastFeaturedTab: DEFAULT_BROWSE_POSITION.lastFeaturedTab,
+  lastBillboardGroup: DEFAULT_BROWSE_POSITION.lastBillboardGroup,
   playlistCategoryOrder: null,
   enableAutoMatch: true,
   autoMatchFavorites: false,
@@ -119,6 +135,12 @@ export const createUiSlice: StateCreator<MusicState, [], [], UiSlice> = (
   setLastMineTab: (lastMineTab) => set({ lastMineTab }),
   setLastFeaturedTab: (lastFeaturedTab) => set({ lastFeaturedTab }),
   setLastBillboardGroup: (lastBillboardGroup) => set({ lastBillboardGroup }),
+  resetBrowsePosition: () =>
+    set({
+      lastPlaylistCategory: DEFAULT_BROWSE_POSITION.lastPlaylistCategory,
+      lastFeaturedTab: DEFAULT_BROWSE_POSITION.lastFeaturedTab,
+      lastBillboardGroup: DEFAULT_BROWSE_POSITION.lastBillboardGroup,
+    }),
   setPlaylistCategoryOrder: (playlistCategoryOrder) =>
     set({ playlistCategoryOrder }),
   setEnableAutoMatch: (enableAutoMatch) => set({ enableAutoMatch }),

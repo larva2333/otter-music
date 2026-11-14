@@ -292,7 +292,7 @@ export function NeteaseLogin() {
                     <div className="absolute inset-0 flex flex-col items-center justify-center rounded-xl bg-background/65 backdrop-blur-sm">
                       <Check className="mb-2 h-9 w-9 text-primary" />
                       <span className="text-sm font-medium">已扫码</span>
-                      <span className="mt-1 text-[11px] text-muted-foreground">
+                      <span className="mt-1 text-xs text-muted-foreground">
                         请在手机上确认
                       </span>
                     </div>
@@ -318,7 +318,7 @@ export function NeteaseLogin() {
                   <p className="text-sm font-medium">
                     {STATUS_MESSAGES[qrStatus]}
                   </p>
-                  <p className="text-[11px] text-muted-foreground/70">
+                  <p className="text-xs text-muted-foreground/70">
                     登录凭证仅保存在本地
                   </p>
                 </div>
@@ -330,14 +330,14 @@ export function NeteaseLogin() {
                   placeholder="粘贴 MUSIC_U 或完整 Cookie 字符串..."
                   value={cookieInput}
                   onChange={(e) => setCookieInput(e.target.value)}
-                  className="h-[140px] w-full resize-none overflow-y-auto rounded-xl border-0 bg-muted/20 p-4 font-mono text-[13px] leading-relaxed whitespace-pre-wrap break-all wrap-anywhere placeholder:text-muted-foreground/50 focus-visible:ring-1 focus-visible:ring-primary/20"
+                  className="h-[140px] w-full resize-none overflow-y-auto rounded-xl border-0 bg-muted/20 p-4 font-mono text-sm leading-relaxed whitespace-pre-wrap break-all wrap-anywhere placeholder:text-muted-foreground/50 focus-visible:ring-1 focus-visible:ring-primary/20"
                 />
 
                 <div className="bg-muted/30 rounded-lg p-3 space-y-1.5">
-                  <p className="text-[11px] font-medium text-muted-foreground flex items-center">
+                  <p className="text-xs font-medium text-muted-foreground flex items-center">
                     <Info className="w-3 h-3 mr-1" /> 如何获取？
                   </p>
-                  <ol className="text-[10px] text-muted-foreground/80 leading-relaxed list-decimal list-inside space-y-0.5">
+                  <ol className="text-2xs text-muted-foreground/80 leading-relaxed list-decimal list-inside space-y-0.5">
                     <li>
                       以 PC 模式访问官网{" "}
                       <a
@@ -353,7 +353,7 @@ export function NeteaseLogin() {
                     <li>开发者工具 → Application</li>
                     <li>
                       在 Cookies 中找到并复制{" "}
-                      <code className="bg-background px-1.5 py-0.5 rounded border text-primary font-mono text-[9px]">
+                      <code className="bg-background px-1.5 py-0.5 rounded border text-primary font-mono text-2xs">
                         MUSIC_U
                       </code>{" "}
                       的值

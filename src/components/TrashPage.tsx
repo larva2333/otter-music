@@ -31,12 +31,12 @@ function DeletedItem({
         </div>
       </div>
       <div className="flex-1 min-w-0 mr-4">
-        <div className="font-medium truncate text-[14px]">{title}</div>
-        <div className="text-[12px] text-muted-foreground/80 truncate">
+        <div className="font-medium truncate text-sm">{title}</div>
+        <div className="text-xs text-muted-foreground/80 truncate">
           {subtitle}
         </div>
       </div>
-      <div className="text-[12px] text-muted-foreground/50 mr-4 hidden sm:block tracking-wide">
+      <div className="text-xs text-muted-foreground/50 mr-4 hidden sm:block tracking-wide">
         {date ? format(date, "yyyy-MM-dd HH:mm") : "-"}
       </div>
       <Button
@@ -65,7 +65,7 @@ function EmptyState({
   return (
     <div className="flex flex-col items-center justify-center h-full text-muted-foreground/50 py-16">
       <Icon className="h-12 w-12 mb-3 stroke-[1.5]" />
-      <p className="text-[13px]">{text}</p>
+      <p className="text-sm">{text}</p>
     </div>
   );
 }
@@ -88,7 +88,7 @@ export function TrashPage() {
     <PageLayout title="回收站">
       <div className="flex-1 flex flex-col overflow-hidden max-w-4xl mx-auto w-full">
         <div className="px-4 pt-4 pb-2">
-          <div className="flex items-center gap-2 p-3 rounded-xl bg-muted/30 text-muted-foreground/80 text-[13px]">
+          <div className="flex items-center gap-2 p-3 rounded-xl bg-muted/30 text-muted-foreground/80 text-sm">
             <Info className="h-4 w-4" />
             <span>内容将保留 7 天，逾期后将永久移除。</span>
           </div>

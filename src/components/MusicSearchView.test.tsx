@@ -5,6 +5,7 @@ import { MemoryRouter } from "react-router-dom";
 
 import { MusicSearchView } from "./MusicSearchView";
 import { useMusicStore } from "@/store/music-store";
+import { useExitLayerStore } from "@/hooks/useExitLayer";
 import type { MusicTrack, SearchSuggestionItem } from "@/types/music";
 
 vi.mock("@/lib/storage-adapter", () => ({
@@ -32,11 +33,15 @@ vi.mock("@/lib/utils/toast", () => ({
 }));
 
 vi.mock("./PlaylistMarket/PlaylistMarket", () => ({
-  PlaylistMarket: () => <div data-testid="playlist-market">playlist-market</div>,
+  PlaylistMarket: () => (
+    <div data-testid="playlist-market">playlist-market</div>
+  ),
 }));
 
 vi.mock("./MusicTrackList", () => ({
-  MusicTrackList: () => <div data-testid="music-track-list">music-track-list</div>,
+  MusicTrackList: () => (
+    <div data-testid="music-track-list">music-track-list</div>
+  ),
 }));
 
 vi.mock("./ui/select", () => ({
@@ -56,16 +61,16 @@ vi.mock("./ui/select", () => ({
       {children}
     </div>
   ),
-  SelectTrigger: ({ children }: { children: ReactNode }) => <div>{children}</div>,
+  SelectTrigger: ({ children }: { children: ReactNode }) => (
+    <div>{children}</div>
+  ),
   SelectValue: () => <span>value</span>,
-  SelectContent: ({ children }: { children: ReactNode }) => <div>{children}</div>,
-  SelectItem: ({
-    value,
-    children,
-  }: {
-    value: string;
-    children: ReactNode;
-  }) => <div data-testid={`select-item-${value}`}>{children}</div>,
+  SelectContent: ({ children }: { children: ReactNode }) => (
+    <div>{children}</div>
+  ),
+  SelectItem: ({ value, children }: { value: string; children: ReactNode }) => (
+    <div data-testid={`select-item-${value}`}>{children}</div>
+  ),
 }));
 
 vi.mock("./SearchSuggestions", () => ({
@@ -131,7 +136,9 @@ describe("MusicSearchView", () => {
   let container: HTMLDivElement | undefined;
 
   beforeEach(() => {
-    (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    (
+      globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }
+    ).IS_REACT_ACT_ENVIRONMENT = true;
     vi.clearAllMocks();
 
     useMusicStore.setState({
@@ -143,6 +150,7 @@ describe("MusicSearchView", () => {
       searchHasMore: false,
       searchPage: 0,
     });
+    useExitLayerStore.setState({ stack: [] });
 
     musicApiMocks.getSearchSuggestions.mockResolvedValue(suggestions);
     musicApiMocks.searchAll.mockResolvedValue({
@@ -175,7 +183,7 @@ describe("MusicSearchView", () => {
       root!.render(
         <MemoryRouter>
           <MusicSearchView onPlay={vi.fn()} />
-        </MemoryRouter>,
+        </MemoryRouter>
       );
     });
   };
@@ -189,7 +197,7 @@ describe("MusicSearchView", () => {
 
   const getInput = () => {
     const input = container?.querySelector(
-      'input[placeholder="搜索音乐、歌手或专辑..."]',
+      'input[placeholder="搜索音乐、歌手或专辑..."]'
     ) as HTMLInputElement | null;
     expect(input).not.toBeNull();
     return input!;
@@ -197,7 +205,7 @@ describe("MusicSearchView", () => {
 
   const getSuggestion = (index: number) => {
     const suggestion = container?.querySelector(
-      `[data-testid="suggestion-${index}"]`,
+      `[data-testid="suggestion-${index}"]`
     ) as HTMLButtonElement | null;
     expect(suggestion).not.toBeNull();
     return suggestion!;
@@ -209,7 +217,7 @@ describe("MusicSearchView", () => {
       input.focus();
       const setter = Object.getOwnPropertyDescriptor(
         HTMLInputElement.prototype,
-        "value",
+        "value"
       )?.set;
       setter?.call(input, value);
       input.dispatchEvent(new Event("input", { bubbles: true }));
@@ -231,7 +239,7 @@ describe("MusicSearchView", () => {
   const click = async (element: Element) => {
     await act(async () => {
       (element as HTMLElement).dispatchEvent(
-        new MouseEvent("click", { bubbles: true }),
+        new MouseEvent("click", { bubbles: true })
       );
     });
     await flushEffects();
@@ -242,17 +250,21 @@ describe("MusicSearchView", () => {
     const input = await setInputValue("a");
 
     const closeButton = container?.querySelector(
-      '[data-testid="close-suggestions"]',
+      '[data-testid="close-suggestions"]'
     ) as HTMLButtonElement | null;
     expect(closeButton).not.toBeNull();
     await click(closeButton!);
-    expect(container?.querySelector('[data-testid="search-suggestions"]')).toBeNull();
+    expect(
+      container?.querySelector('[data-testid="search-suggestions"]')
+    ).toBeNull();
 
     await act(async () => {
       input.focus();
     });
     await keyDown("ArrowDown");
-    expect(container?.querySelector('[data-testid="search-suggestions"]')).not.toBeNull();
+    expect(
+      container?.querySelector('[data-testid="search-suggestions"]')
+    ).not.toBeNull();
     expect(getSuggestion(0).getAttribute("data-active")).toBe("true");
 
     await keyDown("ArrowDown");
@@ -275,7 +287,7 @@ describe("MusicSearchView", () => {
       1,
       20,
       expect.any(AbortSignal),
-      null,
+      null
     );
     expect(input.value).toBe("Beta");
   });
@@ -291,9 +303,11 @@ describe("MusicSearchView", () => {
       1,
       20,
       expect.any(AbortSignal),
-      null,
+      null
     );
-    expect(container?.querySelector('[data-testid="search-suggestions"]')).toBeNull();
+    expect(
+      container?.querySelector('[data-testid="search-suggestions"]')
+    ).toBeNull();
     expect(input.value).toBe("keyword");
   });
 
@@ -301,15 +315,44 @@ describe("MusicSearchView", () => {
     renderView();
     const input = await setInputValue("clear me");
 
-    const clearButton = Array.from(container?.querySelectorAll("button") ?? []).find(
-      (button) => button.className.includes("rounded-full"),
-    ) as HTMLButtonElement | undefined;
+    const clearButton = Array.from(
+      container?.querySelectorAll("button") ?? []
+    ).find((button) => button.className.includes("rounded-full")) as
+      | HTMLButtonElement
+      | undefined;
 
     expect(clearButton).toBeDefined();
     await click(clearButton!);
 
     expect(input.value).toBe("");
-    expect(container?.querySelector('[data-testid="search-suggestions"]')).toBeNull();
+    expect(
+      container?.querySelector('[data-testid="search-suggestions"]')
+    ).toBeNull();
     expect(document.activeElement).toBe(input);
+  });
+
+  it("系统返回时先清空搜索回到首页，且不重新聚焦输入框", async () => {
+    renderView();
+    const input = await setInputValue("keyword");
+
+    // 输入了内容就有一层退出栈
+    expect(useExitLayerStore.getState().stack).toHaveLength(1);
+
+    await act(async () => {
+      input.blur();
+    });
+    expect(document.activeElement).not.toBe(input);
+
+    await act(async () => {
+      useExitLayerStore.getState().handleExit();
+    });
+    await flushEffects();
+
+    expect(useMusicStore.getState().searchQuery).toBe("");
+    expect(useMusicStore.getState().searchResults).toEqual([]);
+    expect(useMusicStore.getState().searchPage).toBe(0);
+    expect(input.value).toBe("");
+    expect(document.activeElement).not.toBe(input);
+    expect(useExitLayerStore.getState().stack).toHaveLength(0);
   });
 });

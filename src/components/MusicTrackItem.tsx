@@ -175,7 +175,7 @@ export function MusicTrackItem({
               <Badge
                 variant="outline"
                 className={cn(
-                  "shrink-0 text-[9px] px-1 py-0 h-3.5 leading-none font-normal",
+                  "shrink-0 text-2xs px-1 py-0 h-3.5 leading-none font-normal",
                   sourceBadgeStyles[track.source] || sourceBadgeStyles.default
                 )}
               >
@@ -187,7 +187,7 @@ export function MusicTrackItem({
               <Badge
                 variant="secondary"
                 className={cn(
-                  "h-3.5 px-1 text-[9px] gap-0.5 flex items-center leading-none font-bold border",
+                  "h-3.5 px-1 text-2xs gap-0.5 flex items-center leading-none font-bold border",
                   badge.className
                 )}
               >

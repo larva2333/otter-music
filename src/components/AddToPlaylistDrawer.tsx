@@ -38,7 +38,7 @@ function PlaylistItem({
         previewable={false}
       />
       <div className="ml-4 flex-1 overflow-hidden flex flex-col justify-center gap-0.5">
-        <p className="text-base font-medium truncate leading-tight">
+        <p className="text-sm font-medium truncate leading-tight">
           {playlist.name}
         </p>
         <p className="text-xs text-muted-foreground/80 truncate">
@@ -121,7 +121,7 @@ export function AddToPlaylistDrawer({
                 <div className="flex items-center justify-center w-12 h-12 rounded-lg bg-primary/10 text-primary group-hover:bg-primary group-hover:text-primary-foreground transition-colors">
                   <Plus className="h-6 w-6" />
                 </div>
-                <span className="ml-4 text-base font-medium">新建歌单</span>
+                <span className="ml-4 text-sm font-medium">新建歌单</span>
               </div>
 
               {playlists.map((p) => (

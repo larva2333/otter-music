@@ -29,6 +29,20 @@
 
     <!-- SVG 图标 fallback -->
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+
+    <!--
+      首帧前应用「字体大小」设置（存储 key 与 storeKey.UiPrefsStore 保持一致），
+      避免先按默认字号渲染、再跳变一下。
+    -->
+    <script>
+      try {
+        var raw = localStorage.getItem("oh_ui_prefs_store");
+        var scale = raw && JSON.parse(raw).state.fontScale;
+        if (scale === "small" || scale === "large") {
+          document.documentElement.setAttribute("data-font-scale", scale);
+        }
+      } catch (e) {}
+    </script>
   </head>
   <body>
     <div id="root"></div>

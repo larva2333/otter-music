@@ -10,7 +10,7 @@ import { createFavoritesSlice } from "./favorites-slice";
 import { createPlaylistSlice } from "./playlist-slice";
 import { createPlaybackSlice } from "./playback-slice";
 import { createSearchSlice } from "./search-slice";
-import { createUiSlice } from "./ui-slice";
+import { createUiSlice, DEFAULT_BROWSE_POSITION } from "./ui-slice";
 import { createDownloadSettingsSlice } from "./download-settings-slice";
 import { createSleepTimerSlice } from "./sleep-timer-slice";
 
@@ -36,6 +36,13 @@ export const useMusicStore = create<MusicState>()(
       storage: createJSONStorage(() => idbStorage),
       merge: (persisted, current) => {
         const state = { ...current, ...(persisted as Partial<MusicState>) };
+        // 「上次浏览位置」不做跨进程记忆：老版本可能把「说唱」这类分类存进了
+        // IndexedDB，这里在 hydration 阶段就按出厂值覆盖，冷启动不会又停在
+        // 上次的分类上（会话内的切换不受影响，仍会正常记着）。
+        state.lastPlaylistCategory =
+          DEFAULT_BROWSE_POSITION.lastPlaylistCategory;
+        state.lastFeaturedTab = DEFAULT_BROWSE_POSITION.lastFeaturedTab;
+        state.lastBillboardGroup = DEFAULT_BROWSE_POSITION.lastBillboardGroup;
         // 合并 sourceConfigs：过滤已移除的音源，追加新增音源
         const validSources = new Set(
           DEFAULT_SOURCE_CONFIGS.map((c) => c.source)
@@ -68,10 +75,9 @@ export const useMusicStore = create<MusicState>()(
         quality: state.quality,
         searchSource: state.searchSource,
         sourceConfigs: state.sourceConfigs,
-        lastPlaylistCategory: state.lastPlaylistCategory,
         lastMineTab: state.lastMineTab,
-        lastFeaturedTab: state.lastFeaturedTab,
-        lastBillboardGroup: state.lastBillboardGroup,
+        // 不持久化「上次浏览位置」（lastPlaylistCategory / lastFeaturedTab /
+        // lastBillboardGroup）：下次进入 App 一律回到第一个分类。
         playlistCategoryOrder: state.playlistCategoryOrder,
         enableAutoMatch: state.enableAutoMatch,
         autoMatchFavorites: state.autoMatchFavorites,

@@ -34,7 +34,7 @@ import { useMusicStore } from "@/store/music-store";
 import { restrictToParentElement } from "@dnd-kit/modifiers";
 
 const SECTION_TITLE =
-  "sticky top-0 z-10 py-1.5 text-[11px] font-bold uppercase tracking-wider text-muted-foreground/70 bg-background/95 backdrop-blur-sm";
+  "sticky top-0 z-10 py-1.5 text-xs font-bold uppercase tracking-wider text-muted-foreground/70 bg-background/95 backdrop-blur-sm";
 
 interface PlaylistCategorySelectorProps {
   activeCategory: string;
@@ -138,7 +138,7 @@ export function PlaylistCategorySelector({
 
       <DrawerContent className="max-h-[85vh]">
         <DrawerHeader className="px-6 py-3 border-b border-border/10">
-          <DrawerTitle className="text-base font-semibold tracking-tight">
+          <DrawerTitle className="font-semibold tracking-tight">
             歌单分类
           </DrawerTitle>
         </DrawerHeader>

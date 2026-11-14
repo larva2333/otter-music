@@ -40,9 +40,7 @@ export function UpdateDialog({ open, onOpenChange }: UpdateDialogProps) {
             alt="Otter Music"
             className="w-16 h-16 rounded-xl shadow"
           />
-          <DrawerTitle className="text-xl font-bold mt-2">
-            Otter Music
-          </DrawerTitle>
+          <DrawerTitle className="font-bold mt-2">Otter Music</DrawerTitle>
           <div className="text-xs font-mono text-muted-foreground">
             {currentVersion}
           </div>
@@ -86,7 +84,7 @@ export function UpdateDialog({ open, onOpenChange }: UpdateDialogProps) {
                   </span>
                 </div>
 
-                <div className="max-h-32 overflow-y-auto whitespace-pre-wrap text-[11px] leading-relaxed bg-muted/40 p-2 rounded">
+                <div className="max-h-32 overflow-y-auto whitespace-pre-wrap text-xs leading-relaxed bg-muted/40 p-2 rounded">
                   {latestVersionInfo.changelog}
                 </div>
               </div>

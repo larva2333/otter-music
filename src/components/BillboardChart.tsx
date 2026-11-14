@@ -50,7 +50,7 @@ const BillboardCover = ({ name, colors }: BillboardCoverProps) => (
       backgroundImage: `linear-gradient(135deg, ${colors[0]}, ${colors[1]})`,
     }}
   >
-    <span className="text-white/60 font-black tracking-widest leading-none text-[9px] uppercase">
+    <span className="text-white/60 font-black tracking-widest leading-none text-2xs uppercase">
       Billboard
     </span>
     <span className="text-white font-black tracking-tight leading-tight mt-1.5 text-sm line-clamp-2">

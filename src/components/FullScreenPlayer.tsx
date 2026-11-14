@@ -510,10 +510,10 @@ export function FullScreenPlayer({
             onTouchEnd={trackInfoPressHandlers.onTouchEnd}
             title="长按复制歌曲信息"
           >
-            <h2 className="truncate text-xl font-semibold text-white">
+            <h2 className="truncate text-lg font-semibold text-white">
               {currentTrack?.name || "未知歌曲"}
             </h2>
-            <p className="truncate text-sm text-white/60 mt-1">
+            <p className="truncate text-xs text-white/60 mt-1">
               {currentTrack?.artist?.join(", ") || "未知歌手"}
             </p>
           </div>
@@ -608,18 +608,22 @@ export function FullScreenPlayer({
           <SkipBack className="h-6 w-6 fill-current" />
         </Button>
         <Button
+          variant="ghost"
           size="icon"
-          className="h-16 w-16 rounded-full bg-white text-black shadow-lg hover:scale-105 transition-all active:scale-95"
+          className="h-12 w-12 rounded-full hover:bg-transparent p-0"
           onClick={togglePlay}
           disabled={isLoading}
+          aria-label={isPlaying ? "暂停" : "播放"}
         >
-          {isLoading ? (
-            <Spinner className="h-7 w-7 text-black" />
-          ) : isPlaying ? (
-            <Pause className="h-7 w-7 fill-current" />
-          ) : (
-            <Play className="h-7 w-7 fill-current ml-1" />
-          )}
+          <span className="flex h-10 w-10 items-center justify-center rounded-full bg-white text-black shadow-lg transition-transform hover:scale-105 active:scale-95">
+            {isLoading ? (
+              <Spinner className="h-6 w-6 text-black" />
+            ) : isPlaying ? (
+              <Pause className="h-6 w-6 fill-current" />
+            ) : (
+              <Play className="h-6 w-6 fill-current ml-0.5" />
+            )}
+          </span>
         </Button>
         <Button
           variant="ghost"

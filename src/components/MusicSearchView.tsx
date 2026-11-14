@@ -1,4 +1,5 @@
 import {
+  useCallback,
   useEffect,
   useMemo,
   useRef,
@@ -13,6 +14,7 @@ import { Search, X, Loader2 } from "lucide-react";
 
 import { getExactKey } from "@/lib/utils/music-key";
 import { useDebounce } from "@/hooks/use-debounce";
+import { useExitLayer } from "@/hooks/useExitLayer";
 import { musicApi } from "@/lib/music-api";
 import { useMusicStore } from "@/store/music-store";
 import {
@@ -203,14 +205,50 @@ export function MusicSearchView({
     }
   };
 
-  const clearSearch = () => {
-    isSearchingRef.current = true;
-    setSearchQuery("");
-    setSuggestions([]);
-    setShowSuggestions(false);
-    searchInputRef.current?.focus();
-    isSearchingRef.current = false;
-  };
+  /**
+   * 清空搜索、回到首页歌单广场。
+   * focus=true 用于点输入框的 X（继续输入）；系统返回键触发时不聚焦，避免弹键盘。
+   */
+  const resetSearch = useCallback(
+    (focus = false) => {
+      // 让在途请求的结果失效：abort 后 finally 里的版本判断不会再关 loading，
+      // 所以这里必须自己把 loading 关掉，否则列表底部会一直显示加载中。
+      versionRef.current++;
+      abortRef.current?.abort();
+      abortRef.current = null;
+      seenRef.current.clear();
+
+      isSearchingRef.current = true;
+      setSearchQuery("");
+      setSearchResults([]);
+      setSearchHasMore(false);
+      setSearchPage(0);
+      setSearchIntent(null);
+      setSearchLoading(false);
+      setSuggestions([]);
+      setShowSuggestions(false);
+      if (focus) searchInputRef.current?.focus();
+      isSearchingRef.current = false;
+    },
+    [
+      setSearchQuery,
+      setSearchResults,
+      setSearchHasMore,
+      setSearchPage,
+      setSearchIntent,
+      setSearchLoading,
+    ]
+  );
+
+  // 有搜索内容时挂一层退出栈：侧边返回 / 返回键先清空搜索回到首页，
+  // 清空后栈为空，再按返回才走 RootLayout 的默认行为（最小化 App）。
+  const hasSearchContent = Boolean(searchQuery.trim());
+  const { push: pushExitLayer, pop: popExitLayer } = useExitLayer();
+  useEffect(() => {
+    if (!hasSearchContent) return;
+    const id = pushExitLayer({ close: () => resetSearch() });
+    return () => popExitLayer(id);
+  }, [hasSearchContent, pushExitLayer, popExitLayer, resetSearch]);
 
   /* ---------------- 请求核心 ---------------- */
   useEffect(() => {
@@ -360,7 +398,7 @@ export function MusicSearchView({
                   ? "opacity-100 scale-100"
                   : "pointer-events-none opacity-0 scale-90"
               } text-muted-foreground hover:bg-muted hover:text-foreground`}
-              onClick={clearSearch}
+              onClick={() => resetSearch(true)}
             >
               <X className="h-3.5 w-3.5" />
             </button>
@@ -418,6 +456,7 @@ export function MusicSearchView({
               isPlaying={isPlaying}
               loading={searchLoading}
               hasMore={searchHasMore}
+              autoLoadMore
               onLoadMore={() => fetchPage(searchPage + 1)}
               emptyMessage={searchLoading ? "搜索中..." : "未找到相关结果"}
               showSourceBadge={true}

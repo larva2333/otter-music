@@ -180,14 +180,14 @@ export function BilibiliLogin() {
                   placeholder="粘贴完整 Cookie 字符串（需包含 SESSDATA）..."
                   value={cookieInput}
                   onChange={(e) => setCookieInput(e.target.value)}
-                  className="h-[140px] w-full resize-none overflow-y-auto rounded-xl border-0 bg-muted/20 p-4 font-mono text-[13px] leading-relaxed whitespace-pre-wrap break-all wrap-anywhere placeholder:text-muted-foreground/50 focus-visible:ring-1 focus-visible:ring-primary/20"
+                  className="h-[140px] w-full resize-none overflow-y-auto rounded-xl border-0 bg-muted/20 p-4 font-mono text-sm leading-relaxed whitespace-pre-wrap break-all wrap-anywhere placeholder:text-muted-foreground/50 focus-visible:ring-1 focus-visible:ring-primary/20"
                 />
 
                 <div className="bg-muted/30 rounded-lg p-3 space-y-1.5">
-                  <p className="text-[11px] font-medium text-muted-foreground flex items-center">
+                  <p className="text-xs font-medium text-muted-foreground flex items-center">
                     <Info className="w-3 h-3 mr-1" /> 如何获取？
                   </p>
-                  <ol className="text-[10px] text-muted-foreground/80 leading-relaxed list-decimal list-inside space-y-0.5">
+                  <ol className="text-2xs text-muted-foreground/80 leading-relaxed list-decimal list-inside space-y-0.5">
                     <li>
                       以 PC 模式访问官网{" "}
                       <a
@@ -203,7 +203,7 @@ export function BilibiliLogin() {
                     <li>开发者工具 → Application → Cookies</li>
                     <li>
                       复制{" "}
-                      <code className="bg-background px-1.5 py-0.5 rounded border text-primary font-mono text-[9px]">
+                      <code className="bg-background px-1.5 py-0.5 rounded border text-primary font-mono text-2xs">
                         www.bilibili.com
                       </code>{" "}
                       下的完整 Cookie

@@ -86,7 +86,7 @@ export function IssueLogs() {
               ref={textareaRef}
               readOnly
               value={logs.all || "暂无日志记录"}
-              className="h-[45vh] w-full resize-none overflow-y-auto bg-muted/30 font-mono text-[11px] leading-relaxed"
+              className="h-[45vh] w-full resize-none overflow-y-auto bg-muted/30 font-mono text-xs leading-relaxed"
             />
           </div>
 

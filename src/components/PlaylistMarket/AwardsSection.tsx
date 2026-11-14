@@ -23,13 +23,13 @@ export function AwardsSection() {
               <p className="text-white font-black tracking-tight leading-none text-lg">
                 {meta.name}
               </p>
-              <p className="mt-1.5 text-[8px] font-black tracking-[0.25em] uppercase text-white/50 line-clamp-1">
+              <p className="mt-1.5 text-2xs font-black tracking-[0.25em] uppercase text-white/50 line-clamp-1">
                 {meta.enName}
               </p>
             </div>
           </div>
           <div className="px-0.5">
-            <h3 className="text-[13px] font-medium leading-snug line-clamp-2 text-foreground/80 group-hover:text-primary transition-colors">
+            <h3 className="text-sm font-medium leading-snug line-clamp-2 text-foreground/80 group-hover:text-primary transition-colors">
               {meta.name}
             </h3>
           </div>

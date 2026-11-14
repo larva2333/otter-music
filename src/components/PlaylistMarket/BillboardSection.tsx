@@ -25,7 +25,7 @@ export function BillboardSection() {
             key={g.id}
             onClick={() => setBillboardGroup(g.id)}
             className={cn(
-              "text-[15px] transition-all",
+              "text-base transition-all",
               billboardGroup === g.id
                 ? "font-bold text-foreground tracking-wide"
                 : "font-medium text-muted-foreground hover:text-foreground"
@@ -57,7 +57,7 @@ export function BillboardSection() {
                 }}
               >
                 <div className="absolute inset-0 flex flex-col items-center justify-center text-center px-2">
-                  <span className="text-white/60 font-black tracking-widest leading-none text-[9px] uppercase">
+                  <span className="text-white/60 font-black tracking-widest leading-none text-2xs uppercase">
                     Billboard
                   </span>
                   <span className="text-white font-black tracking-tight leading-tight mt-1.5 text-sm line-clamp-2">
@@ -66,7 +66,7 @@ export function BillboardSection() {
                 </div>
               </div>
               <div className="px-0.5">
-                <h3 className="text-[13px] font-medium leading-snug line-clamp-2 text-foreground/80 group-hover:text-primary transition-colors">
+                <h3 className="text-sm font-medium leading-snug line-clamp-2 text-foreground/80 group-hover:text-primary transition-colors">
                   Billboard {chart.name}
                 </h3>
               </div>

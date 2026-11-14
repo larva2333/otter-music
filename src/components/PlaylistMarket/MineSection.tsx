@@ -203,10 +203,10 @@ const AlbumGrid = ({
           />
         </div>
         <div className="px-0.5 flex flex-col gap-0.5">
-          <h3 className="text-[13px] font-medium leading-snug line-clamp-2 text-foreground/80 group-hover:text-primary transition-colors cursor-pointer">
+          <h3 className="text-sm font-medium leading-snug line-clamp-2 text-foreground/80 group-hover:text-primary transition-colors cursor-pointer">
             {item.name}
           </h3>
-          <span className="text-[11px] text-muted-foreground/60 tracking-wider">
+          <span className="text-xs text-muted-foreground/60 tracking-wider">
             {item.artist?.name}
           </span>
         </div>
@@ -347,7 +347,7 @@ export function MineSection({ embedded = false }: { embedded?: boolean } = {}) {
               key={tab.id}
               onClick={() => setMineTab(tab.id)}
               className={cn(
-                "text-[15px] transition-all whitespace-nowrap",
+                "text-base transition-all whitespace-nowrap",
                 mineTab === tab.id
                   ? "font-bold text-foreground tracking-wide"
                   : "font-medium text-muted-foreground hover:text-foreground"

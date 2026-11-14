@@ -58,7 +58,7 @@ export function SettingItem({
             </div>
           </div>
           <div className="flex flex-col min-w-0 flex-1">
-            <span className="text-foreground truncate">{title}</span>
+            <span className="text-sm text-foreground truncate">{title}</span>
             {subtitle && (
               <div className="text-xs text-muted-foreground mt-0.5 truncate">
                 {subtitle}

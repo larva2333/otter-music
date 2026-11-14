@@ -228,7 +228,7 @@ export function PodcastAdd({ open, onOpenChange }: PodcastAddProps) {
         )}
       >
         <DrawerHeader className="px-5 pb-3">
-          <DrawerTitle className="text-center text-base font-semibold">
+          <DrawerTitle className="text-center font-semibold">
             添加播客订阅
           </DrawerTitle>
         </DrawerHeader>
@@ -305,7 +305,7 @@ export function PodcastAdd({ open, onOpenChange }: PodcastAddProps) {
                         <p className="text-sm font-medium truncate">
                           {item.title}
                         </p>
-                        <p className="text-[11px] text-muted-foreground truncate">
+                        <p className="text-xs text-muted-foreground truncate">
                           {item.author || "未知作者"}
                         </p>
                       </div>
@@ -367,9 +367,7 @@ export function PodcastAdd({ open, onOpenChange }: PodcastAddProps) {
             {/* OPML 批量导入 */}
             <div className="flex items-center gap-3 pt-1">
               <div className="h-px flex-1 bg-border" />
-              <span className="text-[11px] text-muted-foreground">
-                批量导入
-              </span>
+              <span className="text-xs text-muted-foreground">批量导入</span>
               <div className="h-px flex-1 bg-border" />
             </div>
 
@@ -393,7 +391,7 @@ export function PodcastAdd({ open, onOpenChange }: PodcastAddProps) {
                 if (file) void handleOpmlFile(file);
               }}
             />
-            <p className="text-[11px] leading-relaxed text-muted-foreground">
+            <p className="text-xs leading-relaxed text-muted-foreground">
               在小宇宙「设置 → 更多功能 → 导出订阅列表」下载 OPML，可拿到全量
               RSS 地址（免登录订阅不受 15 集限制）
             </p>

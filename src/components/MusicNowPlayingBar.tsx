@@ -75,7 +75,9 @@ export function MusicNowPlayingBar({
   );
 
   const progress = duration > 0 ? (currentAudioTime / duration) * 100 : 0;
-  const radius = 16;
+  // viewBox 为 40×40；进度弧描边较粗（3.6），半径取 18.2 使其外缘正好落在 20 处
+  // （不被 SVG 视口裁切），轨道描边更细所以内缩一点，视觉上"实心弧 + 细引导线"
+  const radius = 18.2;
   const circumference = 2 * Math.PI * radius;
   const strokeDashoffset = circumference * (1 - progress / 100);
 
@@ -87,10 +89,11 @@ export function MusicNowPlayingBar({
     <div className={cn(isTab ? "px-3" : "w-full")}>
       <div
         className={cn(
-          "flex items-center backdrop-blur-sm transition-all duration-300",
+          // 胶囊必须是实色：半透明 / 磨砂会让滚动内容透上来，滑动时忽明忽暗
+          "flex items-center transition-all duration-300",
           isTab
-            ? "gap-2 px-2 py-1.5 rounded-2xl bg-card/95 shadow-md border border-border/50"
-            : "gap-3 px-4 py-2.5 bg-background/95 border-t border-border/50 pb-[calc(0.75rem+var(--safe-area-bottom))]"
+            ? "gap-2 px-2 py-1.5 rounded-full border border-transparent dark:border-white/10 bg-card shadow-[0_2px_10px_rgba(15,46,66,0.10)]"
+            : "gap-3 px-4 py-2.5 bg-background border-t border-border/50 pb-[calc(0.75rem+var(--safe-area-bottom))]"
         )}
       >
         {/* 不含列表按钮，避免遮罩层关闭时 ghost click 误触发全屏 */}
@@ -126,18 +129,18 @@ export function MusicNowPlayingBar({
             <span
               className={cn(
                 "text-muted-foreground truncate transition-all duration-300",
-                isTab ? "text-xs" : "text-sm"
+                "text-xs"
               )}
             >
               - {currentTrack.artist?.join(", ")}
             </span>
           </p>
 
-          {/* 圆环播放按钮 */}
+          {/* 圆环播放按钮 - 参照网易云：视觉体量贴近纯图标，不宜过大 */}
           <div
             className={cn(
               "relative shrink-0 transition-all duration-300 ml-2",
-              isTab ? "w-9 h-9" : "w-11 h-11"
+              isTab ? "w-4 h-4" : "w-[22px] h-[22px]"
             )}
           >
             {/* SVG 圆环进度 (利用 viewBox 自动等比缩放) */}
@@ -149,8 +152,8 @@ export function MusicNowPlayingBar({
                 r={radius}
                 fill="none"
                 stroke="currentColor"
-                strokeWidth={isTab ? "2" : "2.5"}
-                className="text-muted/30 transition-all duration-300"
+                strokeWidth="2.4"
+                className="text-foreground/20 dark:text-foreground/28 transition-all duration-300"
               />
               {/* 进度圆环 - 从上方开始 */}
               <circle
@@ -159,7 +162,7 @@ export function MusicNowPlayingBar({
                 r={radius}
                 fill="none"
                 stroke="currentColor"
-                strokeWidth={isTab ? "2" : "2.5"}
+                strokeWidth="3.6"
                 strokeLinecap="round"
                 className="text-primary transition-[stroke-dashoffset] duration-300"
                 strokeDasharray={circumference}
@@ -181,14 +184,14 @@ export function MusicNowPlayingBar({
                 <Pause
                   className={cn(
                     "fill-current transition-all duration-300",
-                    isTab ? "h-4 w-4" : "h-5 w-5"
+                    isTab ? "h-3 w-3" : "h-4 w-4"
                   )}
                 />
               ) : (
                 <Play
                   className={cn(
                     "fill-current ml-0.5 transition-all duration-300",
-                    isTab ? "h-4 w-4" : "h-5 w-5"
+                    isTab ? "h-3 w-3" : "h-4 w-4"
                   )}
                 />
               )}

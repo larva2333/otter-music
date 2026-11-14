@@ -41,6 +41,7 @@ import { WebDavBackup } from "./settings/WebDavBackup";
 import { LyricStyleSetting } from "./settings/LyricStyleSetting";
 import { CarLyricSetting } from "./settings/CarLyricSetting";
 import { DesktopLyricSetting } from "./settings/DesktopLyricSetting";
+import { FontSizeSetting } from "./settings/FontSizeSetting";
 import { useState } from "react";
 import { IS_NATIVE } from "@/lib/api/config";
 
@@ -151,6 +152,7 @@ export function SettingsPage({ onBack }: SettingsPageProps) {
             title="主题切换"
             action={<ThemeToggle />}
           />
+          <FontSizeSetting />
           <SettingItem
             icon={Tag}
             title="显示音源标签"

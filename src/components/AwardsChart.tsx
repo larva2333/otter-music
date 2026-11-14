@@ -59,11 +59,11 @@ function AwardRow({ row, searching, onClick }: AwardRowProps) {
       onClick={onClick}
     >
       <div className="min-w-0 flex-1">
-        <p className="text-[11px] leading-tight text-muted-foreground/60 truncate">
+        <p className="text-xs leading-tight text-muted-foreground/60 truncate">
           {row.name}
         </p>
         {row.title ? (
-          <p className="mt-1 text-[15px] font-semibold leading-snug text-foreground truncate">
+          <p className="mt-1 text-sm font-semibold leading-snug text-foreground truncate">
             {cleanAwardTitle(row.title)}
           </p>
         ) : null}
@@ -344,7 +344,7 @@ export function AwardsChart({ awardId, year }: AwardsChartProps) {
               <Trophy className="h-full w-full text-white" />
             </div>
             <div className="px-5 py-7">
-              <p className="text-[10px] font-black tracking-[0.3em] uppercase text-white/50">
+              <p className="text-2xs font-black tracking-[0.3em] uppercase text-white/50">
                 {meta.enName}
               </p>
               <p className="mt-2 text-white font-black tracking-tight leading-none text-4xl tabular-nums">

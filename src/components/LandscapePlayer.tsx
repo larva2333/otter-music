@@ -98,7 +98,9 @@ export function LandscapePlayer({ background, onExit }: LandscapePlayerProps) {
   const switchTrack = (direction: "prev" | "next") => {
     if (!queue.length) return;
     const delta = direction === "next" ? 1 : -1;
-    setCurrentIndexAndPlay((currentIndex + delta + queue.length) % queue.length);
+    setCurrentIndexAndPlay(
+      (currentIndex + delta + queue.length) % queue.length
+    );
   };
 
   const handleClearQueue = () => {
@@ -155,7 +157,6 @@ export function LandscapePlayer({ background, onExit }: LandscapePlayerProps) {
 
         {/* 右侧： 播放列表 */}
         <div className="flex items-center gap-1">
-
           <PlayerQueueDrawer
             queue={queue}
             currentIndex={currentIndex}
@@ -237,17 +238,17 @@ export function LandscapePlayer({ background, onExit }: LandscapePlayerProps) {
           <Button
             variant="ghost"
             size="icon"
-            className="h-12 w-12 shrink-0 rounded-full text-white hover:bg-white/10 active:scale-95 transition-transform"
+            className="h-10 w-10 shrink-0 rounded-full text-white hover:bg-white/10 active:scale-95 transition-transform"
             onClick={togglePlay}
             disabled={isLoading}
             aria-label={isPlaying ? "暂停" : "播放"}
           >
             {isLoading ? (
-              <Spinner className="h-6 w-6" />
+              <Spinner className="h-5 w-5" />
             ) : isPlaying ? (
-              <Pause className="h-6 w-6 fill-current" />
+              <Pause className="h-5 w-5 fill-current" />
             ) : (
-              <Play className="ml-0.5 h-6 w-6 fill-current" />
+              <Play className="ml-0.5 h-5 w-5 fill-current" />
             )}
           </Button>
 

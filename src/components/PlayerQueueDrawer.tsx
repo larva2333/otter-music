@@ -100,13 +100,13 @@ function QueueTrackItem({
       <div className="min-w-0 flex flex-col justify-center overflow-hidden">
         <span
           className={cn(
-            "text-[15px] font-medium truncate leading-snug transition-colors",
+            "text-sm font-medium truncate leading-snug transition-colors",
             isCurrent ? "text-primary" : "text-foreground"
           )}
         >
           {track.name}
         </span>
-        <span className="text-[13px] text-muted-foreground/70 truncate leading-snug">
+        <span className="text-sm text-muted-foreground/70 truncate leading-snug">
           {track.artist.join(" / ")}
         </span>
       </div>
@@ -196,7 +196,7 @@ export function PlayerQueueDrawer({
               <button
                 onClick={() => handleTabChange("queue")}
                 className={cn(
-                  "text-[15px] transition-all whitespace-nowrap",
+                  "text-base transition-all whitespace-nowrap",
                   activeTab === "queue"
                     ? "font-bold text-foreground tracking-wide"
                     : "font-medium text-muted-foreground hover:text-foreground"
@@ -210,7 +210,7 @@ export function PlayerQueueDrawer({
               <button
                 onClick={() => handleTabChange("history")}
                 className={cn(
-                  "text-[15px] transition-all whitespace-nowrap",
+                  "text-base transition-all whitespace-nowrap",
                   activeTab === "history"
                     ? "font-bold text-foreground tracking-wide"
                     : "font-medium text-muted-foreground hover:text-foreground"

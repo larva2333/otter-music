@@ -121,7 +121,7 @@ export function LyricStyleSetting() {
               step={0.1}
             />
 
-            <div className="flex justify-between text-[10px] text-muted-foreground">
+            <div className="flex justify-between text-2xs text-muted-foreground">
               <span>-1s 提前</span>
               <span>0</span>
               <span>+1s 推迟</span>

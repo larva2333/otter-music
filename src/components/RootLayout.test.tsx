@@ -296,6 +296,56 @@ describe("RootLayout", () => {
     expect(router.state.location.pathname).toBe("/search");
   });
 
+  it("keeps the current page when minimizing on native (hot start preserves)", async () => {
+    capacitorMocks.isNativePlatform.mockReturnValue(true);
+    window.history.replaceState({ idx: 0 }, "");
+
+    const { router } = renderLayout(["/mine"]);
+
+    expect(container?.textContent).toContain("Mine Page");
+
+    await act(async () => {
+      await backButtonHandler?.();
+    });
+
+    expect(router.state.location.pathname).toBe("/mine");
+    expect(container?.textContent).toContain("Mine Page");
+    expect(capacitorMocks.minimizeApp).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps the route untouched when minimizing from the first tab", async () => {
+    capacitorMocks.isNativePlatform.mockReturnValue(true);
+    window.history.replaceState({ idx: 0 }, "");
+
+    const { router } = renderLayout(["/search"]);
+
+    await act(async () => {
+      await backButtonHandler?.();
+    });
+
+    expect(router.state.location.pathname).toBe("/search");
+    expect(capacitorMocks.minimizeApp).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps the last visited category when minimizing on native (hot start preserves)", async () => {
+    capacitorMocks.isNativePlatform.mockReturnValue(true);
+    window.history.replaceState({ idx: 0 }, "");
+    useMusicStore.setState({
+      lastPlaylistCategory: "说唱",
+      lastFeaturedTab: "Billboard",
+    });
+
+    renderLayout(["/search"]);
+
+    await act(async () => {
+      await backButtonHandler?.();
+    });
+
+    expect(useMusicStore.getState().lastPlaylistCategory).toBe("说唱");
+    expect(useMusicStore.getState().lastFeaturedTab).toBe("Billboard");
+    expect(capacitorMocks.minimizeApp).toHaveBeenCalledTimes(1);
+  });
+
   it("handles nested fullscreen + drawer in LIFO order on back", async () => {
     capacitorMocks.isNativePlatform.mockReturnValue(true);
     window.history.replaceState({ idx: 0 }, "");

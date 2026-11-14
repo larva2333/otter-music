@@ -513,3 +513,57 @@ describe("MusicStore", () => {
     });
   });
 });
+
+describe("浏览位置不跨进程记忆", () => {
+  afterEach(() => {
+    vi.mocked(idbStorage.getItem).mockReset();
+  });
+
+  it("hydration 忽略存档里的分类，冷启动回到「全部」", async () => {
+    vi.mocked(idbStorage.getItem).mockResolvedValue(
+      JSON.stringify({
+        state: {
+          lastPlaylistCategory: "说唱",
+          lastFeaturedTab: "Billboard",
+          lastBillboardGroup: "albums",
+        },
+        version: 0,
+      })
+    );
+
+    await useMusicStore.persist.rehydrate();
+
+    const state = useMusicStore.getState();
+    expect(state.lastPlaylistCategory).toBe("全部");
+    expect(state.lastFeaturedTab).toBe("");
+    expect(state.lastBillboardGroup).toBe("songs");
+  });
+
+  it("resetBrowsePosition 把浏览位置归零", () => {
+    useMusicStore.setState({
+      lastPlaylistCategory: "说唱",
+      lastFeaturedTab: "Billboard",
+      lastBillboardGroup: "albums",
+    });
+
+    useMusicStore.getState().resetBrowsePosition();
+
+    const state = useMusicStore.getState();
+    expect(state.lastPlaylistCategory).toBe("全部");
+    expect(state.lastFeaturedTab).toBe("");
+    expect(state.lastBillboardGroup).toBe("songs");
+  });
+
+  it("不再把浏览位置写进持久化存档", () => {
+    useMusicStore.setState({ lastPlaylistCategory: "说唱" });
+
+    const writes = vi
+      .mocked(idbStorage.setItem)
+      .mock.calls.filter(([name]) => name === storeKey.MusicStore);
+    const persisted = JSON.parse(writes[writes.length - 1][1]);
+
+    expect(persisted.state.lastPlaylistCategory).toBeUndefined();
+    expect(persisted.state.lastFeaturedTab).toBeUndefined();
+    expect(persisted.state.lastBillboardGroup).toBeUndefined();
+  });
+});

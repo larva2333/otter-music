@@ -42,7 +42,7 @@ export function AlistServerCard({ server, onEdit }: AlistServerCardProps) {
         </div>
       </div>
       <div className="px-0.5">
-        <h3 className="text-[13px] font-medium leading-snug line-clamp-1 text-foreground/80 group-hover:text-primary transition-colors cursor-pointer">
+        <h3 className="text-sm font-medium leading-snug line-clamp-1 text-foreground/80 group-hover:text-primary transition-colors cursor-pointer">
           {server.name}
         </h3>
       </div>

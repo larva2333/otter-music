@@ -49,6 +49,11 @@ public class MainActivity extends BridgeActivity {
      *    「自动旋转」开关**——用户明明在控制中心锁定了竖屏，退出横屏播放后整个 App
      *    却开始跟着手机转，看起来就像「方向锁被应用关掉了」。改写为
      *    SCREEN_ORIENTATION_USER，按用户当前偏好决定：锁着就保持不动，开着才跟随传感器。
+     *
+     *    同理，AndroidManifest 里 MainActivity 必须声明 android:screenOrientation="user"。
+     *    不声明时活动启动默认是 UNSPECIFIED，冷启动（例如刚装完点开）照样无视方向锁，
+     *    只有进过横屏模式、调用过 unlock() 之后才被这里的改写纠正——这就是
+     *    「装一次就把方向锁搞没了」的真正来源。
      */
     @Override
     public void setRequestedOrientation(int requestedOrientation) {

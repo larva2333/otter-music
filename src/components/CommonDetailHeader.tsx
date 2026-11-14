@@ -55,9 +55,7 @@ export const CommonDetailHeader = memo(function CommonDetailHeader({
     btn: hasDesc
       ? "rounded-full px-3 h-9 col-span-1 min-w-0"
       : "rounded-full px-3 h-8 md:h-9 gap-1.5 min-w-0 shrink",
-    searchWrapper: hasDesc
-      ? "relative col-span-2"
-      : "relative flex-1 min-w-0",
+    searchWrapper: hasDesc ? "relative col-span-2" : "relative flex-1 min-w-0",
     searchIcon: hasDesc
       ? "absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground/60"
       : "absolute left-2 top-2.5 h-3 w-3 text-muted-foreground md:h-4 md:w-4 md:top-2",
@@ -123,7 +121,7 @@ export const CommonDetailHeader = memo(function CommonDetailHeader({
             <p
               onClick={() => setIsExpanded(!isExpanded)}
               className={cn(
-                "mt-1 text-[11px] leading-relaxed transition-colors cursor-pointer text-muted-foreground/60 hover:text-muted-foreground/90",
+                "mt-1 text-xs leading-relaxed transition-colors cursor-pointer text-muted-foreground/60 hover:text-muted-foreground/90",
                 isExpanded ? "whitespace-pre-line" : "line-clamp-2"
               )}
             >

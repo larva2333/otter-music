@@ -200,7 +200,7 @@ export function BilibiliArtistDetail({
       <Drawer open={showCollections} onOpenChange={setShowCollections}>
         <DrawerContent className="border-none rounded-t-[28px] bg-background/95 backdrop-blur-xl max-h-[85vh]">
           <DrawerHeader className="px-6 pt-6 pb-2 text-left">
-            <DrawerTitle className="text-xl font-semibold tracking-tight">
+            <DrawerTitle className="font-semibold tracking-tight">
               {detail?.name || "合集"}
             </DrawerTitle>
           </DrawerHeader>
@@ -229,10 +229,10 @@ export function BilibiliArtistDetail({
                       />
                     </div>
                     <div className="px-0.5 flex flex-col gap-0.5">
-                      <h4 className="text-[13px] font-medium leading-tight line-clamp-2 text-foreground/80">
+                      <h4 className="text-sm font-medium leading-tight line-clamp-2 text-foreground/80">
                         {entry.name}
                       </h4>
-                      <p className="text-[10px] text-muted-foreground/60 uppercase tracking-wider">
+                      <p className="text-2xs text-muted-foreground/60 uppercase tracking-wider">
                         {entry.count} 个视频
                       </p>
                     </div>

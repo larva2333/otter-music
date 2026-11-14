@@ -169,7 +169,7 @@ const DirItem = ({
           {name}
         </span>
         {parent && (
-          <span className="text-[11px] text-muted-foreground/50 truncate block">
+          <span className="text-xs text-muted-foreground/50 truncate block">
             {parent}
           </span>
         )}
@@ -223,7 +223,7 @@ const TrackItem = ({
             {track.name}
           </span>
           {(parent || sizeStr || fmt) && (
-            <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground/50 mt-0.5">
+            <div className="flex items-center gap-1.5 text-xs text-muted-foreground/50 mt-0.5">
               {parent && <span className="truncate">{parent}</span>}
               {sizeStr && (
                 <span className="shrink-0 text-muted-foreground/40">
@@ -231,7 +231,7 @@ const TrackItem = ({
                 </span>
               )}
               {fmt && (
-                <span className="shrink-0 uppercase text-[10px] text-muted-foreground/40">
+                <span className="shrink-0 uppercase text-2xs text-muted-foreground/40">
                   {fmt}
                 </span>
               )}
@@ -435,7 +435,7 @@ export function AlistBrowser({
 
       return (
         <div>
-          <div className="flex items-center justify-between px-4 py-2 text-[11px] text-muted-foreground/60 border-b border-border/30">
+          <div className="flex items-center justify-between px-4 py-2 text-xs text-muted-foreground/60 border-b border-border/30">
             <span>
               搜索「{searchState.query}」 · {globalAudioTracks.length} 首
             </span>
@@ -483,7 +483,7 @@ export function AlistBrowser({
 
     return (
       <div>
-        <div className="flex items-center justify-between px-4 py-2 text-[11px] text-muted-foreground/60 border-b border-border/30">
+        <div className="flex items-center justify-between px-4 py-2 text-xs text-muted-foreground/60 border-b border-border/30">
           <span>
             {subDirs.length > 0 && `${subDirs.length} 个文件夹`}
             {subDirs.length > 0 && audioTracks.length > 0 && " · "}

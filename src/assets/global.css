@@ -3,6 +3,61 @@
 
 @custom-variant dark (&:is(.dark *));
 
+/*
+ * 全站字阶：按「功能角色」取值，同类元素必须用同一档。
+ * 移动端优先，整体偏小、界面更清爽；设置页「字体大小」可整体缩放。
+ *
+ *   2xs  10px  徽章、角标、单号、底部 tab 栏文字、极小编号
+ *   xs   11px  辅助说明、副标题、歌手/专辑/播放量等元信息
+ *   sm   13px  正文、列表标题、卡片标题、按钮、设置项标题
+ *   base 15px  区块标题、子 tab / 分类 chips、输入框
+ *   lg   17px  页面标题、抽屉标题、播放器歌名
+ *   xl   19px  首屏/错误页等强调标题
+ *   2xl  22px  数据型强调数字
+ *
+ * 行高用无单位倍数，跟随字号缩放。
+ */
+@theme {
+  --text-2xs: 10px;
+  --text-2xs--line-height: 1.4;
+  --text-xs: 11px;
+  --text-xs--line-height: 1.45;
+  --text-sm: 13px;
+  --text-sm--line-height: 1.5;
+  --text-base: 15px;
+  --text-base--line-height: 1.55;
+  --text-lg: 17px;
+  --text-lg--line-height: 1.4;
+  --text-xl: 19px;
+  --text-xl--line-height: 1.35;
+  --text-2xl: 22px;
+  --text-2xl--line-height: 1.3;
+}
+
+/*
+ * 字体大小设置（设置 → 界面设置 → 字体大小）。
+ * 默认无 data-font-scale 时为「标准」档，下面只覆盖字号，不改行高。
+ */
+:root[data-font-scale="small"] {
+  --text-2xs: 9px;
+  --text-xs: 10px;
+  --text-sm: 12px;
+  --text-base: 14px;
+  --text-lg: 16px;
+  --text-xl: 18px;
+  --text-2xl: 20px;
+}
+
+:root[data-font-scale="large"] {
+  --text-2xs: 11px;
+  --text-xs: 12px;
+  --text-sm: 15px;
+  --text-base: 17px;
+  --text-lg: 19px;
+  --text-xl: 21px;
+  --text-2xl: 24px;
+}
+
 :root {
   /* 骨架屏高光扫过的颜色（浅色主题） */
   --skeleton-shimmer: rgba(15, 46, 66, 0.16);
@@ -214,6 +269,8 @@
 
   body {
     @apply bg-background text-foreground;
+    /* 兜底正文档：没有显式写 text-* 的文字也跟全站字号走 */
+    font-size: var(--text-sm);
   }
 
   .custom-scrollbar {

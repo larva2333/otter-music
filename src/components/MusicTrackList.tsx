@@ -56,6 +56,7 @@ import { MusicTrackItem } from "./MusicTrackItem";
 import { AddToPlaylistDrawer } from "./AddToPlaylistDrawer";
 import { downloadMusicTrackBatch } from "@/lib/utils/download";
 import { useMusicStore } from "@/store/music-store";
+import { useAutoLoadMore } from "@/hooks/use-auto-load-more";
 import { MusicTrack } from "@/types/music";
 import toast from "react-hot-toast";
 import { processBatchCPU } from "@/lib/utils";
@@ -73,6 +74,8 @@ interface MusicTrackListProps {
   onLoadMore?: () => void;
   hasMore?: boolean;
   loading?: boolean;
+  /** 开启后滚动到接近底部即自动加载下一页，底部按钮退化为状态提示 */
+  autoLoadMore?: boolean;
   emptyMessage?: string;
   removeLabel?: string;
   confirmRemove?: boolean;
@@ -133,6 +136,7 @@ export function MusicTrackList({
   onLoadMore,
   hasMore,
   loading,
+  autoLoadMore = false,
   emptyMessage = "暂无歌曲",
   removeLabel = "删除",
   confirmRemove,
@@ -313,6 +317,16 @@ export function MusicTrackList({
     overscan: 8,
   });
 
+  /* ---------------- 上滑自动加载 ---------------- */
+  useAutoLoadMore({
+    containerRef: scrollContainerRef ?? internalRef,
+    enabled: autoLoadMore,
+    hasMore,
+    loading,
+    onLoadMore,
+    contentKey: tracks.length,
+  });
+
   if (tracks.length === 0 && !loading) {
     return (
       <div className="flex flex-col h-full items-center justify-center text-muted-foreground/60">
@@ -363,7 +377,7 @@ export function MusicTrackList({
               <Button
                 size="sm"
                 variant="secondary"
-                className="h-7 px-2 text-[11px]"
+                className="h-7 px-2 text-xs"
                 onClick={handleBatchNextPlay}
                 disabled={selectedIds.size === 0}
               >
@@ -488,21 +502,38 @@ export function MusicTrackList({
               ) : (
                 <div className="px-3 pb-20 pt-2 h-full">
                   {onLoadMore ? (
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      className="w-full text-xs text-muted-foreground h-8"
-                      onClick={onLoadMore}
-                      disabled={!hasMore || loading}
-                    >
-                      {loading ? (
-                        <Loader2 className="animate-spin w-3.5 h-3.5 mr-2" />
-                      ) : hasMore ? (
-                        "加载更多"
-                      ) : (
-                        "没有更多了"
-                      )}
-                    </Button>
+                    autoLoadMore ? (
+                      <div className="flex h-8 items-center justify-center gap-2 text-xs text-muted-foreground">
+                        {loading ? (
+                          <>
+                            <Loader2 className="animate-spin w-3.5 h-3.5" />
+                            <span>加载中...</span>
+                          </>
+                        ) : hasMore ? (
+                          <span className="tracking-wide">上滑加载更多</span>
+                        ) : (
+                          <span className="tracking-wide uppercase opacity-70">
+                            没有更多了
+                          </span>
+                        )}
+                      </div>
+                    ) : (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="w-full text-xs text-muted-foreground h-8"
+                        onClick={onLoadMore}
+                        disabled={!hasMore || loading}
+                      >
+                        {loading ? (
+                          <Loader2 className="animate-spin w-3.5 h-3.5 mr-2" />
+                        ) : hasMore ? (
+                          "加载更多"
+                        ) : (
+                          "没有更多了"
+                        )}
+                      </Button>
+                    )
                   ) : (
                     <div className="h-full" />
                   )}

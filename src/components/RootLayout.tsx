@@ -38,6 +38,13 @@ const OPEN_PLAYER_URL = "ottermusic://player";
  */
 const BACK_MINIMIZE_PATHS = ["/", "/search", "/favorites", "/mine"] as const;
 
+/**
+ * 冷启动的落地页（第一个 tab「发现」）。
+ * 由路由 "/" 的 <Navigate> 负责：进程被回收后重新打开，从首页开始；
+ * 热启动（最小化后再进来）保持原页面，不做跳转。
+ */
+const HOME_PATH = "/search";
+
 export function RootLayout() {
   const location = useLocation();
   const navigate = useNavigate();
@@ -132,6 +139,10 @@ export function RootLayout() {
 
     if (shouldMinimizeOnBack(path)) {
       if (IS_NATIVE) {
+        // 在主 tab 上返回 = 退出应用（最小化）。这里**故意不做任何复位**：
+        // WebView 实例还在，热启动回来应当停在原地（这就是「热启动保留」）。
+        // 冷启动才回到首页 / 第一个分类，由路由 "/" 的 Navigate 和 store
+        // 的 merge 兜住，两条路径各管各的。
         await CapacitorApp.minimizeApp();
       }
       return;
@@ -143,7 +154,7 @@ export function RootLayout() {
       return;
     }
 
-    navigate("/search", { replace: true });
+    navigate(HOME_PATH, { replace: true });
   }, [handleExitLayer, shouldMinimizeOnBack, navigate]);
 
   useEffect(() => {

@@ -30,12 +30,14 @@ export function PlayerTrackInfo({
   const sizeClasses = "h-16 w-16";
   const iconSize = "h-8 w-8";
   const textSize = "text-lg";
-  const subTextSize = "text-sm";
+  const subTextSize = "text-xs";
 
   if (!track) {
     return (
       <div className="flex items-center gap-3 opacity-50">
-        <div className={`${sizeClasses} rounded bg-muted flex items-center justify-center`}>
+        <div
+          className={`${sizeClasses} rounded bg-muted flex items-center justify-center`}
+        >
           <Music2 className={iconSize} />
         </div>
         <div className={textSize}>未播放</div>
@@ -52,7 +54,9 @@ export function PlayerTrackInfo({
       )}
       onClick={onToggleFullScreen}
     >
-      <div className={`${sizeClasses} rounded bg-muted flex items-center justify-center overflow-hidden shrink-0 relative`}>
+      <div
+        className={`${sizeClasses} rounded bg-muted flex items-center justify-center overflow-hidden shrink-0 relative`}
+      >
         <MusicCover
           src={coverUrl}
           alt={track.name}
@@ -71,9 +75,7 @@ export function PlayerTrackInfo({
       </div>
 
       <div className="flex flex-col min-w-0 ml-1">
-        <div className={`${textSize} font-semibold truncate`}>
-          {track.name}
-        </div>
+        <div className={`${textSize} font-semibold truncate`}>{track.name}</div>
         <div className={`${subTextSize} text-muted-foreground truncate`}>
           {track.artist.join(" / ")}
         </div>

@@ -182,7 +182,7 @@ export function ArtistAlbumSheet({
     <Drawer open={isOpen} onOpenChange={onOpenChange}>
       <DrawerContent className="border-none rounded-t-[28px] bg-background/95 backdrop-blur-xl max-h-[85vh]">
         <DrawerHeader className="px-6 pt-6 pb-2 text-left flex justify-between">
-          <DrawerTitle className="text-xl font-semibold tracking-tight">
+          <DrawerTitle className="font-semibold tracking-tight">
             {artistName}
           </DrawerTitle>
           {albumCount !== undefined && albums.length > 0 && (
@@ -223,10 +223,10 @@ export function ArtistAlbumSheet({
                   </div>
 
                   <div className="px-0.5 flex flex-col gap-0.5">
-                    <h4 className="text-[13px] font-medium leading-tight line-clamp-2 text-foreground/80 group-hover:text-primary transition-colors">
+                    <h4 className="text-sm font-medium leading-tight line-clamp-2 text-foreground/80 group-hover:text-primary transition-colors">
                       {album.name}
                     </h4>
-                    <p className="text-[10px] text-muted-foreground/60 uppercase tracking-wider">
+                    <p className="text-2xs text-muted-foreground/60 uppercase tracking-wider">
                       {format(album.publishTime, "yyyy-MM-dd")}
                     </p>
                   </div>
@@ -240,7 +240,7 @@ export function ArtistAlbumSheet({
               ) : (
                 !hasMore &&
                 albums.length > 0 && (
-                  <div className="col-span-full text-center text-[11px] font-medium tracking-[0.2em] text-muted-foreground/30 uppercase">
+                  <div className="col-span-full text-center text-xs font-medium tracking-[0.2em] text-muted-foreground/30 uppercase">
                     － End of Collection －
                   </div>
                 )

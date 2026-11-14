@@ -25,7 +25,9 @@ export function PageHeader({ title, onBack, action }: PageHeaderProps) {
           <ChevronLeft className="h-4 w-4" />
         </Button>
         <div className="flex flex-col min-w-0">
-          <h1 className="font-semibold tracking-tight truncate">{title}</h1>
+          <h1 className="text-lg font-semibold tracking-tight truncate">
+            {title}
+          </h1>
         </div>
       </div>
       {action && <div className="flex-none pl-4">{action}</div>}

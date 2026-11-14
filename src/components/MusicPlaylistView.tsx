@@ -54,6 +54,8 @@ interface MusicPlaylistViewProps {
   removeLabel?: string;
   confirmRemove?: boolean;
   icon?: React.ReactNode;
+  /** 提供后，多选菜单显示「繁体转简体」 */
+  onBatchConvertToSimplified?: (tracks: MusicTrack[]) => void;
 }
 
 export function MusicPlaylistView({
@@ -74,6 +76,7 @@ export function MusicPlaylistView({
   removeLabel,
   confirmRemove,
   icon,
+  onBatchConvertToSimplified,
 }: MusicPlaylistViewProps) {
   const [searchQuery, setSearchQuery] = useState("");
   const [isCoverDialogOpen, setIsCoverDialogOpen] = useState(false);
@@ -148,7 +151,13 @@ export function MusicPlaylistView({
     const firstTrack = tracks[0];
     if (firstTrack?.pic_id) {
       try {
-        const url = await musicApi.getPic(firstTrack.pic_id, firstTrack.source);
+        // 传完整曲目：本地曲目要靠歌名/歌手在线反查封面，只给路径查不到
+        const url = await musicApi.getPic(
+          firstTrack.pic_id,
+          firstTrack.source,
+          800,
+          firstTrack
+        );
         if (url) {
           setCoverUrlInput(url);
         } else {
@@ -194,6 +203,7 @@ export function MusicPlaylistView({
   return (
     <div
       ref={scrollContainerRef}
+      data-page-scroll=""
       className="flex flex-1 min-h-0 flex-col overflow-y-auto"
     >
       {/* Header */}
@@ -313,6 +323,7 @@ export function MusicPlaylistView({
             isPersonalPlaylist && !searchQuery ? handleReorder : undefined
           }
           preselectedIds={dedupeSelectedIds}
+          onBatchConvertToSimplified={onBatchConvertToSimplified}
           onSelectionModeChange={(active) => {
             if (!active) setDedupeSelectedIds(undefined);
           }}

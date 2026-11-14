@@ -9,7 +9,7 @@ import {
 import { App } from "@capacitor/app";
 import { toast } from "react-hot-toast";
 import { logger } from "@/lib/logger";
-import { IS_NATIVE } from "@/lib/api/config";
+import { IS_NATIVE, ApiError } from "@/lib/api/config";
 
 interface AppState {
   currentVersion: string;
@@ -136,7 +136,11 @@ export const useAppStore = create<AppState & AppActions>()(
             });
           }
           if (!silent) {
-            toast.error("检查更新失败，请稍后重试");
+            toast.error(
+              error instanceof ApiError
+                ? error.message
+                : "检查更新失败，请稍后重试"
+            );
           }
         } finally {
           set({ isChecking: false });

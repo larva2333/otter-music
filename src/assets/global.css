@@ -4,6 +4,8 @@
 @custom-variant dark (&:is(.dark *));
 
 :root {
+  /* 骨架屏高光扫过的颜色（浅色主题） */
+  --skeleton-shimmer: rgba(15, 46, 66, 0.16);
   --background: hsl(210 100% 99%);
   --foreground: hsl(205 25% 13%);
   --card: hsl(0 0% 100%);
@@ -37,6 +39,7 @@
 }
 
 .dark {
+  --skeleton-shimmer: rgba(255, 255, 255, 0.12);
   --background: hsl(218 36% 9%);
   --foreground: hsl(213 30% 93%);
   --card: hsl(215 30% 11%);
@@ -272,4 +275,51 @@
 .animate-marquee {
   animation: marquee var(--duration, 20s) linear infinite;
   will-change: transform;
+}
+
+/* 骨架占位：底色不动，只有一条柔和高光从左扫到右。
+   比 animate-pulse 的整块忽明忽暗平顺得多，接近 Apple Music 的占位观感。 */
+@keyframes skeleton-shimmer {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(100%);
+  }
+}
+
+.skeleton-shimmer {
+  /* 不加 position：由使用方给 relative/absolute，避免覆盖 Tailwind 的定位工具类 */
+  overflow: hidden;
+  background-color: var(--muted);
+  isolation: isolate;
+}
+
+.skeleton-shimmer::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    90deg,
+    transparent 15%,
+    var(--skeleton-shimmer) 50%,
+    transparent 85%
+  );
+  transform: translateX(-100%);
+  animation: skeleton-shimmer 1.4s cubic-bezier(0.45, 0, 0.55, 1) infinite;
+  /* 由使用方按格子位置错开，让高光像波浪一样扫过整片网格 */
+  animation-delay: var(--shimmer-delay, 0s);
+  will-change: transform;
+}
+
+/* 图片已经盖上来之后停止扫光，避免几十个不可见动画一直占 GPU */
+.skeleton-shimmer.is-idle::after {
+  animation: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .skeleton-shimmer::after {
+    animation: none;
+    opacity: 0;
+  }
 }

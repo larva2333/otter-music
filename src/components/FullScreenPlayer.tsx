@@ -1,7 +1,7 @@
 "use client";
 
 import { createPortal } from "react-dom";
-import { memo, useMemo, useState } from "react";
+import { memo, useCallback, useMemo, useRef, useState } from "react";
 import { labToSrgb, srgbToLab, type SodaColors } from "@/lib/utils/soda-color";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -45,7 +45,15 @@ import { useShallow } from "zustand/react/shallow";
 import toast from "react-hot-toast";
 import { useCoverColors } from "@/hooks/useCoverColors";
 import { useLandscapeMode } from "@/hooks/useLandscapeMode";
+import { usePlayerSwipeGestures } from "@/hooks/usePlayerSwipeGestures";
+import { useSystemBarsStyleOverride } from "@/hooks/useSystemBarsStyleOverride";
 import { LandscapePlayer } from "@/components/LandscapePlayer";
+
+/**
+ * 播放页展开/收起动画时长，必须与容器上的 `duration-500` 保持一致。
+ * 系统栏颜色延后这么久再切，等页面铺满再变。
+ */
+const PLAYER_TRANSITION_MS = 500;
 
 interface ModeIconProps {
   isRepeat: boolean;
@@ -74,10 +82,29 @@ const BackgroundLayer = memo(
       if (!showThemeColor || !colors) return undefined;
       const [tr, tg, tb] = colors.top;
       const [br, bg, bb] = colors.bottom;
+      // 中间色用上下色的中点，避免两色直连时过渡带出现在歌词区域正中
+      const mid = [
+        Math.round((tr + br) / 2),
+        Math.round((tg + bg) / 2),
+        Math.round((tb + bb) / 2),
+      ];
       return {
         background: `linear-gradient(to bottom,
-        rgb(${tr}, ${tg}, ${tb}),
-        rgb(${br}, ${bg}, ${bb}))`,
+        rgb(${tr}, ${tg}, ${tb}) 0%,
+        rgb(${mid.join(", ")}) 48%,
+        rgb(${br}, ${bg}, ${bb}) 100%)`,
+      } as React.CSSProperties;
+    }, [colors, showThemeColor]);
+
+    /** 顶部主色光晕：把封面主色再提一层，让小面积主色（如红色标题）也能被感知到 */
+    const glowStyle = useMemo(() => {
+      if (!showThemeColor || !colors) return undefined;
+      const [r, g, b] = colors.dominant;
+      // 亮主色（白底封面）若按固定透明度叠加会把顶部糊成一片，白字和图标直接失读，按亮度降透明度
+      const l = srgbToLab(colors.dominant)[0];
+      const alpha = l > 65 ? 0.12 : l > 45 ? 0.22 : 0.32;
+      return {
+        background: `radial-gradient(125% 70% at 50% -8%, rgba(${r}, ${g}, ${b}, ${alpha}), transparent 62%)`,
       } as React.CSSProperties;
     }, [colors, showThemeColor]);
 
@@ -89,7 +116,17 @@ const BackgroundLayer = memo(
             "absolute inset-0 transition-opacity duration-1000 ease-in-out",
             showThemeColor ? "opacity-100" : "opacity-0"
           )}
-          style={dynamicStyle}
+        >
+          <div className="absolute inset-0" style={dynamicStyle} />
+          <div className="absolute inset-0" style={glowStyle} />
+        </div>
+
+        {/* 可读性遮罩：顶部保留封面色调，中下部压暗，保证白色歌词与控件不被彩色背景吞掉 */}
+        <div
+          className={cn(
+            "absolute inset-0 transition-opacity duration-1000 bg-linear-to-b from-transparent via-black/12 to-black/55",
+            showThemeColor ? "opacity-100" : "opacity-0"
+          )}
         />
 
         {/* 封面遮罩层 */}
@@ -146,6 +183,14 @@ export function FullScreenPlayer({
   onClose,
 }: FullScreenPlayerProps) {
   const isMounted = useMounted();
+  /**
+   * 播放器背景恒为深色（封面主色 / zinc-950），系统栏必须用浅色图标。
+   * 否则浅色主题下会按主题设成深色图标，落在深色背景上就是黑底黑图标。
+   *
+   * 延后到展开动画结束再生效：否则点播放条的一瞬间状态栏就跳成浅色图标，
+   * 而此时页面还没铺满，观感是「颜色先变、页面后到」。
+   */
+  useSystemBarsStyleOverride(true, isFullScreen, PLAYER_TRANSITION_MS);
   /** 横屏沉浸模式：手动进入后锁定横屏，由独立的 LandscapePlayer 渲染 */
   const {
     isLandscapeMode,
@@ -264,6 +309,58 @@ export function FullScreenPlayer({
     removeFromQueue(track.id);
   };
 
+  const handlePrev = useCallback(() => {
+    if (queue.length === 0) return;
+    setCurrentIndexAndPlay((currentIndex - 1 + queue.length) % queue.length);
+  }, [queue.length, currentIndex, setCurrentIndexAndPlay]);
+
+  const handleNext = useCallback(() => {
+    if (queue.length === 0) return;
+    setCurrentIndexAndPlay((currentIndex + 1) % queue.length);
+  }, [queue.length, currentIndex, setCurrentIndexAndPlay]);
+
+  const gestureAreaRef = useRef<HTMLDivElement | null>(null);
+
+  /**
+   * 歌词页、封面预览、横屏沉浸模式都不接手势：
+   * 歌词要能原生滚动，预览要能双指缩放，横屏有自己的交互。
+   */
+  const swipeEnabled =
+    isFullScreen && !showLyrics && !isCoverPreviewOpen && !isLandscapeMode;
+
+  /**
+   * touch-action 必须同步关掉：否则 WebView 把上滑当页面滚动手势，
+   * 手指抬起后的惯性期内紧接着的 tap 只用于「停止滚动」，click 根本不会派发，
+   * 表现就是「上滑之后再点一下没反应」。封面页本来就没有要原生滚动的内容。
+   */
+  const gestureAreaStyle = {
+    touchAction: swipeEnabled ? "none" : "auto",
+  } as const;
+
+  const swipe = usePlayerSwipeGestures({
+    enabled: swipeEnabled,
+    onClose,
+    onPrev: handlePrev,
+    onNext: handleNext,
+    // 轻点在 touchend 里处理：不依赖 click，避免上滑/滚动后点击被 WebView 吞掉
+    onTap: () => {
+      if (isCoverPreviewOpen) return;
+      setShowLyrics(!showLyrics);
+    },
+    containerRef: gestureAreaRef,
+  });
+
+  /** 下拉跟手位移只作用于整页容器；松手后交回 CSS transition 回弹或滑出 */
+  const dragStyle =
+    swipe.isDragging || swipe.dragY > 0
+      ? {
+          transform: `translateY(${swipe.dragY}px)`,
+          transition: swipe.isDragging
+            ? "none"
+            : "transform 500ms cubic-bezier(0.32, 0.72, 0, 1)",
+        }
+      : undefined;
+
   if (!isMounted) return null;
 
   // 循环切换播放模式：none → repeat → shuffle → none
@@ -275,22 +372,13 @@ export function FullScreenPlayer({
     } else toggleShuffle();
   };
 
-  const handlePrev = () => {
-    if (queue.length === 0) return;
-    setCurrentIndexAndPlay((currentIndex - 1 + queue.length) % queue.length);
-  };
-
-  const handleNext = () => {
-    if (queue.length === 0) return;
-    setCurrentIndexAndPlay((currentIndex + 1) % queue.length);
-  };
-
   return createPortal(
     <div
       className={cn(
         "fixed inset-0 z-50 transition-transform duration-500 ease-in-out flex flex-col",
         isFullScreen ? "translate-y-0" : "translate-y-full"
       )}
+      style={dragStyle}
     >
       {/* 背景渲染层 */}
       <BackgroundLayer
@@ -366,10 +454,15 @@ export function FullScreenPlayer({
       </header>
 
       <div
+        ref={gestureAreaRef}
         className="flex-1 flex flex-col items-center justify-center px-2 relative z-10 overflow-hidden cursor-pointer"
+        {...swipe.handlers}
+        style={gestureAreaStyle}
         onClick={() => {
           // 封面预览打开期间不切换歌词，避免长按后的 click 冒泡到这里
           if (isCoverPreviewOpen) return;
+          // 滑动切歌/收起后浏览器还会补一次 click，这里吞掉，否则会顺带切到歌词页
+          if (swipe.shouldSuppressClick()) return;
           setShowLyrics(!showLyrics);
         }}
       >

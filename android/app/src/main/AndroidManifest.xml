@@ -19,6 +19,10 @@
     <!-- 桌面歌词悬浮窗 -->
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
 
+    <!-- 通知栏快捷开关「不锁屏」：写 Settings.Global.STAY_ON_WHILE_PLUGGED_IN。
+         该权限只能通过 adb 授予（非运行时权限），未授予时磁贴会提示授权命令。 -->
+    <uses-permission android:name="android.permission.WRITE_SECURE_SETTINGS" />
+
     <application
         android:requestLegacyExternalStorage="true"
         android:allowBackup="true"
@@ -37,8 +41,20 @@
             android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
-                <category android:name="android.intent.category.LAUNCHER" />
+                    <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <!-- 通知栏快捷开关：不锁屏（等价于开发者选项里的「不锁定屏幕」） -->
+        <service
+            android:name=".StayAwakeTileService"
+            android:exported="true"
+            android:icon="@drawable/ic_tile_stay_awake"
+            android:label="不锁屏"
+            android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
+            <intent-filter>
+                <action android:name="android.service.quicksettings.action.QS_TILE" />
+            </intent-filter>
+        </service>
     </application>
 </manifest>

@@ -22,6 +22,7 @@ import { logger } from "@/lib/logger";
 import { processBatchIO } from "@/lib/utils";
 import { embedMetadata, fetchEmbedLyric } from "./id3-embed";
 import { getCachedBilibiliAudioFormat } from "@/lib/bilibili/bilibili-cache";
+import { resolveLocalTrackMeta } from "./local-track-meta";
 
 /**
  * 获取当前正在播放的曲目 URL（如果匹配）
@@ -736,17 +737,28 @@ function getArtistFromLocalPath(localPath?: string | null) {
  * 本地文件转 MusicTrack
  */
 export const convertToMusicTrack = (file: LocalMusicFile): MusicTrack => {
-  let album = file.album;
+  const otterPath = isOtterMusicDownloadPath(file.localPath);
+  // 标签可能是下载器占位词（如 kuwo）或 "<unknown>"，
+  // 此时显示层从文件名反推歌手/歌名，不改文件本身
+  const meta = resolveLocalTrackMeta({
+    name: file.name,
+    artist: file.artist,
+    album: file.album,
+    fileName: file.fileName,
+    localPath: file.localPath,
+    isOtterPath: otterPath,
+  });
+
+  let album = meta.album;
 
   if (album === STORAGE_CONFIG.BASE_NAME) {
     album = "";
   }
 
   const localPathArtist = getArtistFromLocalPath(file.localPath);
-  const otterPath = isOtterMusicDownloadPath(file.localPath);
-  let artistStr = (file.artist || "").trim();
+  let artistStr = meta.artist;
 
-  if (!artistStr && localPathArtist) {
+  if (!artistStr && otterPath && localPathArtist) {
     artistStr = localPathArtist;
   } else if (
     otterPath &&
@@ -776,7 +788,7 @@ export const convertToMusicTrack = (file: LocalMusicFile): MusicTrack => {
 
   return {
     id: `local-${file.id}`,
-    name: file.name || "未知歌曲",
+    name: meta.name || "未知歌曲",
     artist: artistList,
     album: album || "",
     pic_id: file.localPath,

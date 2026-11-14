@@ -50,9 +50,10 @@ const LyricLineView = memo(function LyricLineView({
         align === "center" && "text-center",
         align === "left" && "text-left",
         align === "right" && "text-right",
+        // 背景跟随封面主色后不再保证是纯黑，非当前行必须提亮并带阴影，否则会被彩色背景吞掉
         isActive
-          ? "text-white opacity-100 hover:text-white/40"
-          : "text-white/40 opacity-100 hover:text-white/60",
+          ? "text-white opacity-100 hover:text-white/70"
+          : "text-white/60 opacity-100 hover:text-white/80",
         // 基准线行加浅色背景框；py 与 -my 等额抵消，保证行间距不变
         // self-start 阻止 flex 拉伸，避免抵消后的内边距被压缩
         isBaseLine && "-my-2.5 self-start rounded-xl bg-white/10 py-2.5"
@@ -62,6 +63,9 @@ const LyricLineView = memo(function LyricLineView({
         className="font-medium leading-relaxed tracking-wide break-words"
         style={{
           fontSize: `${fontSize}px`,
+          textShadow: isActive
+            ? "0 1px 18px rgba(0, 0, 0, 0.55), 0 0 4px rgba(0, 0, 0, 0.35)"
+            : "0 1px 12px rgba(0, 0, 0, 0.45), 0 0 3px rgba(0, 0, 0, 0.3)",
         }}
       >
         {line.text}
@@ -72,10 +76,11 @@ const LyricLineView = memo(function LyricLineView({
           className={cn(
             "mt-1 font-medium leading-relaxed break-words",
             "transition-colors duration-300",
-            isActive ? "text-white/70" : "text-white/25"
+            isActive ? "text-white/75" : "text-white/40"
           )}
           style={{
             fontSize: `${translationSize}px`,
+            textShadow: "0 1px 10px rgba(0, 0, 0, 0.45)",
           }}
         >
           {line.ttext}
@@ -214,7 +219,8 @@ export function LyricsPanel({ track, active = true }: LyricsPanelProps) {
     });
 
     musicApi
-      .getLyric(lyricId, source)
+      // 传完整曲目：本地音源要靠歌名/歌手在线反查歌词，只给文件路径查不到
+      .getLyric(lyricId, source, track)
       .then((res) => {
         if (cancelled) return;
 
@@ -241,7 +247,7 @@ export function LyricsPanel({ track, active = true }: LyricsPanelProps) {
     return () => {
       cancelled = true;
     };
-  }, [trackId, lyricId, source, active]);
+  }, [track, trackId, lyricId, source, active]);
 
   useEffect(() => {
     if (isUserScrolling) return;

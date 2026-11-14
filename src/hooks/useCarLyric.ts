@@ -84,7 +84,8 @@ export function useCarLyric() {
     let cancelled = false;
 
     musicApi
-      .getLyric(lyricId, source)
+      // 传完整曲目：本地音源要靠歌名/歌手在线反查歌词，只给文件路径查不到
+      .getLyric(lyricId, source, track)
       .then((res) => {
         if (cancelled) return;
 
@@ -105,7 +106,7 @@ export function useCarLyric() {
     return () => {
       cancelled = true;
     };
-  }, [enabled, lyricId, source, pushLyric, pushAt]);
+  }, [enabled, track, lyricId, source, pushLyric, pushAt]);
 
   // 跟随播放进度换行
   useEffect(() => {

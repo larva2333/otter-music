@@ -18,8 +18,14 @@ import {
   DrawerHeader,
   DrawerTitle,
 } from "@/components/ui/drawer";
-import { LocalMusicPlugin, LocalMusicFile } from "@/plugins/local-music";
+import {
+  LocalMusicPlugin,
+  LocalMusicFile,
+  SimplifiedConvertItem,
+} from "@/plugins/local-music";
 import { MusicTrack } from "@/types/music";
+import { simplifyLocalFilesText } from "@/lib/utils/simplify-local-files";
+import { normalizeLocalMusicFiles } from "@/lib/utils/local-track-meta";
 import { MusicPlaylistView } from "./MusicPlaylistView";
 import { cn } from "@/lib/utils";
 import { PageLayout } from "./PageLayout";
@@ -95,6 +101,11 @@ export function LocalMusicPage({
   const [pickingFolder, setPickingFolder] = useState(false);
   const [excludedLoading, setExcludedLoading] = useState(false);
 
+  // 繁转简状态
+  const [t2sConverting, setT2sConverting] = useState(false);
+  const [t2sPending, setT2sPending] = useState<SimplifiedConvertItem[]>([]);
+  const [t2sConfirmOpen, setT2sConfirmOpen] = useState(false);
+
   /* --- Store --- */
   const { queue, currentIndex, skipToNext, isShuffle } = useMusicStore(
     useShallow((state) => ({
@@ -104,7 +115,8 @@ export function LocalMusicPage({
       isShuffle: state.isShuffle,
     }))
   );
-  const { files, setFiles, updateFiles, setScanning } = useLocalMusicStore();
+  const { files, setFiles, updateFiles, setScanning, scanType } =
+    useLocalMusicStore();
   const navigate = useNavigate();
 
   /* --- 扫描逻辑 --- */
@@ -125,8 +137,12 @@ export function LocalMusicPage({
             type === "full"
               ? mergeLocalMusicFiles(files, result.files)
               : result.files;
-          setFiles(merged);
-          return merged.length;
+          // 显示层繁转简：只改列表里的文字，不动文件
+          const simplified = await simplifyLocalFilesText(
+            normalizeLocalMusicFiles(merged)
+          );
+          setFiles(simplified);
+          return simplified.length;
         }
 
         if (result.needManageStorage) {
@@ -148,13 +164,33 @@ export function LocalMusicPage({
 
   const initRef = useRef(false);
   useEffect(() => {
-    if (initRef.current || files.length > 0) return;
+    // 只在首次挂载时决定要不要自动扫描；后续列表被清空/替换不应再触发
+    if (initRef.current) return;
     initRef.current = true;
+    if (files.length > 0) return;
 
     performScan("quick").catch((err) => {
       logger.error("LocalMusicPage", "Initial local music scan failed", err);
     });
   }, [files.length, performScan]);
+
+  // 列表里的曲名/歌手/专辑统一按简体显示。幂等：转换后没有变化就返回原引用，
+  // 因此不会反复触发；持久化数据恢复（hydration）后会再补一次。
+  const simplifyingRef = useRef(false);
+  useEffect(() => {
+    if (simplifyingRef.current || files.length === 0) return;
+    simplifyingRef.current = true;
+    simplifyLocalFilesText(normalizeLocalMusicFiles(files))
+      .then((simplified) => {
+        if (simplified !== files) setFiles(simplified);
+      })
+      .catch((err) => {
+        logger.error("LocalMusicPage", "Simplify local list failed", err);
+      })
+      .finally(() => {
+        simplifyingRef.current = false;
+      });
+  }, [files, setFiles]);
 
   const handleScan = (type: "quick" | "full") => {
     if (isLoading) return;
@@ -247,6 +283,81 @@ export function LocalMusicPage({
     }
   }, []);
 
+  /* --- 繁转简逻辑 --- */
+  const handleDetectTraditional = useCallback(async (targets: MusicTrack[]) => {
+    if (!targets.length) {
+      toast("没有选中的歌曲");
+      return;
+    }
+
+    const toastId = toast.loading("正在检测繁体...");
+    try {
+      // 改内嵌标签要写文件，必须持有「所有文件管理」权限
+      const permission = await LocalMusicPlugin.hasAllStoragePermission();
+      if (!permission.hasPermission) {
+        toast.dismiss(toastId);
+        setShowPermissionDialog(true);
+        return;
+      }
+
+      const result = await LocalMusicPlugin.convertToSimplified({
+        localPaths: targets.map((t) => t.url_id),
+        dryRun: true,
+      });
+      if (!result.success) throw new Error(result.error || "检测失败");
+
+      const items = (result.items ?? []).filter((item) => item.wouldChange);
+      toast.dismiss(toastId);
+      // 预检读不到标签（异体字、特殊容器格式）时不再直接拦掉，
+      // 交给用户决定是否强制试一次；转换内部对没变化的文件不会写入。
+      setT2sPending(
+        items.length > 0
+          ? items
+          : targets.map((t) => ({ path: t.url_id, wouldChange: false }))
+      );
+      setT2sConfirmOpen(true);
+    } catch (err) {
+      toast.dismiss(toastId);
+      logger.warn("LocalMusicPage", "繁转简检测失败", err);
+      toast.error(err instanceof Error ? err.message : "检测失败");
+    }
+  }, []);
+
+  const handleConvertTraditional = useCallback(async () => {
+    const paths = t2sPending.map((item) => item.path);
+    if (paths.length === 0) return;
+
+    setT2sConverting(true);
+    const promise = LocalMusicPlugin.convertToSimplified({
+      localPaths: paths,
+      renameFiles: true,
+    })
+      .then(async (result) => {
+        if (!result.success) throw new Error(result.error || "转换失败");
+        // 文件名可能变了，重新走一次媒体库扫描拿到新路径
+        await performScan("quick");
+        setT2sConfirmOpen(false);
+        setT2sPending([]);
+        return result;
+      })
+      .finally(() => setT2sConverting(false));
+
+    toast.promise(promise, {
+      loading: "正在转换...",
+      success: (result) => {
+        if (result.failed) {
+          const reason = result.items?.find((item) => item.error)?.error;
+          return `已转换 ${result.changed} 首，${result.failed} 首失败${
+            reason ? `：${reason}` : ""
+          }`;
+        }
+        if (!result.changed) return "没有文件被修改（可能已是简体）";
+        return `已转换 ${result.changed} 首`;
+      },
+      error: (err) => (err instanceof Error ? err.message : "转换失败"),
+    });
+  }, [performScan, t2sPending]);
+
   /* --- 数据转换与播放 --- */
   const tracks = useMemo(
     () =>
@@ -296,7 +407,7 @@ export function LocalMusicPage({
         <div className="flex-1 flex flex-col items-center justify-center gap-4">
           <RefreshCw className="h-10 w-10 text-primary/80 animate-spin" />
           <p className="text-foreground text-sm font-medium">
-            正在扫描本地音乐...
+            {scanType === "full" ? "正在全盘扫描..." : "正在扫描本地音乐..."}
           </p>
         </div>
       ) : error && isEmpty ? (
@@ -320,6 +431,7 @@ export function LocalMusicPage({
           isPlaying={isPlaying}
           onRemove={(track) => setDeleteTargets([track])}
           onBatchRemove={setDeleteTargets}
+          onBatchConvertToSimplified={handleDetectTraditional}
           removeLabel="删除"
           confirmRemove={false}
           action={
@@ -351,13 +463,32 @@ export function LocalMusicPage({
                 : `删除选中的 ${deleteTargets.length} 首歌曲`}
             </DialogTitle>
             <DialogDescription>
-              默认从当前列表移除，重新扫描后会再次出现。
+              {deleteLocalFile
+                ? "将从手机上删除音频文件，无法恢复；正在播放的歌曲会跳到下一首。"
+                : "仅从当前列表移除，不会动手机上的文件，重新扫描后会再次出现。"}
             </DialogDescription>
           </DialogHeader>
-          <div className="flex items-center gap-2 py-2">
+          {/* 整行可点：16px 的勾选框在手机上很难点中，点文字也要能勾上 */}
+          <div
+            data-testid="delete-local-file-row"
+            role="checkbox"
+            aria-checked={deleteLocalFile}
+            aria-label="删除本地文件"
+            tabIndex={0}
+            onClick={() => setDeleteLocalFile((v) => !v)}
+            onKeyDown={(e) => {
+              if (e.key === " " || e.key === "Enter") {
+                e.preventDefault();
+                setDeleteLocalFile((v) => !v);
+              }
+            }}
+            className="flex items-center gap-2.5 min-h-11 -mx-2 px-2 rounded-md cursor-pointer select-none active:bg-muted/50"
+          >
             <Checkbox
               data-testid="delete-local-file"
+              className="size-5"
               checked={deleteLocalFile}
+              onClick={(e) => e.stopPropagation()}
               onCheckedChange={(checked) =>
                 setDeleteLocalFile(checked === true)
               }
@@ -373,7 +504,51 @@ export function LocalMusicPage({
               data-testid="confirm-local-delete"
               onClick={confirmDeleteTracks}
             >
-              删除
+              {deleteLocalFile
+                ? deleteTargets.length > 1
+                  ? `删除 ${deleteTargets.length} 个文件`
+                  : "删除文件"
+                : "从列表移除"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={t2sConfirmOpen} onOpenChange={setT2sConfirmOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>写入简体标签</DialogTitle>
+            <DialogDescription>
+              {t2sPending.some((item) => item.wouldChange) ? (
+                <>
+                  列表显示已经是简体，这一步会把简体写进文件本身：修改{" "}
+                  {t2sPending.length} 首歌曲的内嵌标签（FLAC 的
+                  TITLE/ARTIST/ALBUM）并重命名文件。音频数据不会被重新编码。
+                  文件名变更后旧播放列表路径会失效，且操作不可撤销。
+                </>
+              ) : (
+                <>
+                  预检没有检测到繁体中文字（可能是异体字或标签读取差异）。仍要对这{" "}
+                  {t2sPending.length}{" "}
+                  首写入简体标签吗？已是简体的文件不会被改动。
+                </>
+              )}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button
+              variant="ghost"
+              onClick={() => setT2sConfirmOpen(false)}
+              disabled={t2sConverting}
+            >
+              取消
+            </Button>
+            <Button
+              data-testid="confirm-traditional"
+              onClick={handleConvertTraditional}
+              disabled={t2sConverting}
+            >
+              {t2sConverting ? "转换中..." : "开始转换"}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -413,6 +588,24 @@ export function LocalMusicPage({
           <div className="h-6" />
         </DrawerContent>
       </Drawer>
+
+      {/* 扫描遮罩：列表已有内容时也要盖住整页。扫描是「一次性 setFiles」，
+          没有遮罩的话结果会在任意时刻突然替换列表，视觉上像页面自己跳了一下。 */}
+      {isLoading && !isEmpty && (
+        <div
+          data-testid="scan-overlay"
+          aria-busy="true"
+          className="fixed inset-0 z-40 flex flex-col items-center justify-center gap-4 bg-background/80 backdrop-blur-sm"
+        >
+          <RefreshCw className="h-10 w-10 text-primary/80 animate-spin" />
+          <p className="text-sm font-medium text-foreground">
+            {scanType === "full" ? "正在全盘扫描..." : "正在扫描本地音乐..."}
+          </p>
+          <p className="text-xs text-muted-foreground">
+            请保持应用在前台，扫描完成后会自动更新列表
+          </p>
+        </div>
+      )}
     </PageLayout>
   );
 }

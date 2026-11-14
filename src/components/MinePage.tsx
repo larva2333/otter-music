@@ -3,7 +3,6 @@
 import { useState } from "react";
 import {
   ListVideo,
-  Settings,
   ListMusic,
   SquarePlus,
   MoreVertical,
@@ -40,6 +39,7 @@ import {
 import { useNavigate } from "react-router-dom";
 import { useActivePlaylists } from "@/hooks/use-active-playlists";
 import { PlaylistImportDrawer } from "./PlaylistImportDrawer";
+import { MineSection } from "./PlaylistMarket/MineSection";
 import { useNetworkStatus } from "@/hooks/use-network-status";
 import { useOfflinePlaylist } from "@/hooks/use-offline-playlist";
 import { getPlayAllStartIndex } from "@/hooks/usePlayHelper";
@@ -152,12 +152,11 @@ export function MinePage({ onSelectPlaylist }: MinePageProps) {
     { label: "历史", icon: History, path: "/history" },
     { label: "列表", icon: ListVideo, path: "/queue" },
     { label: "本地", icon: HardDriveDownload, path: "/local" },
-    { label: "设置", icon: Settings, path: "/settings" },
   ];
 
   return (
     <div className="p-5 pb-bottom-stack">
-      <div className="grid grid-cols-4 gap-2 mb-6">
+      <div className="grid grid-cols-3 gap-2 mb-6">
         {quickNavs.map(({ label, icon: Icon, path }) => (
           <button
             key={path}
@@ -173,6 +172,14 @@ export function MinePage({ onSelectPlaylist }: MinePageProps) {
           </button>
         ))}
       </div>
+
+      {/* 网易云歌单：原首页分类栏的「我的」，已迁到这里 */}
+      <section className="mb-6">
+        <h2 className="text-base font-semibold text-foreground mb-1 px-1">
+          网易云歌单
+        </h2>
+        <MineSection embedded />
+      </section>
 
       {/* 标题栏 */}
       <div className="flex items-center justify-between mb-3 px-1">

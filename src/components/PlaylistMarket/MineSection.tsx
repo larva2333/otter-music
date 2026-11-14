@@ -215,7 +215,7 @@ const AlbumGrid = ({
   </div>
 );
 
-export function MineSection() {
+export function MineSection({ embedded = false }: { embedded?: boolean } = {}) {
   const navigate = useNavigate();
   const {
     mineTab,
@@ -329,7 +329,12 @@ export function MineSection() {
   const isDataReady = !!mineData[mineTab as keyof typeof mineData];
 
   return (
-    <div className="p-4 pb-bottom-stack space-y-6">
+    <div
+      className={cn(
+        // embedded：嵌在「我的」页里时不再自带外边距，由父级控制节奏
+        embedded ? "space-y-4" : "p-4 pb-bottom-stack space-y-6"
+      )}
+    >
       <div
         className={cn(
           "flex items-center justify-between mb-4 px-1 relative",

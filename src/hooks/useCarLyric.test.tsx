@@ -230,7 +230,11 @@ describe("useCarLyric", () => {
     await flush();
 
     // 歌词链路本身照常跑，只是不往原生写
-    expect(musicApi.getLyric).toHaveBeenCalledWith("lyric-1", "netease");
+    expect(musicApi.getLyric).toHaveBeenCalledWith(
+      "lyric-1",
+      "netease",
+      expect.objectContaining({ id: "netease_1" })
+    );
 
     cleanup();
   });

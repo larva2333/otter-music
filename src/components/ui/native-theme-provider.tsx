@@ -5,6 +5,7 @@ import {
   useCallback,
   useContext,
   useEffect,
+  useRef,
   useState,
 } from "react";
 import {
@@ -13,6 +14,7 @@ import {
 } from "next-themes";
 import { App } from "@capacitor/app";
 import { IS_NATIVE } from "@/lib/api/config";
+import { applySystemBarsStyle } from "@/lib/system-bars";
 import { LocalMusicPlugin } from "@/plugins/local-music";
 
 type ThemePreference = "system" | "light" | "dark";
@@ -131,6 +133,28 @@ export function NativeThemeProvider({
         ? (systemTheme ?? undefined)
         : undefined
       : themePref;
+
+  const isDarkTheme =
+    (themePref === "system" ? systemTheme : themePref) === "dark";
+  const isDarkThemeRef = useRef(isDarkTheme);
+  isDarkThemeRef.current = isDarkTheme;
+
+  // 主题变化时同步系统栏图标明暗；等初始化完成再设，避免用默认浅色闪一下
+  useEffect(() => {
+    if (!IS_NATIVE || !isReady) return;
+    void applySystemBarsStyle(isDarkTheme);
+  }, [isDarkTheme, isReady]);
+
+  // 从后台/下拉通知栏回到 App 后，部分 ROM 会重置系统栏外观，重新应用一次
+  useEffect(() => {
+    if (!IS_NATIVE) return;
+    const listener = App.addListener("resume", () => {
+      void applySystemBarsStyle(isDarkThemeRef.current);
+    });
+    return () => {
+      void listener.then((l) => l.remove());
+    };
+  }, []);
 
   if (IS_NATIVE && !isReady) {
     return <div style={{ visibility: "hidden" }}>{children}</div>;

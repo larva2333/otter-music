@@ -117,7 +117,8 @@ describe("LyricsPanel", () => {
 
     expect(musicApi.getLyric).toHaveBeenCalledWith(
       "bilibili_BV1xx411c7mD",
-      "bilibili"
+      "bilibili",
+      expect.objectContaining({ name: "Test Bilibili Video" })
     );
     expect(container?.textContent).toContain("第一句歌词");
     expect(container?.textContent).not.toContain("加载歌词中...");

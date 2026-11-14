@@ -143,7 +143,6 @@ export const SPECIAL_CATS: CatItem[] = [
 
 export const RECOMMEND_CATS: CatItem[] = [
   F("全部"),
-  { id: "mine", name: "我的" },
   { id: "featured", name: "精选" },
 
   F("华语"),
@@ -160,9 +159,8 @@ export const RECOMMEND_CATS: CatItem[] = [
   F("播客"),
 ];
 
-/** 不走网易云 browse 分页适配器的分类（含「我的」、独立 Section 与精选下的特殊子 Tab） */
+/** 不走网易云 browse 分页适配器的分类（独立 Section 与精选下的特殊子 Tab） */
 export const NON_BROWSE_CATEGORIES: ReadonlySet<string> = new Set([
-  "mine",
   "播客",
   "Alist",
   "Billboard",
@@ -174,7 +172,7 @@ export const NON_BROWSE_CATEGORIES: ReadonlySet<string> = new Set([
  * ========================================================= */
 
 /** 常驻栏固定分类：不可排序、不可删除，始终置前 */
-export const FIXED_CATS: CatItem[] = RECOMMEND_CATS.slice(0, 3);
+export const FIXED_CATS: CatItem[] = RECOMMEND_CATS.slice(0, 2);
 
 /** 可添加为常驻的全部分类目录（各分组分类平铺，含 Alist / Billboard） */
 export const ADDABLE_CATS: CatItem[] = NETEASE_CATS.flatMap((g) => g.filters);
@@ -190,7 +188,7 @@ export function resolveBarCategories(savedOrder: string[] | null): {
   const catalog = new Map(ADDABLE_CATS.map((c) => [c.id, c]));
 
   if (!savedOrder) {
-    return { fixed: FIXED_CATS, residents: RECOMMEND_CATS.slice(3) };
+    return { fixed: FIXED_CATS, residents: RECOMMEND_CATS.slice(2) };
   }
   return {
     fixed: FIXED_CATS,

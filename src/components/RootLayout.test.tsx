@@ -72,6 +72,7 @@ const capacitorMocks = vi.hoisted(() => ({
   isNativePlatform: vi.fn(),
   addListener: vi.fn(),
   minimizeApp: vi.fn(),
+  getLaunchUrl: vi.fn(),
 }));
 
 vi.mock("@capacitor/core", () => ({
@@ -99,6 +100,7 @@ vi.mock("@capacitor/app", () => ({
   App: {
     addListener: capacitorMocks.addListener,
     minimizeApp: capacitorMocks.minimizeApp,
+    getLaunchUrl: capacitorMocks.getLaunchUrl,
   },
 }));
 
@@ -126,6 +128,7 @@ describe("RootLayout", () => {
 
     capacitorMocks.isNativePlatform.mockReturnValue(false);
     capacitorMocks.minimizeApp.mockResolvedValue(undefined);
+    capacitorMocks.getLaunchUrl.mockResolvedValue(undefined);
     capacitorMocks.addListener.mockImplementation(
       (eventName: string, callback: () => void | Promise<void>) => {
         if (eventName === "backButton") {
@@ -170,6 +173,8 @@ describe("RootLayout", () => {
           children: [
             { path: "search", element: <div>Search Page</div> },
             { path: "playlist/:id", element: <div>Playlist Page</div> },
+            { path: "mine", element: <div>Mine Page</div> },
+            { path: "settings", element: <div>Settings Page</div> },
           ],
         },
       ],
@@ -186,6 +191,32 @@ describe("RootLayout", () => {
 
     return { router };
   };
+
+  it("opens the fullscreen player when launched from the notification", async () => {
+    capacitorMocks.isNativePlatform.mockReturnValue(true);
+    capacitorMocks.getLaunchUrl.mockResolvedValue({
+      url: "ottermusic://player",
+    });
+
+    renderLayout(["/search"]);
+
+    await act(async () => {});
+
+    expect(useMusicStore.getState().isFullScreenPlayer).toBe(true);
+  });
+
+  it("ignores launch urls that are not the player deep link", async () => {
+    capacitorMocks.isNativePlatform.mockReturnValue(true);
+    capacitorMocks.getLaunchUrl.mockResolvedValue({
+      url: "ottermusic://other",
+    });
+
+    renderLayout(["/search"]);
+
+    await act(async () => {});
+
+    expect(useMusicStore.getState().isFullScreenPlayer).toBe(false);
+  });
 
   it("closes the fullscreen player on real Escape without registering popstate handling", async () => {
     const addEventListenerSpy = vi.spyOn(window, "addEventListener");
@@ -231,6 +262,23 @@ describe("RootLayout", () => {
 
     expect(router.state.location.pathname).toBe("/search");
     expect(container?.textContent).toContain("Search Page");
+  });
+
+  it("navigates back instead of minimizing on native when back is pressed on /settings", async () => {
+    capacitorMocks.isNativePlatform.mockReturnValue(true);
+    window.history.replaceState({ idx: 1 }, "");
+
+    const { router } = renderLayout(["/mine", "/settings"], 1);
+
+    expect(container?.textContent).toContain("Settings Page");
+    expect(backButtonHandler).toBeDefined();
+
+    await act(async () => {
+      await backButtonHandler?.();
+    });
+
+    expect(router.state.location.pathname).toBe("/mine");
+    expect(capacitorMocks.minimizeApp).not.toHaveBeenCalled();
   });
 
   it("falls back to /search on native when there is no router history entry to go back to", async () => {

@@ -96,9 +96,12 @@ export async function embedMetadata(
 
 async function fetchCoverData(track: MusicTrack): Promise<Uint8Array | null> {
   try {
+    // 传完整曲目：本地曲目要靠歌名/歌手在线反查封面，只给路径查不到
     const picUrl = await musicApi.getPic(
       track.pic_id || track.id,
-      track.source
+      track.source,
+      800,
+      track
     );
     if (!picUrl) return null;
     const res = await fetch(picUrl);
@@ -118,9 +121,11 @@ export async function fetchEmbedLyric(
   track: MusicTrack
 ): Promise<{ lyric: string; tlyric?: string } | null> {
   try {
+    // 传完整曲目：本地曲目要靠歌名/歌手在线反查歌词，只给文件路径查不到
     const result = await musicApi.getLyric(
       track.lyric_id || track.id,
-      track.source
+      track.source,
+      track
     );
     if (!result?.lyric) return null;
     return result.tlyric

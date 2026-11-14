@@ -153,19 +153,28 @@ export const musicApi = {
 
   /* ---------------- 封面 ---------------- */
 
+  /**
+   * `trackInfo` 传入完整曲目对象。本地音源必须传：
+   * `LocalProvider.getPic` 要靠歌名/歌手去网易云反查封面，只给文件路径查不到。
+   * 缓存键已升到 v3，旧版本缓存的空结果（匹配时没有元信息）不会再命中。
+   */
   async getPic(
     idOrUrl: string,
     source: MusicSource,
-    size: number = 800
+    size: number = 800,
+    trackInfo?: MusicTrack | null
   ): Promise<string | null> {
     if (idOrUrl.startsWith("http") && source !== "bilibili") return idOrUrl;
     // v2：咪咕封面由相对路径改为补全 CDN 域名，旧缓存需作废，避免继续命中失效地址
-    const key = `pic:v2:${source}:${idOrUrl}:${size}`;
+    // v3：本地曲目改为携带完整元信息在线匹配，旧的「匹配失败」缓存需作废
+    const key = `pic:v3:${source}:${idOrUrl}:${size}`;
     return cachedFetch<string | null>(
       key,
       async () => {
         try {
-          const track = { id: idOrUrl, pic_id: idOrUrl, source } as MusicTrack;
+          const track = trackInfo
+            ? ({ ...trackInfo, source, pic_id: idOrUrl } as MusicTrack)
+            : ({ id: idOrUrl, pic_id: idOrUrl, source } as MusicTrack);
           return await MusicProviderFactory.getProvider(source).getPic(
             track,
             size
@@ -181,14 +190,22 @@ export const musicApi = {
 
   /* ---------------- 歌词 ---------------- */
 
-  async getLyric(id: string, source: MusicSource): Promise<SongLyric | null> {
-    const key = `lyric:${source}:${id}`;
+  /** `trackInfo` 同 `getPic`：本地音源需要歌名/歌手才能在线匹配歌词。 */
+  async getLyric(
+    id: string,
+    source: MusicSource,
+    trackInfo?: MusicTrack | null
+  ): Promise<SongLyric | null> {
+    // v2：本地曲目改为携带完整元信息在线匹配，旧的「匹配失败」缓存需作废
+    const key = `lyric:v2:${source}:${id}`;
 
     return cachedFetch<SongLyric | null>(
       key,
       async () => {
         try {
-          const track = { id, lyric_id: id, source } as MusicTrack;
+          const track = trackInfo
+            ? ({ ...trackInfo, source, lyric_id: id } as MusicTrack)
+            : ({ id, lyric_id: id, source } as MusicTrack);
           return await MusicProviderFactory.getProvider(source).getLyric(track);
         } catch (e) {
           logger.error("music-api", "getLyric failed", e);

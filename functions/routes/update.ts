@@ -4,8 +4,11 @@ import { Env } from "../types/hono";
 
 const app = new Hono<{ Bindings: Env }>();
 
-const GITHUB_API_URL =
-  "https://api.github.com/repos/DJChanahCJD/otter-music/releases/latest";
+/** 默认发版仓库：自己的 fork（可用环境变量 GITHUB_REPO 覆盖，格式 owner/repo） */
+const DEFAULT_GITHUB_REPO = "larva2333/otter-music";
+
+const githubReleaseApi = (repo: string) =>
+  `https://api.github.com/repos/${repo}/releases/latest`;
 
 interface GitHubRelease {
   tag_name: string;
@@ -32,7 +35,10 @@ interface UpdateInfo {
 ========================= */
 app.get("/check", async (c) => {
   try {
-    const release: GitHubRelease = await fetchRelease(c.env.GITHUB_TOKEN);
+    const release: GitHubRelease = await fetchRelease(
+      c.env.GITHUB_TOKEN,
+      c.env.GITHUB_REPO || DEFAULT_GITHUB_REPO
+    );
 
     const apk = release.assets.find((a) => a.name.endsWith(".apk"));
     if (!apk) return fail(c, "No APK found", 404);
@@ -98,7 +104,7 @@ app.get("/download", async (c) => {
    工具函数
 ========================= */
 
-async function fetchRelease(token?: string) {
+async function fetchRelease(token?: string, repo = DEFAULT_GITHUB_REPO) {
   const headers: Record<string, string> = {
     "User-Agent": "Otter-Music-App",
     Accept: "application/vnd.github.v3+json",
@@ -108,7 +114,7 @@ async function fetchRelease(token?: string) {
     headers.Authorization = `Bearer ${token}`;
   }
 
-  const resp = await fetch(GITHUB_API_URL, {
+  const resp = await fetch(githubReleaseApi(repo), {
     headers,
     cf: {
       cacheTtl: 600, // 缓存 10 分钟

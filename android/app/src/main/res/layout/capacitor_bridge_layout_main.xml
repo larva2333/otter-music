@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  覆盖 Capacitor 内置的同名布局，目的只有一个：把 WebView 换成 OtterWebView，
+  让它带上 HyperOS 状态栏点击回顶所需的 smoothScrollToPosition/scrollToPosition 等方法。
+  其余结构与 @capacitor/android 的 capacitor_bridge_layout_main.xml 保持一致。
+-->
+<androidx.coordinatorlayout.widget.CoordinatorLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    tools:context="com.getcapacitor.BridgeActivity"
+    >
+
+    <com.otterhub.music.OtterWebView
+        android:id="@+id/webview"
+        android:layout_width="fill_parent"
+        android:layout_height="fill_parent" />
+
+</androidx.coordinatorlayout.widget.CoordinatorLayout>

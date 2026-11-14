@@ -113,6 +113,41 @@ describe("musicApi local metadata", () => {
     );
   });
 
+  it("passes full track metadata to the local provider", async () => {
+    const getPic = vi.fn().mockResolvedValue("https://img.test/cover.jpg");
+    const getLyric = vi.fn().mockResolvedValue({ lyric: "[00:00.00]x" });
+    vi.mocked(MusicProviderFactory.getProvider).mockReturnValue({
+      source: "joox",
+      search: vi.fn(),
+      getUrl: vi.fn(),
+      getPic,
+      getLyric,
+    });
+
+    const track = {
+      id: "local-1",
+      name: "夜曲",
+      artist: ["周杰伦"],
+      album: "十一月的萧邦",
+      pic_id: "/music/夜曲.mp3",
+      url_id: "/music/夜曲.mp3",
+      lyric_id: "/music/夜曲.mp3",
+      source: "local" as const,
+    };
+
+    await musicApi.getPic("/music/夜曲.mp3", "local", 800, track);
+    // 本地封面要靠歌名/歌手在线反查，只传路径必然匹配不到
+    expect(getPic).toHaveBeenCalledWith(
+      expect.objectContaining({ name: "夜曲", artist: ["周杰伦"] }),
+      800
+    );
+
+    await musicApi.getLyric("/music/夜曲.mp3", "local", track);
+    expect(getLyric).toHaveBeenCalledWith(
+      expect.objectContaining({ name: "夜曲", artist: ["周杰伦"] })
+    );
+  });
+
   it("loads local lyrics from the local provider via cachedFetch", async () => {
     const getLyric = vi
       .fn()

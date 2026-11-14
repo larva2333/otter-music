@@ -67,6 +67,10 @@ export function sanitizeMediaSessionArtworkUrl(
   const trimmed = rawUrl.trim();
   if (!trimmed) return null;
 
+  // 本地文件的内嵌封面是 base64 data URL，原生插件直接解码，不需要联网也不用转 https。
+  // 不放行会把本地歌曲的通知栏/锁屏封面全部丢掉。
+  if (/^data:image\/[a-z0-9.+-]+;base64,/i.test(trimmed)) return trimmed;
+
   const normalized = forceHttps(trimmed);
 
   try {
@@ -117,10 +121,12 @@ export function useMediaSessionIntegration(
 
       try {
         const safeArtworkUrl = sanitizeMediaSessionArtworkUrl(coverUrl);
+        // 内嵌封面是内联 data URL，离线也能用，不该被 navigator.onLine 拦掉
+        const isInlineArtwork = !!safeArtworkUrl?.startsWith("data:");
 
         let safeArtwork: { src: string }[] = [];
-        if (navigator.onLine && safeArtworkUrl) {
-          if (IS_NATIVE) {
+        if (safeArtworkUrl && (isInlineArtwork || navigator.onLine)) {
+          if (IS_NATIVE && !isInlineArtwork) {
             const valid = await prefetchArtwork(safeArtworkUrl);
             if (valid) safeArtwork = [{ src: safeArtworkUrl }];
           } else {

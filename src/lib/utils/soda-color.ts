@@ -24,11 +24,14 @@ export const PARAMS = {
   sigma: 55,
   lScale: 1.01,
   lBias: -9.2,
-  lMin: 12, // 原算法:24.55
-  lMax: 28, // 原：69.34
+  // 播放器背景保留封面色相，但亮度抬到能被眼睛识别出来的深色区间：
+  // 12–28 几乎是纯黑，所有封面看起来都像同一块固定深色背景。
+  lMin: 18,
+  lMax: 42,
   cGain: 1.13,
-  cMax: 70,
-  gradientDL: -10,  // 原：-15
+  cMax: 64,
+  // 渐变上下落差加大，让"渐变"本身看得出来；底部仍落在近黑区间托住白色歌词
+  gradientDL: -22,
 } as const;
 
 /** 固定种子的伪随机数发生器，保证取色结果可复现。 */
@@ -44,14 +47,14 @@ function mulberry32(seed: number): () => number {
 
 /** sRGB(0-255) → CIELab，输入 [r,g,b] 返回 [L,a,b]。 */
 export function srgbToLab(rgb: RGB): Lab {
-  const c = [rgb[0] / 255, rgb[1] / 255, rgb[2] / 255].map(
-    (v) => (v <= 0.04045 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4))
+  const c = [rgb[0] / 255, rgb[1] / 255, rgb[2] / 255].map((v) =>
+    v <= 0.04045 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4)
   );
   const x = (0.4124 * c[0] + 0.3576 * c[1] + 0.1805 * c[2]) / 0.9505;
   const y = 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2];
   const z = (0.0193 * c[0] + 0.1192 * c[1] + 0.9505 * c[2]) / 1.089;
   const f = [x, y, z].map((v) =>
-    v > 0.008856 ? Math.cbrt(v) : (7.787 * v) + 16 / 116
+    v > 0.008856 ? Math.cbrt(v) : 7.787 * v + 16 / 116
   );
   return [116 * f[1] - 16, 500 * (f[0] - f[1]), 200 * (f[1] - f[2])];
 }

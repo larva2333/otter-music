@@ -63,13 +63,13 @@ describe("kmeans", () => {
 });
 
 describe("extractFromPixels", () => {
-  it("低色度下渐变底部为顶部 Lab 亮度 −10，且色相保持一致", () => {
+  it("低色度下渐变底部为顶部 Lab 亮度 −22，且色相保持一致", () => {
     // 选用低色度颜色，避免 Lab→RGB 越界截断干扰亮度验证
     const result = extractFromPixels(solidPixels([122, 122, 94]));
     const topLab = srgbToLab(result.top);
     const bottomLab = srgbToLab(result.bottom);
-    expect(topLab[0] - bottomLab[0]).toBeGreaterThan(9);
-    expect(topLab[0] - bottomLab[0]).toBeLessThan(11);
+    expect(topLab[0] - bottomLab[0]).toBeGreaterThan(21);
+    expect(topLab[0] - bottomLab[0]).toBeLessThan(23);
     // 渐变仅改变亮度，a/b（色相与色度）保持不变
     expect(Math.abs(bottomLab[1] - topLab[1])).toBeLessThan(2);
     expect(Math.abs(bottomLab[2] - topLab[2])).toBeLessThan(2);
@@ -82,11 +82,11 @@ describe("extractFromPixels", () => {
     expect(topL - bottomL).toBeGreaterThan(5);
   });
 
-  it("基色亮度被钳制到算法区间 [12, 28]（允许取整量化误差）", () => {
+  it("基色亮度被钳制到算法区间 [18, 42]（允许取整量化误差）", () => {
     const dark = extractFromPixels(solidPixels([5, 5, 8]));
     const bright = extractFromPixels(solidPixels([240, 232, 200]));
-    expect(srgbToLab(dark.top)[0]).toBeGreaterThanOrEqual(11);
-    expect(srgbToLab(bright.top)[0]).toBeLessThanOrEqual(29);
+    expect(srgbToLab(dark.top)[0]).toBeGreaterThanOrEqual(17);
+    expect(srgbToLab(bright.top)[0]).toBeLessThanOrEqual(43);
   });
 
   it("高占比颜色主导主色与基色色相", () => {

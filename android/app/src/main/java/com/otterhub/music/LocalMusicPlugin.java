@@ -104,7 +104,7 @@ public class LocalMusicPlugin extends Plugin {
     private static final String[] PROJECTION_MUSIC = {
             MediaStore.Audio.Media._ID, MediaStore.Audio.Media.TITLE, MediaStore.Audio.Media.ARTIST,
             MediaStore.Audio.Media.ALBUM, MediaStore.Audio.Media.DURATION, MediaStore.Audio.Media.SIZE,
-            MediaStore.Audio.Media.DATE_MODIFIED
+            MediaStore.Audio.Media.DATE_MODIFIED, MediaStore.Audio.Media.DISPLAY_NAME
     };
 
     private String cachedStorageRoot;
@@ -242,6 +242,7 @@ public class LocalMusicPlugin extends Plugin {
                 int durationCol = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.DURATION);
                 int sizeCol = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.SIZE);
                 int modifiedCol = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.DATE_MODIFIED);
+                int displayNameCol = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.DISPLAY_NAME);
 
                 do {
                     long id = cursor.getLong(idCol);
@@ -250,6 +251,7 @@ public class LocalMusicPlugin extends Plugin {
                             .put("name", formatUnknown(cursor.getString(titleCol)))
                             .put("artist", formatUnknown(cursor.getString(artistCol)))
                             .put("album", formatUnknown(cursor.getString(albumCol)))
+                            .put("fileName", cursor.getString(displayNameCol))
                             .put("duration", cursor.getLong(durationCol))
                             .put("localPath", ContentUris.withAppendedId(musicUri, id).toString())
                             .put("fileSize", cursor.getLong(sizeCol))
@@ -321,10 +323,11 @@ public class LocalMusicPlugin extends Plugin {
     private JSObject extractAudioMetadata(File file) {
         if (!file.exists() || !file.canRead()) return null;
 
-        String[] parsed = parseFileName(file.getName());
+        String[] parsed = parseFileName(file);
         JSObject audioFile = new JSObject()
                 .put("id", String.valueOf(file.hashCode()))
                 .put("localPath", file.getAbsolutePath())
+                .put("fileName", file.getName())
                 .put("fileSize", file.length())
                 .put("modifiedTime", file.lastModified())
                 .put("name", parsed[0])
@@ -462,6 +465,158 @@ public class LocalMusicPlugin extends Plugin {
         });
     }
 
+    /**
+     * 批量把本地音频的标签与文件名从繁体转成简体。
+     *
+     * 传 dryRun 时只检测不落盘，用于在 UI 上先告诉用户会改多少首。真正的转换在
+     * ioExecutor 上逐条串行执行，避免多个文件同时重写造成 IO 争抢。
+     */
+    @PluginMethod
+    public void convertToSimplified(PluginCall call) {
+        JSArray pathsArray = call.getArray("localPaths");
+        boolean renameFiles = Boolean.TRUE.equals(call.getBoolean("renameFiles", true));
+        boolean dryRun = Boolean.TRUE.equals(call.getBoolean("dryRun", false));
+
+        if (pathsArray == null || pathsArray.length() == 0) {
+            resolveError(call, "localPaths is required");
+            return;
+        }
+
+        List<String> paths = new ArrayList<>();
+        for (int i = 0; i < pathsArray.length(); i++) {
+            String path = pathsArray.optString(i);
+            if (path != null && !path.isEmpty()) paths.add(path);
+        }
+        if (paths.isEmpty()) {
+            resolveError(call, "localPaths is required");
+            return;
+        }
+
+        ioExecutor.execute(() -> {
+            T2SConverter converter = T2SConverter.get(getContext());
+            if (!converter.isReady()) {
+                mainHandler.post(() -> resolveError(call, "繁简词表加载失败"));
+                return;
+            }
+
+            JSArray items = new JSArray();
+            int changed = 0;
+            int renamed = 0;
+            int skipped = 0;
+            int failed = 0;
+
+            for (String path : paths) {
+                try {
+                    if (dryRun) {
+                        if (hasPendingConversion(path, converter)) {
+                            changed++;
+                            items.put(new JSObject()
+                                    .put("path", path)
+                                    .put("wouldChange", true));
+                        } else {
+                            skipped++;
+                        }
+                        continue;
+                    }
+
+                    MusicTagEditor.ItemResult result = MusicTagEditor.convertFile(
+                            getContext(), path, renameFiles, converter);
+
+                    if (result.hasChange()) {
+                        changed++;
+                        if (result.renamed) renamed++;
+                        items.put(new JSObject()
+                                .put("path", path)
+                                .put("newPath", result.newPath)
+                                .put("tagsChanged", result.tagsChanged)
+                                .put("renamed", result.renamed)
+                                .put("skipReason", result.skipReason));
+                    } else {
+                        skipped++;
+                    }
+                } catch (Exception e) {
+                    failed++;
+                    items.put(new JSObject()
+                            .put("path", path)
+                            .put("error", e.getMessage() != null ? e.getMessage() : e.toString()));
+                }
+            }
+
+            final int changedCount = changed;
+            final int renamedCount = renamed;
+            final int skippedCount = skipped;
+            final int failedCount = failed;
+            final JSArray resultItems = items;
+
+            mainHandler.post(() -> call.resolve(new JSObject()
+                    .put("success", true)
+                    .put("total", paths.size())
+                    .put("changed", changedCount)
+                    .put("renamed", renamedCount)
+                    .put("skipped", skippedCount)
+                    .put("failed", failedCount)
+                    .put("items", resultItems)));
+        });
+    }
+
+    /** dryRun 时判断单个文件是否存在可转换的标签或文件名。 */
+    private boolean hasPendingConversion(String localPath, T2SConverter converter) {
+        return MusicTagEditor.needsConversion(getContext(), localPath, converter);
+    }
+
+    /**
+     * 批量把文本转成简体，只用于列表显示，不写任何文件。
+     * 一次 IPC 处理整批曲目，避免逐首调用。
+     */
+    @PluginMethod
+    public void toSimplifiedTexts(PluginCall call) {
+        JSArray textsArray = call.getArray("texts");
+        if (textsArray == null || textsArray.length() == 0) {
+            resolveError(call, "texts is required");
+            return;
+        }
+
+        List<String> texts = new ArrayList<>(textsArray.length());
+        for (int i = 0; i < textsArray.length(); i++) {
+            String text = textsArray.optString(i);
+            texts.add(text == null ? "" : text);
+        }
+
+        ioExecutor.execute(() -> {
+            T2SConverter converter = T2SConverter.get(getContext());
+            if (!converter.isReady()) {
+                mainHandler.post(() -> resolveError(call, "繁简词表加载失败"));
+                return;
+            }
+            JSArray converted = new JSArray();
+            for (String text : texts) {
+                converted.put(converter.convert(text));
+            }
+            mainHandler.post(() -> resolveSuccess(call, "texts", converted));
+        });
+    }
+
+    /** 读取与音频同名的侧挂 .lrc 歌词文件。 */
+    @PluginMethod
+    public void readSidecarLyric(PluginCall call) {
+        String localPath = call.getString("localPath");
+        if (!isValid(localPath)) {
+            resolveError(call, "localPath is required");
+            return;
+        }
+
+        ioExecutor.execute(() -> {
+            String lyric = MusicTagEditor.findSidecarLyric(getContext(), localPath);
+            mainHandler.post(() -> {
+                if (lyric == null) {
+                    resolveError(call, "No sidecar lyric");
+                } else {
+                    resolveSuccess(call, "lyric", lyric);
+                }
+            });
+        });
+    }
+
     @PluginMethod
     public void deleteLocalMusic(PluginCall call) {
         String localPath = call.getString("localPath");
@@ -538,16 +693,26 @@ public class LocalMusicPlugin extends Plugin {
         }
     }
 
-    private boolean performDeleteFile(String localPath) {
+    private boolean performDeleteFile(String localPath) throws Exception {
         ContentResolver resolver = getContext().getContentResolver();
-        boolean deleted = false;
 
         if (localPath.startsWith(SCHEME_CONTENT)) {
-            deleted = tryDelete(() -> resolver.delete(Uri.parse(localPath), null, null) > 0);
+            // content:// 只能用 ContentResolver 删。绝对不能回退到 new File(localPath)：
+            // 那不是真实文件路径，exists() 恒为 false，会被当成「已删除」返回成功，
+            // 结果列表里没了、磁盘上还在，重新扫描又冒出来。
+            // SecurityException / RecoverableSecurityException 也不在这里吞掉，交给上层申请授权。
+            Uri uri = Uri.parse(localPath);
+            if (resolver.delete(uri, null, null) > 0) return true;
+            // 删除影响 0 行：记录可能已被系统清理，此时不应报失败；仍存在则算删除失败。
+            try (Cursor cursor = resolver.query(uri, new String[]{MediaStore.Audio.Media._ID}, null, null, null)) {
+                return cursor == null || !cursor.moveToFirst();
+            }
         }
-        if (!deleted) {
-            deleted = tryDelete(() -> resolver.delete(MediaStore.Audio.Media.EXTERNAL_CONTENT_URI, MediaStore.Audio.Media.DATA + "=?", new String[]{localPath}) > 0);
-        }
+
+        boolean deleted = tryDelete(() -> resolver.delete(
+                MediaStore.Audio.Media.EXTERNAL_CONTENT_URI,
+                MediaStore.Audio.Media.DATA + "=?",
+                new String[]{localPath}) > 0);
         if (!deleted) {
             File file = new File(localPath);
             deleted = !file.exists() || file.delete();
@@ -1194,14 +1359,29 @@ public class LocalMusicPlugin extends Plugin {
         }
     }
 
-    private String[] parseFileName(String fileName) {
+    /**
+     * 从文件名猜歌名与歌手。
+     * otter 自己下载的文件是「歌名 - 歌手」，第三方下载器（酷我/网易云等）
+     * 一般是「歌手 - 歌名」，方向不能一概而论，否则会显示成倒的。
+     */
+    private String[] parseFileName(File file) {
+        if (file == null) return new String[]{"未知歌曲", null};
+        String fileName = file.getName();
         if (!isValid(fileName)) return new String[]{"未知歌曲", null};
         int dot = fileName.lastIndexOf('.');
         String name = dot > 0 ? fileName.substring(0, dot) : fileName;
-        int dash = name.lastIndexOf(" - ");
-        return dash > 0 && dash < name.length() - 3 
-                ? new String[]{name.substring(0, dash).trim(), name.substring(dash + 3).trim()} 
-                : new String[]{name.trim(), null};
+        boolean otterPath = isOtterMusicDownloadPath(file);
+        int dash = otterPath ? name.lastIndexOf(" - ") : name.indexOf(" - ");
+        if (dash > 0 && dash < name.length() - 3) {
+            String left = name.substring(0, dash).trim();
+            String right = name.substring(dash + 3).trim();
+            if (!left.isEmpty() && !right.isEmpty()) {
+                return otterPath
+                        ? new String[]{left, right}
+                        : new String[]{right, left};
+            }
+        }
+        return new String[]{name.trim(), null};
     }
 
     private boolean isOtterMusicDownloadPath(File file) {
@@ -1230,8 +1410,12 @@ public class LocalMusicPlugin extends Plugin {
         call.resolve(new JSObject().put("success", false).put("error", msg).put("files", new JSArray()));
     }
 
-    private boolean tryDelete(DeleteAction action) {
-        try { return action.execute(); } catch (Exception e) { return false; }
+    private boolean tryDelete(DeleteAction action) throws Exception {
+        try { return action.execute(); }
+        // 授权异常必须穿透到调用方：吞掉会变成「删不掉但静默返回失败/误判成功」，
+        // handleRecoverableDelete 的授权弹窗永远不会被触发。
+        catch (SecurityException e) { throw e; }
+        catch (Exception e) { return false; }
     }
 
     private interface DeleteAction { boolean execute() throws Exception; }

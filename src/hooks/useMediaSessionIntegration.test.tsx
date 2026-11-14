@@ -105,6 +105,15 @@ describe("useMediaSessionIntegration", () => {
     );
   });
 
+  it("keeps inline base64 artwork for local files", () => {
+    const dataUrl = "data:image/jpeg;base64,AAAA";
+    expect(sanitizeMediaSessionArtworkUrl(dataUrl)).toBe(dataUrl);
+    // 其他 data 类型仍应拒绝
+    expect(
+      sanitizeMediaSessionArtworkUrl("data:text/html;base64,AAAA")
+    ).toBeNull();
+  });
+
   it("drops unsafe artwork URL", () => {
     expect(sanitizeMediaSessionArtworkUrl("javascript:alert(1)")).toBeNull();
     expect(

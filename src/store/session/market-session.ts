@@ -141,7 +141,9 @@ export const useMarketSession = create<MarketSessionState>()(
     }),
     {
       name: "market-session-storage",
-      storage: createJSONStorage(() => sessionStorage),
+      // 用 localStorage 而不是 sessionStorage：冷启动后切回看过的分类/搜索能直接出缓存，
+      // 不再整块 loading。数据本身由接口层 cachedFetch 控制 1 天过期。
+      storage: createJSONStorage(() => localStorage),
       partialize: (state) => ({
         mineData: state.mineData,
         listSnapshots: state.listSnapshots,

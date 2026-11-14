@@ -12,6 +12,7 @@ import com.getcapacitor.BridgeActivity;
 import com.getcapacitor.PluginHandle;
 
 public class MainActivity extends BridgeActivity {
+
     @Override
     public void onCreate(Bundle savedInstanceState) {
         // Android 15 enforces edge-to-edge; older versions should let the
@@ -38,13 +39,23 @@ public class MainActivity extends BridgeActivity {
     }
 
     /**
-     * 屏幕方向插件只能锁定为固定方向（"landscape" → SCREEN_ORIENTATION_LANDSCAPE），设备旋转 180° 时不会翻转。
-     * 这里把固定横屏改写为「传感器横屏」，允许在两个横屏方向间跟随设备翻转，同时仍然禁止竖屏。
+     * 屏幕方向的两处适配，都在真机上验证过：
+     *
+     * 1. 插件的 lock("landscape") 只能锁固定横屏（SCREEN_ORIENTATION_LANDSCAPE），
+     *    设备旋转 180° 时不会翻转。改写成「传感器横屏」，允许在两个横向之间翻转，
+     *    同时仍然禁止竖屏。
+     *
+     * 2. 插件的 unlock() 会设 SCREEN_ORIENTATION_UNSPECIFIED，这个值**不理会系统的
+     *    「自动旋转」开关**——用户明明在控制中心锁定了竖屏，退出横屏播放后整个 App
+     *    却开始跟着手机转，看起来就像「方向锁被应用关掉了」。改写为
+     *    SCREEN_ORIENTATION_USER，按用户当前偏好决定：锁着就保持不动，开着才跟随传感器。
      */
     @Override
     public void setRequestedOrientation(int requestedOrientation) {
         if (requestedOrientation == ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE) {
             requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE;
+        } else if (requestedOrientation == ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED) {
+            requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_USER;
         }
         super.setRequestedOrientation(requestedOrientation);
     }

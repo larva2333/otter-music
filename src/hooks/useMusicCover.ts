@@ -27,7 +27,8 @@ export function useMusicCover(
 
     const fetchCover = async () => {
       try {
-        const url = await musicApi.getPic(pic_id, source);
+        // 传完整曲目：本地音源要靠歌名/歌手在线反查封面，只给路径查不到
+        const url = await musicApi.getPic(pic_id, source, 800, track);
         if (active) {
           setState({ url, picId: pic_id, source });
         }
@@ -44,7 +45,7 @@ export function useMusicCover(
     return () => {
       active = false;
     };
-  }, [track?.pic_id, track?.source, enabled]);
+  }, [track, enabled]);
 
   // Derived state: if disabled or no track, return null.
   // If the current track doesn't match what we've loaded, return null (it's loading).

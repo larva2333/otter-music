@@ -44,6 +44,7 @@ import {
   Check,
   MoreVertical,
   ListPlus,
+  Languages,
 } from "lucide-react";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
@@ -80,6 +81,8 @@ interface MusicTrackListProps {
   showItemRemove?: boolean;
   preselectedIds?: Set<string>;
   onSelectionModeChange?: (active: boolean) => void;
+  /** 提供后，多选菜单显示「写入简体标签」。仅本地音源需要。 */
+  onBatchConvertToSimplified?: (tracks: MusicTrack[]) => void;
 }
 
 const ROW_HEIGHT = 60;
@@ -138,6 +141,7 @@ export function MusicTrackList({
   showItemRemove = true,
   preselectedIds,
   onSelectionModeChange,
+  onBatchConvertToSimplified,
 }: MusicTrackListProps) {
   const [isSelectionMode, setIsSelectionMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
@@ -249,12 +253,20 @@ export function MusicTrackList({
   const handleBatchRemove = async () => {
     if (!onRemove && !onBatchRemove) return;
     const count = selectedIds.size;
-    if (!confirm(`确定${removeLabel}选中的 ${count} 首歌曲吗？`)) return;
+    // confirmRemove=false 表示上层自带确认弹窗（本地音乐页的删除对话框）。
+    // 这里再 confirm 一次就会出现「弹两次」。
+    const delegatesConfirm = confirmRemove === false;
+    if (
+      !delegatesConfirm &&
+      !confirm(`确定${removeLabel}选中的 ${count} 首歌曲吗？`)
+    )
+      return;
 
     const selected = getSelectedTracks();
     if (onBatchRemove) {
       onBatchRemove(selected);
-      toast.success(`已${removeLabel} ${count} 首`);
+      // 上层的对话框还没确认，抢在前面报「已删除」是假的
+      if (!delegatesConfirm) toast.success(`已${removeLabel} ${count} 首`);
       resetSelection();
       return;
     }
@@ -274,6 +286,14 @@ export function MusicTrackList({
     if (!selected.length) return;
     resetSelection();
     await downloadMusicTrackBatch(selected, parseInt(quality));
+  };
+
+  /** 写入简体标签：交给上层检测与确认，这里只负责把选中项传出去 */
+  const handleBatchConvertToSimplified = () => {
+    const selected = getSelectedTracks();
+    if (!selected.length || !onBatchConvertToSimplified) return;
+    onBatchConvertToSimplified(selected);
+    resetSelection();
   };
 
   const dropAnimation: DropAnimation = {
@@ -383,6 +403,15 @@ export function MusicTrackList({
                   >
                     <ListPlus className="mr-2 h-3.5 w-3.5" /> 添加到歌单
                   </div>
+                  {onBatchConvertToSimplified && (
+                    <div
+                      className="flex items-center px-2 py-1.5 text-xs rounded-sm hover:bg-accent cursor-pointer"
+                      data-testid="batch-convert-traditional"
+                      onClick={handleBatchConvertToSimplified}
+                    >
+                      <Languages className="mr-2 h-3.5 w-3.5" /> 写入简体标签
+                    </div>
+                  )}
                   {(onRemove || onBatchRemove) && (
                     <>
                       <div className="border-t my-1" />

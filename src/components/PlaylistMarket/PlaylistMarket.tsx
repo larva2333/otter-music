@@ -1,5 +1,6 @@
 import {
   useEffect,
+  useLayoutEffect,
   useState,
   useCallback,
   useMemo,
@@ -28,8 +29,7 @@ import { useMusicStore } from "@/store/music-store";
 import { useScrollSave } from "@/hooks/use-scroll-save";
 import { usePagination } from "@/hooks/use-pagination";
 import { useMarketSession } from "@/store/session/market-session";
-import { MineSection } from "./MineSection";
-import { PlaylistGrid } from "./PlaylistGrid";
+import { PlaylistGrid, PlaylistGridSkeleton } from "./PlaylistGrid";
 import { PodcastSection } from "./PodcastSection";
 import { AlistSection } from "./AlistSection";
 import { BillboardSection } from "./BillboardSection";
@@ -38,13 +38,14 @@ import { logger } from "@/lib/logger";
 
 const PAGE_SIZE = 30;
 const SUB_TAB_HEIGHT = "h-8";
+/** 首页同时保留在 DOM 里的分类网格数量（含当前），用于避免切回时图片重新解码 */
+const MAX_KEPT_GRIDS = 4;
 
 const getSnapshotKey = (category: string, tab: string) =>
   `market-snapshot:${category}:${category === "featured" ? tab : "default"}`;
 
 /** 特殊分类 → 独立 Section 组件；未命中则走下方网易云歌单浏览分支 */
 const MARKET_SECTIONS: Record<string, ComponentType> = {
-  mine: MineSection,
   播客: PodcastSection,
   Alist: AlistSection,
   Billboard: BillboardSection,
@@ -53,9 +54,14 @@ const MARKET_SECTIONS: Record<string, ComponentType> = {
 export function PlaylistMarket() {
   const navigate = useNavigate();
   const rawLastCategory = useMusicStore((s) => s.lastPlaylistCategory);
-  // 历史版本 Alist 分类 id 为小写，归一化为大写
+  // 历史版本 Alist 分类 id 为小写，归一化为大写；
+  // 「我的」已迁到「我的」页，旧持久值回落到「全部」
   const activeCategory =
-    rawLastCategory === "alist" ? "Alist" : rawLastCategory;
+    rawLastCategory === "alist"
+      ? "Alist"
+      : rawLastCategory === "mine"
+        ? "全部"
+        : rawLastCategory;
   const setActiveCategory = useMusicStore((s) => s.setLastPlaylistCategory);
   const featuredTab = useMusicStore(
     (s) => s.lastFeaturedTab || SPECIAL_CATS[0].id
@@ -69,6 +75,7 @@ export function PlaylistMarket() {
   const scrollContainerRef = useRef<HTMLDivElement>(null);
 
   const saveListSnapshot = useMarketSession((s) => s.saveListSnapshot);
+  const listSnapshots = useMarketSession((s) => s.listSnapshots);
   const searchCache = useMarketSession((s) => s.searchCache);
   const saveSearchCache = useMarketSession((s) => s.saveSearchCache);
 
@@ -84,6 +91,31 @@ export function PlaylistMarket() {
     !(activeCategory === "全部" && !!searchQuery);
 
   const isSearchEnabled = activeCategory === "全部" && !!searchQuery;
+
+  // 当前 browse 里的 items 属于哪个快照 key。分类刚切换、effect 还没跑时两者不等，
+  // 此时禁用分页观察器，避免拿新分类的 adapter 去请求旧分类的 offset。
+  const listKeyRef = useRef(snapshotKey);
+  const isKeySwitching = listKeyRef.current !== snapshotKey;
+
+  // 访问过的分类网格保留在 DOM 里（最多 4 个），切换时只切显示状态。
+  // 这样切回去时 <img> 节点不会重新挂载，也就不会重新解码、不会再闪。
+  const [keptKeys, setKeptKeys] = useState<string[]>(() => [snapshotKey]);
+
+  const renderKeys = useMemo(
+    () =>
+      keptKeys.includes(snapshotKey) ? keptKeys : [...keptKeys, snapshotKey],
+    [keptKeys, snapshotKey]
+  );
+
+  useEffect(() => {
+    setKeptKeys((prev) => {
+      if (prev.includes(snapshotKey)) return prev;
+      const next = [...prev, snapshotKey];
+      return next.length > MAX_KEPT_GRIDS
+        ? next.slice(next.length - MAX_KEPT_GRIDS)
+        : next;
+    });
+  }, [snapshotKey]);
 
   const browseAdapter = useMemo(
     () => ({
@@ -117,7 +149,7 @@ export function PlaylistMarket() {
     adapter: browseAdapter,
     getId: (p) => p.id,
     pageSize: PAGE_SIZE,
-    enabled: isBrowseEnabled,
+    enabled: isBrowseEnabled && !isKeySwitching,
     onError: (err, offset) =>
       logger.error("PlaylistMarket", "Market load failed", err, {
         category: activeCategory,
@@ -154,7 +186,8 @@ export function PlaylistMarket() {
 
   // Save browse snapshots
   useEffect(() => {
-    if (!isBrowseEnabled || browse.items.length === 0) return;
+    // 分类刚切换、列表还是上一个分类的旧数据时不要写快照，否则会污染新 key
+    if (!isBrowseEnabled || isKeySwitching || browse.items.length === 0) return;
     const key = getSnapshotKey(activeCategory, featuredTab);
     saveListSnapshot(key, {
       items: browse.items,
@@ -178,7 +211,11 @@ export function PlaylistMarket() {
   }, [searchQuery, search.items, search.offset, search.hasMore]);
 
   // Category switch
-  useEffect(() => {
+  // 用 useLayoutEffect：分类切换必须在浏览器绘制前把列表换成新分类的数据，
+  // 否则会先画一帧「上一个分类的歌单」，看起来就是闪一下。
+  useLayoutEffect(() => {
+    listKeyRef.current = snapshotKey;
+
     if (activeCategory === "全部") {
       if (searchCache) {
         setSearchInputValue(searchCache.query);
@@ -273,9 +310,44 @@ export function PlaylistMarket() {
   const active = isSearchActive ? search : browse;
   const ActiveSection = MARKET_SECTIONS[activeCategory];
 
+  // 每个保留在 DOM 里的网格对应哪份数据：
+  // 当前分类用分页状态（切 key 的那一帧还没 restore，就先看快照，保证 key 不变、DOM 不重建），
+  // 其余分类用各自的快照。
+  const gridLists = useMemo(() => {
+    const map = new Map<string, MarketPlaylist[]>();
+    for (const key of renderKeys) {
+      const snapshotItems = listSnapshots[key]?.items ?? [];
+      if (key === snapshotKey && !isKeySwitching) {
+        map.set(key, browse.items);
+      } else {
+        map.set(key, snapshotItems);
+      }
+    }
+    return map;
+  }, [renderKeys, snapshotKey, isKeySwitching, listSnapshots, browse.items]);
+
+  const currentGridList = gridLists.get(snapshotKey) ?? [];
+  const showGridSkeleton =
+    currentGridList.length === 0 && (browse.loading || isKeySwitching);
+
+  // 骨架卡片数量对齐上一屏的条数：切换分类时页面高度不塌，观感上不会「跳一下」
+  const lastCountRef = useRef(0);
+  useEffect(() => {
+    if (browse.items.length > 0) lastCountRef.current = browse.items.length;
+  }, [browse.items.length]);
+  const skeletonCount = Math.max(12, lastCountRef.current);
+
+  const handleOpenPlaylist = useCallback(
+    (id: string) => navigate(`/netease-playlist/${id}`),
+    [navigate]
+  );
+
   return (
     <div className="flex flex-col h-full bg-background/50 animate-in fade-in duration-500">
-      <header className="sticky top-0 z-20 bg-background/90 backdrop-blur-xl border-b border-border/20 shadow-sm">
+      <header
+        data-tap-top=""
+        className="sticky top-0 z-20 bg-background/90 backdrop-blur-xl border-b border-border/20 shadow-sm"
+      >
         <div className="flex items-center justify-between px-3 py-1.5 gap-2">
           <div className="flex-1 overflow-hidden relative">
             <div
@@ -318,7 +390,11 @@ export function PlaylistMarket() {
         </div>
       </header>
 
-      <main ref={scrollRef} className="flex-1 overflow-y-auto custom-scrollbar">
+      <main
+        ref={scrollRef}
+        data-page-scroll=""
+        className="flex-1 overflow-y-auto custom-scrollbar"
+      >
         {ActiveSection ? (
           <ActiveSection />
         ) : (
@@ -397,18 +473,40 @@ export function PlaylistMarket() {
               <AwardsSection />
             ) : (
               <>
-                {active.loading ? (
-                  <div className="h-60 flex flex-col items-center justify-center gap-3 text-muted-foreground">
-                    <Loader2 className="h-6 w-6 animate-spin text-primary" />
-                    <span className="text-xs tracking-widest uppercase opacity-50">
-                      加载中...
-                    </span>
-                  </div>
+                {isSearchActive ? (
+                  active.loading && active.items.length === 0 ? (
+                    <PlaylistGridSkeleton />
+                  ) : (
+                    <PlaylistGrid
+                      list={active.items}
+                      onClick={handleOpenPlaylist}
+                    />
+                  )
                 ) : (
-                  <PlaylistGrid
-                    list={active.items}
-                    onClick={(id) => navigate(`/netease-playlist/${id}`)}
-                  />
+                  <>
+                    {/* 访问过的分类网格都留在 DOM 里（保留 <img> 节点和滚动状态），
+                        非当前分类用 display:none 移出渲染树。
+                        不能改成 absolute + visibility:hidden 叠放：定位元素会画在
+                        正常流的网格之上，visibility 的那一帧还没生效时，
+                        上一屏的标题会直接盖在新标题上（实测会持续 2~3 帧）。 */}
+                    <div className="relative">
+                      {renderKeys.map((key) => (
+                        <div
+                          key={key}
+                          aria-hidden={key !== snapshotKey}
+                          className={key === snapshotKey ? undefined : "hidden"}
+                        >
+                          <PlaylistGrid
+                            list={gridLists.get(key) ?? []}
+                            onClick={handleOpenPlaylist}
+                          />
+                        </div>
+                      ))}
+                    </div>
+                    {showGridSkeleton && (
+                      <PlaylistGridSkeleton count={skeletonCount} />
+                    )}
+                  </>
                 )}
 
                 <div

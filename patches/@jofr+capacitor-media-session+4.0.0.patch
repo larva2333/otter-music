@@ -20,17 +20,33 @@ index e273185..b430341 100644
 +    }
  }
 diff --git a/node_modules/@jofr/capacitor-media-session/android/src/main/java/io/github/jofr/capacitor/mediasessionplugin/MediaSessionPlugin.java b/node_modules/@jofr/capacitor-media-session/android/src/main/java/io/github/jofr/capacitor/mediasessionplugin/MediaSessionPlugin.java
-index 6f54b7f..0c325e7 100644
+index 6f54b7f..59ac0e8 100644
 --- a/node_modules/@jofr/capacitor-media-session/android/src/main/java/io/github/jofr/capacitor/mediasessionplugin/MediaSessionPlugin.java
 +++ b/node_modules/@jofr/capacitor-media-session/android/src/main/java/io/github/jofr/capacitor/mediasessionplugin/MediaSessionPlugin.java
-@@ -1,5 +1,6 @@
+@@ -1,11 +1,13 @@
  package io.github.jofr.capacitor.mediasessionplugin;
  
 +import android.app.Activity;
  import android.content.ComponentName;
  import android.content.Context;
  import android.content.Intent;
-@@ -41,10 +42,14 @@ public class MediaSessionPlugin extends Plugin {
+ import android.content.ServiceConnection;
+ import android.graphics.Bitmap;
+ import android.graphics.BitmapFactory;
++import android.net.Uri;
+ import android.os.IBinder;
+ import android.support.v4.media.session.PlaybackStateCompat;
+ import android.util.Base64;
+@@ -35,16 +37,23 @@ import java.util.Map;
+ public class MediaSessionPlugin extends Plugin {
+     private static final String TAG = "MediaSessionPlugin";
+ 
++    /** 点通知栏打开「正在播放」界面用的深链，需与前端 RootLayout 里的判断保持一致。 */
++    private static final String OPEN_PLAYER_URL = "ottermusic://player";
++
+     private boolean startServiceOnlyDuringPlayback = true;
+ 
+     private String title = "";
      private String artist = "";
      private String album = "";
      private Bitmap artwork = null;
@@ -45,7 +61,7 @@ index 6f54b7f..0c325e7 100644
      private final Map<String, PluginCall> actionHandlers = new HashMap<>();
  
      private MediaSessionService service = null;
-@@ -54,8 +59,9 @@ public class MediaSessionPlugin extends Plugin {
+@@ -54,8 +63,9 @@ public class MediaSessionPlugin extends Plugin {
          public void onServiceConnected(ComponentName componentName, IBinder iBinder) {
              MediaSessionService.LocalBinder binder = (MediaSessionService.LocalBinder) iBinder;
              service = binder.getService();
@@ -57,7 +73,7 @@ index 6f54b7f..0c325e7 100644
              updateServiceMetadata();
              updateServicePlaybackState();
              updateServicePositionState();
-@@ -64,9 +70,30 @@ public class MediaSessionPlugin extends Plugin {
+@@ -64,9 +74,41 @@ public class MediaSessionPlugin extends Plugin {
          @Override
          public void onServiceDisconnected(ComponentName componentName) {
              Log.d(TAG, "Disconnected from MediaSessionService");
@@ -72,23 +88,34 @@ index 6f54b7f..0c325e7 100644
 +     * 直接取 getClass() 会抛 NPE 并中断 onServiceConnected，
 +     * 导致 connectAndInitialize 被跳过、Service.plugin 恒为 null，
 +     * 之后任何 update() 都会在 plugin.hasActionHandler() 处崩溃。故此处必须容忍 null。
++     *
++     * 带上 ACTION_VIEW + 自定义 scheme：Capacitor App 插件只在
++     * ACTION_VIEW 且 Intent 有 data 时派发 appUrlOpen（热启动），
++     * 冷启动则通过 App.getLaunchUrl() 拿到同一个 Uri。
++     * 前端据此直接展开全屏播放器，而不是停在原来那个页面。
 +     */
 +    private Intent buildContentIntent() {
++        final Intent intent;
 +        final Activity activity = getActivity();
 +        if (activity != null) {
-+            return new Intent(activity, activity.getClass());
++            intent = new Intent(activity, activity.getClass());
++        } else {
++            final Intent launchIntent = getContext()
++                    .getPackageManager()
++                    .getLaunchIntentForPackage(getContext().getPackageName());
++            intent = launchIntent != null ? launchIntent : new Intent();
 +        }
 +
-+        final Intent launchIntent = getContext()
-+                .getPackageManager()
-+                .getLaunchIntentForPackage(getContext().getPackageName());
-+        return launchIntent != null ? launchIntent : new Intent();
++        intent.setAction(Intent.ACTION_VIEW);
++        intent.setData(Uri.parse(OPEN_PLAYER_URL));
++        intent.addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP);
++        return intent;
 +    }
 +
      @Override
      public void load() {
          super.load();
-@@ -82,7 +109,8 @@ public class MediaSessionPlugin extends Plugin {
+@@ -82,7 +124,8 @@ public class MediaSessionPlugin extends Plugin {
      }
  
      public void startMediaService() {
@@ -98,7 +125,7 @@ index 6f54b7f..0c325e7 100644
          ContextCompat.startForegroundService(getContext(), intent);
          getContext().bindService(intent, serviceConnection, Context.BIND_AUTO_CREATE);
      }
-@@ -92,6 +120,7 @@ public class MediaSessionPlugin extends Plugin {
+@@ -92,6 +135,7 @@ public class MediaSessionPlugin extends Plugin {
          service.setArtist(artist);
          service.setAlbum(album);
          service.setArtwork(artwork);
@@ -106,7 +133,7 @@ index 6f54b7f..0c325e7 100644
          service.update();
      }
  
-@@ -187,10 +216,78 @@ public class MediaSessionPlugin extends Plugin {
+@@ -187,10 +231,78 @@ public class MediaSessionPlugin extends Plugin {
          call.resolve();
      }
  
@@ -187,7 +214,7 @@ index 6f54b7f..0c325e7 100644
          if (service != null) { service.updatePossibleActions(); };
      }
 diff --git a/node_modules/@jofr/capacitor-media-session/android/src/main/java/io/github/jofr/capacitor/mediasessionplugin/MediaSessionService.java b/node_modules/@jofr/capacitor-media-session/android/src/main/java/io/github/jofr/capacitor/mediasessionplugin/MediaSessionService.java
-index cb0417f..8816841 100644
+index cb0417f..1c6f7d4 100644
 --- a/node_modules/@jofr/capacitor-media-session/android/src/main/java/io/github/jofr/capacitor/mediasessionplugin/MediaSessionService.java
 +++ b/node_modules/@jofr/capacitor-media-session/android/src/main/java/io/github/jofr/capacitor/mediasessionplugin/MediaSessionService.java
 @@ -21,10 +21,14 @@ import androidx.core.app.NotificationCompat;
@@ -248,7 +275,7 @@ index cb0417f..8816841 100644
      private boolean possibleActionsUpdate = true;
      private boolean playbackStateUpdate = false;
      private boolean mediaMetadataUpdate = false;
-@@ -82,6 +108,12 @@ public class MediaSessionService extends Service {
+@@ -82,8 +108,26 @@ public class MediaSessionService extends Service {
      public void connectAndInitialize(MediaSessionPlugin plugin, Intent intent) {
          this.plugin = plugin;
  
@@ -260,8 +287,32 @@ index cb0417f..8816841 100644
 +
          mediaSession = new MediaSessionCompat(this, "WebViewMediaSession");
          mediaSession.setCallback(new MediaSessionCallback(plugin));
++
++        // 灵动岛、锁屏媒体控件、系统媒体卡片、蓝牙车机这些入口点击时用的是
++        // sessionActivity，而通知栏点击走的是 notification 的 contentIntent，
++        // 两者是彼此独立的通道。不设置 sessionActivity 时 dumpsys media_session
++        // 里 launchIntent=null，系统只能把 App 拉到前台、不带深链，
++        // 于是停在用户原来那页而不是播放页。这里复用同一个带深链的 intent。
++        mediaSession.setSessionActivity(PendingIntent.getActivity(
++                this,
++                1,
++                intent,
++                PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT));
++
          mediaSession.setActive(true);
-@@ -149,14 +181,90 @@ public class MediaSessionService extends Service {
+ 
+         playbackStateBuilder = new PlaybackStateCompat.Builder()
+@@ -105,7 +149,8 @@ public class MediaSessionService extends Service {
+         notificationBuilder = new NotificationCompat.Builder(this, "playback")
+                 .setStyle(notificationStyle)
+                 .setSmallIcon(R.drawable.ic_baseline_volume_up_24)
+-                .setContentIntent(PendingIntent.getActivity(getApplicationContext(), 0, intent, PendingIntent.FLAG_IMMUTABLE))
++                // FLAG_UPDATE_CURRENT：contentIntent 带深链 data，复用旧 PendingIntent 会丢掉新 Intent
++                .setContentIntent(PendingIntent.getActivity(getApplicationContext(), 0, intent, PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT))
+                 .setVisibility(NotificationCompat.VISIBILITY_PUBLIC);
+ 
+         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+@@ -149,14 +194,90 @@ public class MediaSessionService extends Service {
      public void destroy() {
          stopForeground(true);
          stopSelf();
@@ -352,7 +403,7 @@ index cb0417f..8816841 100644
      public void setPlaybackState(int playbackState) {
          if (this.playbackState != playbackState) {
              this.playbackState = playbackState;
-@@ -173,6 +281,60 @@ public class MediaSessionService extends Service {
+@@ -173,6 +294,60 @@ public class MediaSessionService extends Service {
          }
      }
  
@@ -413,7 +464,7 @@ index cb0417f..8816841 100644
      public void setArtist(String artist) {
          if (!this.artist.equals(artist)) {
              this.artist = artist;
-@@ -219,18 +381,26 @@ public class MediaSessionService extends Service {
+@@ -219,18 +394,26 @@ public class MediaSessionService extends Service {
  
      @SuppressLint("RestrictedApi")
      public void update() {
@@ -442,7 +493,7 @@ index cb0417f..8816841 100644
                      if (actionName.equals("play") && playbackState != PlaybackStateCompat.STATE_PAUSED) {
                          continue;
                      }
-@@ -238,13 +408,26 @@ public class MediaSessionService extends Service {
+@@ -238,13 +421,26 @@ public class MediaSessionService extends Service {
                          continue;
                      }
  
@@ -470,7 +521,7 @@ index cb0417f..8816841 100644
                              activeCompactViewActionIndices[compactNotificationActionIndicesIndex] = notificationActionIndex;
                              compactNotificationActionIndicesIndex++;
                          }
-@@ -253,8 +436,10 @@ public class MediaSessionService extends Service {
+@@ -253,8 +449,10 @@ public class MediaSessionService extends Service {
                  }
              }
  
@@ -483,7 +534,7 @@ index cb0417f..8816841 100644
              }
              if (notificationStyle != null) {
                if (compactNotificationActionIndicesIndex > 0) {
-@@ -276,8 +461,28 @@ public class MediaSessionService extends Service {
+@@ -276,8 +474,28 @@ public class MediaSessionService extends Service {
          }
  
          if (mediaMetadataUpdate && mediaMetadataBuilder != null) {
@@ -513,7 +564,7 @@ index cb0417f..8816841 100644
                      .putString(MediaMetadataCompat.METADATA_KEY_ARTIST, artist)
                      .putString(MediaMetadataCompat.METADATA_KEY_ALBUM, album)
                      .putBitmap(MediaMetadataCompat.METADATA_KEY_ALBUM_ART, artwork)
-@@ -289,7 +494,7 @@ public class MediaSessionService extends Service {
+@@ -289,7 +507,7 @@ public class MediaSessionService extends Service {
          if (notificationUpdate && notificationBuilder != null) {
              notificationBuilder
                      .setContentTitle(title)

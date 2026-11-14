@@ -325,7 +325,7 @@ export function MusicSearchView({
   /* ---------------- UI ---------------- */
   return (
     <div className="flex h-full min-h-0 flex-col bg-background">
-      <div className="shrink-0 border-b border-border/40 p-3">
+      <div data-tap-top="" className="shrink-0 border-b border-border/40 p-3">
         <div ref={wrapperRef} className="relative w-full">
           {/* 搜索框主体 */}
           <div className="relative flex h-11 items-center rounded-xl bg-muted/40 px-3 transition-colors focus-within:bg-background focus-within:ring-1 focus-within:ring-ring focus-within:shadow-sm hover:bg-muted/60">
@@ -407,6 +407,7 @@ export function MusicSearchView({
         ) : (
           <div
             ref={resultsScrollRef}
+            data-page-scroll=""
             className="flex h-full min-h-0 flex-col overflow-y-auto"
           >
             <MusicTrackList

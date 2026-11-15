@@ -52,7 +52,8 @@ export const createSearchSlice: StateCreator<
   setSearchIntent: (searchIntent) => set({ searchIntent }),
   setSearchResults: (searchResults) => set({ searchResults }),
   setSearchCategories: (searchCategories) => set({ searchCategories }),
-  setSearchCategoryPaging: (searchCategoryPaging) => set({ searchCategoryPaging }),
+  setSearchCategoryPaging: (searchCategoryPaging) =>
+    set({ searchCategoryPaging }),
   setSearchCategoryLoading: (searchCategoryLoading) =>
     set({ searchCategoryLoading }),
   setSearchTab: (searchTab) => set({ searchTab }),

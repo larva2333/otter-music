@@ -96,9 +96,9 @@ export function NativeThemeProvider({
   // 首启时把当前偏好补写一份给原生（升级上来的用户 SharedPreferences 里还没有）
   useEffect(() => {
     if (!IS_NATIVE) return;
-    void LocalMusicPlugin.setStoredTheme({ value: readStoredPreference() }).catch(
-      () => {},
-    );
+    void LocalMusicPlugin.setStoredTheme({
+      value: readStoredPreference(),
+    }).catch(() => {});
   }, []);
 
   useEffect(() => {
@@ -168,7 +168,10 @@ export function NativeThemeProvider({
       : "#fafcff";
     document.documentElement.style.colorScheme = "";
     try {
-      localStorage.setItem("otter_resolved_theme", isDarkTheme ? "dark" : "light");
+      localStorage.setItem(
+        "otter_resolved_theme",
+        isDarkTheme ? "dark" : "light"
+      );
     } catch {}
   }, [isDarkTheme, isReady]);
 

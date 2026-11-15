@@ -16,7 +16,9 @@ describe("fetchSearchCategories", () => {
     vi.mocked(searchWeb).mockImplementation(async (_keyword, type) => {
       if (type === 100) return { artists: [{ id: 1, name: "周杰伦" }] };
       if (type === 10) {
-        return { albums: [{ id: 2, name: "叶惠美", artist: { name: "周杰伦" } }] };
+        return {
+          albums: [{ id: 2, name: "叶惠美", artist: { name: "周杰伦" } }],
+        };
       }
       return { playlists: [{ id: 3, name: "周杰伦热门" } as never] };
     });
@@ -39,15 +41,22 @@ describe("fetchSearchCategories", () => {
   });
 
   it("总数超过本页时标记还可以翻页，并按 offset 取下一页", async () => {
-    vi.mocked(searchWeb).mockImplementation(async (_keyword, type, _limit, offset) => {
-      if (type === 100) {
-        return {
-          artists: [{ id: offset === 0 ? 1 : 2, name: offset === 0 ? "周杰伦" : "周杰伦." }],
-          artistCount: 40,
-        };
+    vi.mocked(searchWeb).mockImplementation(
+      async (_keyword, type, _limit, offset) => {
+        if (type === 100) {
+          return {
+            artists: [
+              {
+                id: offset === 0 ? 1 : 2,
+                name: offset === 0 ? "周杰伦" : "周杰伦.",
+              },
+            ],
+            artistCount: 40,
+          };
+        }
+        return {};
       }
-      return {};
-    });
+    );
 
     const first = await fetchSearchCategoryPage("周杰伦", "artist", 0);
     const next = await fetchSearchCategoryPage("周杰伦", "artist", 20);
@@ -66,7 +75,9 @@ describe("fetchSearchCategories", () => {
     vi.mocked(searchWeb).mockImplementation(async (_keyword, type) => {
       if (type === 100) throw new Error("down");
       if (type === 10) {
-        return { albums: [{ id: 2, name: "叶惠美", artist: { name: "周杰伦" } }] };
+        return {
+          albums: [{ id: 2, name: "叶惠美", artist: { name: "周杰伦" } }],
+        };
       }
       return { playlists: [{ id: 3, name: "周杰伦热门" } as never] };
     });
@@ -100,6 +111,10 @@ describe("fetchSearchCategories", () => {
 
     expect(result.artists).toEqual([{ id: "1", name: "周杰伦" }]);
     expect(result.playlists).toEqual([{ id: "9", name: "周杰伦热门" }]);
-    expect(result.hasMore).toEqual({ artist: false, album: false, playlist: false });
+    expect(result.hasMore).toEqual({
+      artist: false,
+      album: false,
+      playlist: false,
+    });
   });
 });

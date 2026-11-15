@@ -35,7 +35,10 @@ function useSelectContext(component: string) {
 type AnyProps = { children?: React.ReactNode; value?: unknown };
 
 /** 从 <SelectContent> 子树里收集 value → 展示内容，供 <SelectValue> 在收起状态下显示 */
-function collectLabels(node: React.ReactNode, labels: Map<string, React.ReactNode>) {
+function collectLabels(
+  node: React.ReactNode,
+  labels: Map<string, React.ReactNode>
+) {
   React.Children.forEach(node, (child) => {
     if (!React.isValidElement(child)) return;
     const props = child.props as AnyProps;
@@ -70,7 +73,9 @@ function Select({
   disabled,
   children,
 }: SelectProps) {
-  const [innerValue, setInnerValue] = React.useState<string | undefined>(defaultValue);
+  const [innerValue, setInnerValue] = React.useState<string | undefined>(
+    defaultValue
+  );
   const [innerOpen, setInnerOpen] = React.useState(defaultOpen);
 
   const isValueControlled = value !== undefined;
@@ -204,7 +209,14 @@ function SelectContent({
 }
 
 function SelectGroup({ className, ...props }: React.ComponentProps<"div">) {
-  return <div data-slot="select-group" role="group" className={className} {...props} />;
+  return (
+    <div
+      data-slot="select-group"
+      role="group"
+      className={className}
+      {...props}
+    />
+  );
 }
 
 function SelectLabel({ className, ...props }: React.ComponentProps<"div">) {
@@ -225,7 +237,8 @@ function SelectItem({
   ...props
 }: Omit<React.ComponentProps<"button">, "value"> & { value: string }) {
   const context = useSelectContext("SelectItem");
-  const selected = context.value !== undefined && String(context.value) === String(value);
+  const selected =
+    context.value !== undefined && String(context.value) === String(value);
 
   return (
     <button

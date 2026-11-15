@@ -79,7 +79,11 @@ function mapArtists(items: { id?: string | number; name?: string }[] = []) {
 }
 
 function mapAlbums(
-  items: { id?: string | number; name?: string; artist?: { name?: string } }[] = []
+  items: {
+    id?: string | number;
+    name?: string;
+    artist?: { name?: string };
+  }[] = []
 ) {
   return items
     .filter((item) => item?.id && item.name)

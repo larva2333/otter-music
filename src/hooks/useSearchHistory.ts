@@ -34,7 +34,9 @@ export function useSearchHistory() {
   const addHistory = useCallback((keyword: string) => {
     const term = keyword.trim();
     if (!term) return;
-    setHistory((prev) => [term, ...prev.filter((item) => item !== term)].slice(0, MAX_ITEMS));
+    setHistory((prev) =>
+      [term, ...prev.filter((item) => item !== term)].slice(0, MAX_ITEMS)
+    );
   }, []);
 
   const removeHistory = useCallback((keyword: string) => {

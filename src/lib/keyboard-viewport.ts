@@ -15,7 +15,7 @@ export interface KeyboardViewportPatch {
 export function keyboardViewportPatch(
   innerHeight: number,
   viewportHeight: number,
-  offsetTop: number,
+  offsetTop: number
 ): KeyboardViewportPatch | null {
   const overlap = innerHeight - viewportHeight - offsetTop;
   if (overlap < KEYBOARD_OVERLAP_MIN_PX && offsetTop <= 1) return null;
@@ -34,11 +34,11 @@ export function bindKeyboardViewport(shell: HTMLElement): () => void {
     const patch = keyboardViewportPatch(
       window.innerHeight,
       viewport.height,
-      viewport.offsetTop,
+      viewport.offsetTop
     );
     document.documentElement.style.setProperty(
       "--vv-height",
-      `${Math.round(viewport.height)}px`,
+      `${Math.round(viewport.height)}px`
     );
     if (!patch) {
       shell.style.height = "";

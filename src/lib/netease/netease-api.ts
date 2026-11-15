@@ -534,7 +534,10 @@ export async function searchWeb(
   cookie: string = ""
 ): Promise<NeteaseWebSearchResult> {
   const finalCookie = resolveRequestCookie(cookie);
-  const res = await requestWeapi<{ code?: number; result?: NeteaseWebSearchResult }>(
+  const res = await requestWeapi<{
+    code?: number;
+    result?: NeteaseWebSearchResult;
+  }>(
     `${BASE_URL}/weapi/search/get/web`,
     { s: keyword, type, limit, offset, total: true },
     finalCookie

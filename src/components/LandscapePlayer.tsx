@@ -206,7 +206,7 @@ export function LandscapePlayer({ background, onExit }: LandscapePlayerProps) {
             />
           </div>
           <div className="w-full min-w-0 text-center">
-            <p className="truncate text-lg font-semibold text-white">
+            <p className="truncate text-sm font-semibold text-white">
               {currentTrack?.name || "未知歌曲"}
             </p>
             <p className="mt-0.5 truncate text-sm text-white/50">

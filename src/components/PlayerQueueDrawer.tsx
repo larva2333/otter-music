@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Trash2, X, Maximize2, Dices } from "lucide-react";
+import { Trash2, X, Maximize2, Dices, LocateFixed } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   Drawer,
@@ -69,7 +69,7 @@ function QueueTrackItem({
       tabIndex={0}
       aria-label={`播放 ${track.name}`}
       className={cn(
-        "grid grid-cols-[48px_1fr_auto] items-center gap-4 rounded-2xl px-4 py-3 transition-colors hover:bg-muted/60 active:bg-muted",
+        "grid grid-cols-[40px_1fr_auto] items-center gap-3 rounded-xl px-3 py-2 transition-colors hover:bg-muted/60 active:bg-muted",
         isCurrent && "bg-muted/50"
       )}
       onClick={onSelect}
@@ -79,12 +79,12 @@ function QueueTrackItem({
         onSelect();
       }}
     >
-      <div className="relative h-12 w-12 shrink-0 overflow-hidden rounded-lg">
+      <div className="relative h-10 w-10 shrink-0 overflow-hidden rounded-lg">
         <MusicCover
           src={coverUrl}
           alt=""
           className="rounded-lg"
-          iconClassName="h-5 w-5 text-muted-foreground/40"
+          iconClassName="h-4 w-4 text-muted-foreground/40"
         />
 
         {/* 极致小巧的顺序波动动画 */}
@@ -100,13 +100,13 @@ function QueueTrackItem({
       <div className="min-w-0 flex flex-col justify-center overflow-hidden">
         <span
           className={cn(
-            "text-sm font-medium truncate leading-snug transition-colors",
+            "text-sm font-medium truncate leading-tight transition-colors",
             isCurrent ? "text-primary" : "text-foreground"
           )}
         >
           {track.name}
         </span>
-        <span className="text-sm text-muted-foreground/70 truncate leading-snug">
+        <span className="text-sm text-muted-foreground/70 truncate leading-tight">
           {track.artist.join(" / ")}
         </span>
       </div>
@@ -178,6 +178,14 @@ export function PlayerQueueDrawer({
     viewportRef.current?.scrollTo({ top: 0, behavior: "instant" });
   };
 
+  /** 滚回当前播放的歌曲（用户在长列表里翻走后一键归位） */
+  const scrollToCurrent = () => {
+    scrollRef.current?.scrollIntoView({
+      block: "center",
+      behavior: "smooth",
+    });
+  };
+
   return (
     <Drawer open={open} onOpenChange={setOpen} direction={direction}>
       <DrawerTrigger asChild>{trigger}</DrawerTrigger>
@@ -237,6 +245,17 @@ export function PlayerQueueDrawer({
                   title="再次打乱"
                 >
                   <Dices className="h-4 w-4" />
+                </Button>
+              )}
+              {activeTab === "queue" && currentIndex >= 0 && (
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-9 w-9 text-muted-foreground/70 hover:bg-muted hover:text-foreground transition-colors"
+                  onClick={scrollToCurrent}
+                  title="定位到当前播放"
+                >
+                  <LocateFixed className="h-4 w-4" />
                 </Button>
               )}
               <Button

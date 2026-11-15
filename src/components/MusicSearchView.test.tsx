@@ -108,6 +108,8 @@ const musicApiMocks = vi.hoisted(() => ({
   getSearchSuggestions: vi.fn(),
   searchAll: vi.fn(),
   search: vi.fn(),
+  searchCategories: vi.fn(),
+  searchCategoryPage: vi.fn(),
 }));
 
 vi.mock("@/lib/music-api", () => ({
@@ -151,6 +153,7 @@ describe("MusicSearchView", () => {
       searchPage: 0,
     });
     useExitLayerStore.setState({ stack: [] });
+    localStorage.removeItem("otter_search_history");
 
     musicApiMocks.getSearchSuggestions.mockResolvedValue(suggestions);
     musicApiMocks.searchAll.mockResolvedValue({
@@ -159,6 +162,18 @@ describe("MusicSearchView", () => {
     });
     musicApiMocks.search.mockResolvedValue({
       items: [track],
+      hasMore: false,
+    });
+    musicApiMocks.searchCategories.mockResolvedValue({
+      artists: [],
+      albums: [],
+      playlists: [],
+      hasMore: { artist: false, album: false, playlist: false },
+    });
+    musicApiMocks.searchCategoryPage.mockResolvedValue({
+      artists: [],
+      albums: [],
+      playlists: [],
       hasMore: false,
     });
   });
@@ -354,5 +369,276 @@ describe("MusicSearchView", () => {
     expect(input.value).toBe("");
     expect(document.activeElement).not.toBe(input);
     expect(useExitLayerStore.getState().stack).toHaveLength(0);
+  });
+
+  it("聚焦空搜索框时用整页展示搜索历史，返回后回到发现", async () => {
+    localStorage.setItem(
+      "otter_search_history",
+      JSON.stringify(["周杰伦", "晴天"])
+    );
+    renderView();
+    await flushEffects();
+
+    await act(async () => {
+      getInput().focus();
+    });
+    await flushEffects();
+
+    expect(container?.textContent).toContain("搜索历史");
+    expect(container?.textContent).toContain("周杰伦");
+    expect(
+      container?.querySelector('[data-testid="playlist-market"]')
+    ).toBeNull();
+    expect(useExitLayerStore.getState().stack).toHaveLength(1);
+
+    const back = container
+      ?.querySelector("h1")
+      ?.closest("[data-tap-top]")
+      ?.querySelector("button");
+    expect(back).toBeTruthy();
+    await click(back!);
+
+    expect(container?.textContent).not.toContain("周杰伦");
+    expect(
+      container?.querySelector('[data-testid="playlist-market"]')
+    ).not.toBeNull();
+    expect(useExitLayerStore.getState().stack).toHaveLength(0);
+  });
+
+  it("从搜索结果返回后搜索框失焦，再次聚焦能进入历史", async () => {
+    localStorage.setItem("otter_search_history", JSON.stringify(["周杰伦"]));
+    renderView();
+    const input = await setInputValue("keyword");
+    expect(document.activeElement).toBe(input);
+
+    await act(async () => {
+      useExitLayerStore.getState().handleExit();
+    });
+    await flushEffects();
+
+    expect(useMusicStore.getState().searchQuery).toBe("");
+    expect(document.activeElement).not.toBe(input);
+    expect(container?.textContent).not.toContain("搜索历史");
+
+    await act(async () => {
+      input.focus();
+    });
+    await flushEffects();
+
+    expect(container?.textContent).toContain("搜索历史");
+    expect(container?.textContent).toContain("周杰伦");
+  });
+
+  it("返回发现页后点击空搜索框进入历史", async () => {
+    localStorage.setItem("otter_search_history", JSON.stringify(["周杰伦"]));
+    renderView();
+    await flushEffects();
+    const input = getInput();
+
+    await act(async () => {
+      input.focus();
+    });
+    await flushEffects();
+    await act(async () => {
+      useExitLayerStore.getState().handleExit();
+    });
+    await flushEffects();
+    expect(
+      container?.querySelector('[data-testid="playlist-market"]')
+    ).not.toBeNull();
+    expect(document.activeElement).not.toBe(input);
+
+    // 只派发 click，不派发 focus：焦点还在输入框上时再点一次就是这条路径
+    await click(input);
+    expect(container?.textContent).toContain("搜索历史");
+    expect(container?.textContent).toContain("周杰伦");
+  });
+
+  it("从歌单返回后仍展示搜索建议，而不是空的歌曲列表", async () => {
+    useMusicStore.setState({
+      searchQuery: "周杰伦",
+      searchResults: [],
+      searchPage: 0,
+      searchLoading: false,
+    });
+    musicApiMocks.getSearchSuggestions.mockResolvedValue([
+      { text: "周杰伦", type: "artist", source: "_netease", id: "a" },
+      {
+        text: "周杰伦的床边故事",
+        type: "playlist",
+        source: "_netease",
+        id: "p",
+      },
+      { text: "晴天 - 周杰伦", type: "song", source: "_netease", id: "s" },
+    ]);
+
+    renderView();
+    await flushEffects();
+
+    expect(
+      container?.querySelector('[data-testid="search-suggestions"]')
+    ).not.toBeNull();
+    expect(container?.textContent).toContain("周杰伦的床边故事");
+    expect(container?.textContent).toContain("晴天 - 周杰伦");
+    expect(
+      container?.querySelector('[data-testid="music-track-list"]')
+    ).toBeNull();
+  });
+
+  it("已提交的聚合搜索返回后仍展示歌曲结果", async () => {
+    useMusicStore.setState({
+      searchQuery: "周杰伦",
+      searchResults: [track],
+      searchPage: 1,
+      searchLoading: false,
+    });
+
+    renderView();
+    await flushEffects();
+
+    expect(
+      container?.querySelector('[data-testid="music-track-list"]')
+    ).not.toBeNull();
+    expect(
+      container?.querySelector('[data-testid="search-suggestions"]')
+    ).toBeNull();
+  });
+
+  it("从聚合结果点进歌曲后返回，先回到聚合建议", async () => {
+    renderView();
+    const input = await setInputValue("周杰伦");
+    expect(useExitLayerStore.getState().stack).toHaveLength(1);
+
+    await click(getSuggestion(0));
+    await flushEffects();
+
+    expect(input.value).toBe("Alpha");
+    expect(
+      container?.querySelector('[data-testid="music-track-list"]')
+    ).not.toBeNull();
+    expect(useExitLayerStore.getState().stack).toHaveLength(2);
+
+    await act(async () => {
+      useExitLayerStore.getState().handleExit();
+    });
+    await flushEffects();
+
+    expect(input.value).toBe("周杰伦");
+    expect(container?.textContent).toContain("Alpha");
+    expect(container?.textContent).toContain("Beta");
+    expect(
+      container?.querySelector('[data-testid="search-suggestions"]')
+    ).not.toBeNull();
+    expect(
+      container?.querySelector('[data-testid="music-track-list"]')
+    ).toBeNull();
+    expect(useExitLayerStore.getState().stack).toHaveLength(1);
+
+    await act(async () => {
+      useExitLayerStore.getState().handleExit();
+    });
+    await flushEffects();
+
+    expect(useMusicStore.getState().searchQuery).toBe("");
+    expect(
+      container?.querySelector('[data-testid="playlist-market"]')
+    ).not.toBeNull();
+    expect(useExitLayerStore.getState().stack).toHaveLength(0);
+  });
+
+  it("提交聚合搜索后按歌手、专辑、歌单和歌曲分类展示", async () => {
+    musicApiMocks.searchCategories.mockResolvedValue({
+      artists: [{ id: "6452", name: "周杰伦" }],
+      albums: [{ id: "18915", name: "叶惠美", artistName: "周杰伦" }],
+      playlists: [{ id: "123", name: "周杰伦热门" }],
+    });
+    renderView();
+    await setInputValue("周杰伦");
+    await keyDown("Enter");
+    await flushEffects();
+
+    expect(musicApiMocks.searchCategories).toHaveBeenCalledWith("周杰伦");
+    const songTab = container?.querySelector(
+      '[role="tab"][aria-selected="true"]'
+    );
+    expect(songTab?.textContent).toBe("歌曲");
+    expect(
+      container?.querySelector('[data-testid="music-track-list"]')
+    ).not.toBeNull();
+
+    const tab = (label: string) =>
+      Array.from(container?.querySelectorAll('[role="tab"]') ?? []).find(
+        (el) => el.textContent === label
+      ) as HTMLButtonElement;
+
+    await click(tab("专辑"));
+    expect(tab("专辑").getAttribute("aria-selected")).toBe("true");
+    expect(container?.textContent).toContain("叶惠美");
+    expect(
+      container?.querySelector('[data-testid="music-track-list"]')
+    ).toBeNull();
+
+    await click(tab("歌单"));
+    expect(container?.textContent).toContain("周杰伦热门");
+
+    await click(tab("歌手"));
+    expect(container?.textContent).toContain("周杰伦");
+  });
+
+  it("点聚合结果里的歌手进入歌手页", async () => {
+    musicApiMocks.searchCategories.mockResolvedValue({
+      artists: [{ id: "6452", name: "周杰伦" }],
+      albums: [],
+      playlists: [],
+    });
+    renderView();
+    await setInputValue("周杰伦");
+    await click(getSuggestion(1));
+    await flushEffects();
+
+    const selected = container?.querySelector(
+      '[role="tab"][aria-selected="true"]'
+    );
+    expect(selected?.textContent).toBe("歌手");
+    expect(container?.textContent).toContain("周杰伦");
+    expect(
+      container?.querySelector('[data-testid="music-track-list"]')
+    ).toBeNull();
+  });
+
+  it("歌手页滑到底继续加载下一页", async () => {
+    musicApiMocks.searchCategories.mockResolvedValue({
+      artists: [{ id: "1", name: "周杰伦" }],
+      albums: [],
+      playlists: [],
+      hasMore: { artist: true, album: false, playlist: false },
+    });
+    musicApiMocks.searchCategoryPage.mockResolvedValue({
+      artists: [{ id: "2", name: "周杰伦." }],
+      albums: [],
+      playlists: [],
+      hasMore: false,
+    });
+    renderView();
+    await setInputValue("周杰伦");
+    await keyDown("Enter");
+    await flushEffects();
+
+    const artistTab = Array.from(
+      container?.querySelectorAll('[role="tab"]') ?? []
+    ).find((el) => el.textContent === "歌手") as HTMLButtonElement;
+    await click(artistTab);
+    await flushEffects();
+    container
+      ?.querySelector("[data-page-scroll]")
+      ?.dispatchEvent(new Event("scroll"));
+    await flushEffects();
+
+    expect(musicApiMocks.searchCategoryPage).toHaveBeenCalledWith(
+      "周杰伦",
+      "artist",
+      20
+    );
+    expect(container?.textContent).toContain("周杰伦.");
   });
 });

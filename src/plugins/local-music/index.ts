@@ -126,6 +126,13 @@ export interface LocalMusicPlugin {
   deleteLocalMusic(options: { localPath: string }): Promise<DeleteResult>;
   pickDownloadDirectory(): Promise<PickDirectoryResult>;
   getSystemDarkMode(): Promise<SystemDarkModeResult>;
+  /**
+   * 把 APP 内的主题偏好同步给原生。网页层用 localStorage 存主题，原生读不到，
+   * 而冷启动时启动窗口/WebView 的底色必须提前决定，所以另存一份到 SharedPreferences。
+   */
+  setStoredTheme(options: {
+    value: "system" | "light" | "dark";
+  }): Promise<void>;
   getExcludedFolders(): Promise<ExcludedFoldersResult>;
   addExcludedFolder(options: {
     folder: string;

@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!--
+      冷启动底色：与网页层 body 的背景一致。
+      启动窗口、系统 Splash、WebView 自身三层用同一个颜色，冷启动才不会在
+      「启动窗口 → WebView 首帧」之间看到黑屏。
+
+      app_window_background 供主题使用，深色版本在 values-night/colors.xml；
+      Android 12+ 会通过 UiModeManager.setApplicationNightMode 把 APP 内的
+      主题偏好告诉系统，系统据此选日夜资源，连启动画面都跟着对。
+      _light / _dark 是给运行时兜底用的（API 30 及以下只能自己刷窗口底色）。
+    -->
+    <color name="app_window_background">#FAFCFF</color>
+    <color name="app_window_background_light">#FAFCFF</color>
+    <color name="app_window_background_dark">#0F151F</color>
+</resources>

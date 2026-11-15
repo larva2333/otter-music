@@ -29,7 +29,7 @@ export function PlayerTrackInfo({
   const isMobile = useIsMobile();
   const sizeClasses = "h-16 w-16";
   const iconSize = "h-8 w-8";
-  const textSize = "text-lg";
+  const textSize = "text-sm";
   const subTextSize = "text-xs";
 
   if (!track) {

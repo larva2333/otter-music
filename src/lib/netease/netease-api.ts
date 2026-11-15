@@ -516,6 +516,35 @@ export const mapSearchArtists = (
     .filter((a) => typeof a?.id === "number" && a.id > 0 && !!a?.name)
     .map((a) => ({ id: a.id, name: a.name }));
 
+export interface NeteaseWebSearchResult {
+  artists?: RawSearchArtist[];
+  artistCount?: number;
+  albums?: RawSearchAlbum[];
+  albumCount?: number;
+  playlists?: UserPlaylist[];
+  playlistCount?: number;
+}
+
+/** 按类型搜索。`/api/search/pc` 对歌手/专辑/歌单经常空返回，改走 weapi。 */
+export async function searchWeb(
+  keyword: string,
+  type: number,
+  limit = 20,
+  offset = 0,
+  cookie: string = ""
+): Promise<NeteaseWebSearchResult> {
+  const finalCookie = resolveRequestCookie(cookie);
+  const res = await requestWeapi<{ code?: number; result?: NeteaseWebSearchResult }>(
+    `${BASE_URL}/weapi/search/get/web`,
+    { s: keyword, type, limit, offset, total: true },
+    finalCookie
+  );
+  if (res.data?.code !== 200) {
+    throw new Error(`netease search type ${type} code ${res.data?.code}`);
+  }
+  return res.data.result ?? {};
+}
+
 /** 按关键词搜索专辑（严格匹配用，返回精简条目） */
 export async function searchAlbums(
   keyword: string,

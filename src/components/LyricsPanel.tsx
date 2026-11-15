@@ -1,12 +1,28 @@
 "use client";
 
-import { memo, useEffect, useRef, useState, useCallback } from "react";
+import {
+  memo,
+  useEffect,
+  useRef,
+  useState,
+  useCallback,
+  type PointerEvent as ReactPointerEvent,
+  type MouseEvent as ReactMouseEvent,
+} from "react";
 import { flushSync } from "react-dom";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { cn } from "@/lib/utils";
 import { musicApi } from "@/lib/music-api";
 import { MusicTrack } from "@/types/music";
-import { Play } from "lucide-react";
+import {
+  AlignCenter,
+  AlignLeft,
+  AlignRight,
+  Minus,
+  Play,
+  Plus,
+  X,
+} from "lucide-react";
 import { useMusicStore, type LyricAlign } from "@/store/music-store";
 import { useShallow } from "zustand/react/shallow";
 import { findActiveLyricIndex, parseLrc, type LyricLine } from "@/lib/lyrics";
@@ -17,7 +33,24 @@ interface LyricsPanelProps {
 }
 
 const AUTO_SCROLL_DELAY = 2000;
+// 滚动事件静默这么久，才算「最终停下来」
+const SCROLL_SETTLE_DELAY = 200;
+// 长按多久弹出歌词样式面板
+const LONG_PRESS_DELAY = 500;
 const PADDING_LINES = 2;
+
+const LYRIC_MIN_FONT_SIZE = 13;
+const LYRIC_MAX_FONT_SIZE = 28;
+
+const ALIGN_OPTIONS: {
+  value: LyricAlign;
+  label: string;
+  icon: typeof AlignLeft;
+}[] = [
+  { value: "left", label: "居左", icon: AlignLeft },
+  { value: "center", label: "居中", icon: AlignCenter },
+  { value: "right", label: "居右", icon: AlignRight },
+];
 
 function formatTime(seconds: number): string {
   const mins = Math.floor(seconds / 60);
@@ -38,7 +71,7 @@ const LyricLineView = memo(function LyricLineView({
   align: LyricAlign;
   fontSize: number;
 }) {
-  const translationSize = Math.max(12, Math.round(fontSize * (15 / 18)));
+  const translationSize = Math.max(11, Math.round(fontSize * (15 / 18)));
 
   return (
     <div
@@ -96,6 +129,19 @@ export function LyricsPanel({ track, active = true }: LyricsPanelProps) {
   const [loading, setLoading] = useState(true);
   const [isUserScrolling, setIsUserScrolling] = useState(false);
   const [centerLineIndex, setCenterLineIndex] = useState(-1);
+  const [baselineVisible, setBaselineVisible] = useState(false);
+  // 长按歌词弹出的样式面板
+  const [stylePanelOpen, setStylePanelOpen] = useState(false);
+  // 基准线只在「滚动最终停稳」那一刻算一次，滚动过程中完全不碰它。
+  // 之前逐帧跟随 + CSS transition，每帧都会重启一次过渡，缓动永远追不上，所以一路抖。
+  const baselineRef = useRef<HTMLDivElement>(null);
+  const baselineVisibleRef = useRef(false);
+  const settleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // 每行中心换算到「滚动内容坐标系」后缓存，停稳时只读 scrollTop，
+  // 不用逐行 getBoundingClientRect（那会强制同步布局）。
+  const lineCentersRef = useRef<number[]>([]);
+  const centerIdxRef = useRef(-1);
+  const isUserScrollingRef = useRef(false);
 
   const {
     currentTime,
@@ -104,6 +150,8 @@ export function LyricsPanel({ track, active = true }: LyricsPanelProps) {
     lyricAlign,
     lyricFontSize,
     lyricOffset,
+    setLyricAlign,
+    setLyricFontSize,
   } = useMusicStore(
     useShallow((state) => ({
       currentTime: state.currentAudioTime,
@@ -112,6 +160,8 @@ export function LyricsPanel({ track, active = true }: LyricsPanelProps) {
       lyricAlign: state.lyricAlign,
       lyricFontSize: state.lyricFontSize,
       lyricOffset: state.lyricOffset,
+      setLyricAlign: state.setLyricAlign,
+      setLyricFontSize: state.setLyricFontSize,
     }))
   );
 
@@ -129,60 +179,220 @@ export function LyricsPanel({ track, active = true }: LyricsPanelProps) {
   const scrollTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isAutoScrollingRef = useRef(false);
 
+  // 长按：按住 500ms 且没有明显位移才算，滑动/惯性滚动的 pointercancel 会取消它
+  const longPressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const longPressOriginRef = useRef<{ x: number; y: number } | null>(null);
+  const suppressClickRef = useRef(false);
+
+  const cancelLongPress = useCallback(() => {
+    if (longPressTimerRef.current) {
+      clearTimeout(longPressTimerRef.current);
+      longPressTimerRef.current = null;
+    }
+
+    longPressOriginRef.current = null;
+  }, []);
+
+  const handleLyricPointerDown = useCallback(
+    (e: ReactPointerEvent) => {
+      if (e.pointerType === "mouse" && e.button !== 0) return;
+
+      cancelLongPress();
+      longPressOriginRef.current = { x: e.clientX, y: e.clientY };
+
+      longPressTimerRef.current = setTimeout(() => {
+        longPressTimerRef.current = null;
+        // 长按松手后浏览器还会补一次 click，会让外层把歌词切成封面，这里吞掉
+        suppressClickRef.current = true;
+        // 兜底复位，避免某次没有补 click 时把下一次正常点击也吞了
+        window.setTimeout(() => {
+          suppressClickRef.current = false;
+        }, 600);
+        setStylePanelOpen(true);
+        navigator.vibrate?.(10);
+      }, LONG_PRESS_DELAY);
+    },
+    [cancelLongPress]
+  );
+
+  const handleLyricPointerMove = useCallback(
+    (e: ReactPointerEvent) => {
+      const origin = longPressOriginRef.current;
+
+      if (!origin) return;
+
+      // 手指移动超过 10px 视为滚动，不再算长按
+      if (Math.hypot(e.clientX - origin.x, e.clientY - origin.y) > 10) {
+        cancelLongPress();
+      }
+    },
+    [cancelLongPress]
+  );
+
+  const handleLyricClickCapture = useCallback((e: ReactMouseEvent) => {
+    if (!suppressClickRef.current) return;
+
+    suppressClickRef.current = false;
+    e.stopPropagation();
+    e.preventDefault();
+  }, []);
+
+  useEffect(() => {
+    return () => cancelLongPress();
+  }, [cancelLongPress]);
+
   const handleSeek = useCallback(
     (time: number) => {
       seek(time);
 
       setIsUserScrolling(false);
       setCenterLineIndex(-1);
+      setBaselineVisible(false);
+
+      isUserScrollingRef.current = false;
+      centerIdxRef.current = -1;
+      baselineVisibleRef.current = false;
 
       if (scrollTimeoutRef.current) {
         clearTimeout(scrollTimeoutRef.current);
         scrollTimeoutRef.current = null;
       }
+
+      if (settleTimerRef.current) {
+        clearTimeout(settleTimerRef.current);
+        settleTimerRef.current = null;
+      }
     },
     [seek]
   );
 
-  const handleScroll = useCallback(() => {
-    if (isAutoScrollingRef.current) return;
-
-    setIsUserScrolling(true);
-
-    if (scrollTimeoutRef.current) {
-      clearTimeout(scrollTimeoutRef.current);
-    }
-
-    scrollTimeoutRef.current = setTimeout(() => {
-      setIsUserScrolling(false);
-      setCenterLineIndex(-1);
-    }, AUTO_SCROLL_DELAY);
-
+  const measureLineCenters = useCallback(() => {
     const container = viewportRef.current;
 
-    if (!container || lyrics.length === 0) return;
+    if (!container) return;
 
-    const containerRect = container.getBoundingClientRect();
-    const containerCenter = containerRect.top + containerRect.height / 2;
+    // 把每行中心的视口坐标换算到滚动内容坐标系（scrollTop = 0 时的位置），
+    // 这样滚动过程中只要读 scrollTop 就能算出基准线位置。
+    const origin = container.getBoundingClientRect().top - container.scrollTop;
+
+    lineCentersRef.current = lineRefs.current.map((el) => {
+      if (!el) return 0;
+
+      const rect = el.getBoundingClientRect();
+
+      return rect.top + rect.height / 2 - origin;
+    });
+  }, []);
+
+  // 停稳后才执行：算出离视口中心最近的一句，把基准线一次性放过去
+  const snapBaseline = useCallback(() => {
+    const container = viewportRef.current;
+
+    if (!container) return;
+
+    measureLineCenters();
+
+    const centers = lineCentersRef.current;
+
+    if (centers.length === 0) return;
+
+    const viewportCenter = container.scrollTop + container.clientHeight / 2;
 
     let closestIdx = 0;
     let closestDist = Infinity;
 
-    lineRefs.current.forEach((el, i) => {
-      if (!el) return;
-
-      const rect = el.getBoundingClientRect();
-      const elCenter = rect.top + rect.height / 2;
-      const dist = Math.abs(elCenter - containerCenter);
+    for (let i = 0; i < centers.length; i += 1) {
+      const dist = Math.abs(centers[i] - viewportCenter);
 
       if (dist < closestDist) {
         closestDist = dist;
         closestIdx = i;
       }
-    });
+    }
 
+    // 限制在可视范围内，避免顶到遮罩外面看不见
+    const top = Math.min(
+      Math.max(centers[closestIdx] - container.scrollTop, 12),
+      container.clientHeight - 12
+    );
+
+    centerIdxRef.current = closestIdx;
+
+    if (baselineRef.current) {
+      baselineRef.current.style.top = `${top}px`;
+    }
+
+    baselineVisibleRef.current = true;
     setCenterLineIndex(closestIdx);
-  }, [lyrics.length]);
+    setBaselineVisible(true);
+  }, [measureLineCenters]);
+
+  const handleScroll = useCallback(() => {
+    if (isAutoScrollingRef.current) return;
+
+    const container = viewportRef.current;
+
+    if (!container || lyrics.length === 0) return;
+
+    // 滚动期间线钉在视口正中：给一个固定参照，能看清滑到哪儿了，
+    // 但它不跟着动、也不算最近的行，等停稳了才吸附过去。
+    if (!isUserScrollingRef.current) {
+      isUserScrollingRef.current = true;
+      setIsUserScrolling(true);
+      setCenterLineIndex(-1);
+      centerIdxRef.current = -1;
+      baselineVisibleRef.current = true;
+      setBaselineVisible(true);
+
+      if (baselineRef.current) {
+        baselineRef.current.style.top = `${container.clientHeight / 2}px`;
+      }
+    } else if (centerIdxRef.current >= 0) {
+      // 停稳吸附之后又接着滚：线退回正中，等下一次停稳再算
+      centerIdxRef.current = -1;
+      setCenterLineIndex(-1);
+
+      if (baselineRef.current) {
+        baselineRef.current.style.top = `${container.clientHeight / 2}px`;
+      }
+    }
+
+    // 停稳判定：滚动事件静默 200ms 才算「最终停下来」，惯性滑行期间不会误触发
+    if (settleTimerRef.current) {
+      clearTimeout(settleTimerRef.current);
+    }
+
+    settleTimerRef.current = setTimeout(() => {
+      settleTimerRef.current = null;
+      snapBaseline();
+    }, SCROLL_SETTLE_DELAY);
+
+    // 停稳后再过 2 秒仍无操作，收起基准线、恢复播放跟随
+    if (scrollTimeoutRef.current) {
+      clearTimeout(scrollTimeoutRef.current);
+    }
+
+    scrollTimeoutRef.current = setTimeout(() => {
+      isUserScrollingRef.current = false;
+      centerIdxRef.current = -1;
+      baselineVisibleRef.current = false;
+      setIsUserScrolling(false);
+      setBaselineVisible(false);
+      setCenterLineIndex(-1);
+    }, AUTO_SCROLL_DELAY);
+  }, [lyrics.length, snapBaseline]);
+
+  useEffect(() => {
+    return () => {
+      if (settleTimerRef.current) {
+        clearTimeout(settleTimerRef.current);
+      }
+
+      if (scrollTimeoutRef.current) {
+        clearTimeout(scrollTimeoutRef.current);
+      }
+    };
+  }, []);
 
   useEffect(() => {
     const container = viewportRef.current;
@@ -285,11 +495,21 @@ export function LyricsPanel({ track, active = true }: LyricsPanelProps) {
     flushSync(() => {
       setIsUserScrolling(false);
       setCenterLineIndex(-1);
+      setBaselineVisible(false);
     });
+
+    isUserScrollingRef.current = false;
+    centerIdxRef.current = -1;
+    baselineVisibleRef.current = false;
 
     if (scrollTimeoutRef.current) {
       clearTimeout(scrollTimeoutRef.current);
       scrollTimeoutRef.current = null;
+    }
+
+    if (settleTimerRef.current) {
+      clearTimeout(settleTimerRef.current);
+      settleTimerRef.current = null;
     }
   }, [seekTimestamp]);
 
@@ -343,6 +563,14 @@ export function LyricsPanel({ track, active = true }: LyricsPanelProps) {
         lyricAlign === "left" && "items-start",
         lyricAlign === "right" && "items-end"
       )}
+      onPointerDown={handleLyricPointerDown}
+      onPointerMove={handleLyricPointerMove}
+      onPointerUp={cancelLongPress}
+      onPointerCancel={cancelLongPress}
+      onClickCapture={handleLyricClickCapture}
+      // 长按不弹系统菜单（iOS 的呼出菜单/放大镜）
+      onContextMenu={(e) => e.preventDefault()}
+      style={{ WebkitTouchCallout: "none" }}
     >
       {Array.from({ length: PADDING_LINES }).map((_, i) => (
         <div key={`pad-top-${i}`} className="h-6 shrink-0" />
@@ -426,8 +654,18 @@ export function LyricsPanel({ track, active = true }: LyricsPanelProps) {
         {LyricsList}
       </ScrollArea>
 
-      {isUserScrolling && centerLine && (
-        <div className="absolute inset-x-0 top-1/2 z-10 -translate-y-1/2 px-4">
+      {/* 容器常驻，靠 opacity 显隐：否则每次开始滚动都要重新挂载，
+          top 得从 0 现算，会闪一下 */}
+      <div
+        ref={baselineRef}
+        className={cn(
+          "absolute inset-x-0 z-10 -translate-y-1/2 px-4",
+          "transition-[top,opacity] duration-200 ease-out",
+          baselineVisible ? "opacity-100" : "pointer-events-none opacity-0"
+        )}
+        style={{ top: 0 }}
+      >
+        {centerLine ? (
           <button
             type="button"
             onClick={(e) => {
@@ -458,7 +696,112 @@ export function LyricsPanel({ track, active = true }: LyricsPanelProps) {
               </>
             )}
           </button>
-        </div>
+        ) : (
+          // 滚动中：只留一条悬在正中的横线当参照，不带时间和播放按钮
+          <div className="flex w-full items-center">
+            <div className="h-px flex-1 bg-white/20" />
+          </div>
+        )}
+      </div>
+
+      {/* 长按歌词弹出的样式面板 */}
+      {stylePanelOpen && (
+        <>
+          <div
+            className="absolute inset-0 z-20 bg-black/30"
+            onClick={(e) => {
+              // 别让遮罩的点击冒泡出去，否则外层会把歌词切成封面
+              e.stopPropagation();
+              setStylePanelOpen(false);
+            }}
+          />
+
+          <div
+            className={cn(
+              "absolute bottom-3 left-1/2 z-30 -translate-x-1/2",
+              "w-[min(420px,calc(100%-24px))]",
+              "rounded-2xl bg-neutral-900/95 p-4",
+              "ring-1 ring-white/10 shadow-2xl backdrop-blur-xl"
+            )}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="mb-3 flex items-center justify-between">
+              <span className="text-sm font-medium text-white">歌词样式</span>
+
+              <button
+                type="button"
+                onClick={() => setStylePanelOpen(false)}
+                className="flex h-8 w-8 items-center justify-center rounded-full text-white/60 transition-colors hover:bg-white/10 hover:text-white"
+                aria-label="关闭"
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            <div className="flex rounded-xl bg-white/5 p-1">
+              {ALIGN_OPTIONS.map(({ value, label, icon: Icon }) => (
+                <button
+                  key={value}
+                  type="button"
+                  onClick={() => setLyricAlign(value)}
+                  className={cn(
+                    "flex flex-1 items-center justify-center gap-1.5 rounded-lg py-2 text-xs transition-all",
+                    lyricAlign === value
+                      ? "bg-white/15 text-white"
+                      : "text-white/50 hover:text-white/80"
+                  )}
+                >
+                  <Icon size={15} />
+                  {label}
+                </button>
+              ))}
+            </div>
+
+            <div className="mt-3 flex items-center gap-3">
+              <span className="shrink-0 text-xs text-white/60">字号</span>
+
+              <button
+                type="button"
+                onClick={() =>
+                  setLyricFontSize(
+                    Math.max(LYRIC_MIN_FONT_SIZE, lyricFontSize - 1)
+                  )
+                }
+                disabled={lyricFontSize <= LYRIC_MIN_FONT_SIZE}
+                className={cn(
+                  "flex h-9 w-9 shrink-0 items-center justify-center rounded-full",
+                  "bg-white/10 text-white transition-colors active:bg-white/20",
+                  "disabled:opacity-30"
+                )}
+                aria-label="减小字号"
+              >
+                <Minus size={16} />
+              </button>
+
+              <span className="flex-1 text-center text-sm tabular-nums text-white">
+                {lyricFontSize}px
+              </span>
+
+              <button
+                type="button"
+                onClick={() =>
+                  setLyricFontSize(
+                    Math.min(LYRIC_MAX_FONT_SIZE, lyricFontSize + 1)
+                  )
+                }
+                disabled={lyricFontSize >= LYRIC_MAX_FONT_SIZE}
+                className={cn(
+                  "flex h-9 w-9 shrink-0 items-center justify-center rounded-full",
+                  "bg-white/10 text-white transition-colors active:bg-white/20",
+                  "disabled:opacity-30"
+                )}
+                aria-label="增大字号"
+              >
+                <Plus size={16} />
+              </button>
+            </div>
+          </div>
+        </>
       )}
     </div>
   );

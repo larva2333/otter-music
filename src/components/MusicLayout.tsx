@@ -1,5 +1,6 @@
-import { ReactNode } from "react";
+import { ReactNode, useEffect, useRef } from "react";
 import { cn } from "@/lib/utils";
+import { bindKeyboardViewport } from "@/lib/keyboard-viewport";
 
 interface MusicLayoutProps {
   children: ReactNode;
@@ -20,8 +21,19 @@ export function MusicLayout({
   className,
   isTab = true,
 }: MusicLayoutProps) {
+  const shellRef = useRef<HTMLDivElement>(null);
+
+  // 键盘弹出时系统会把页面上推，搜索历史挂在输入框下面，会被顶出屏幕。
+  // 这里把壳层钉回可视区域，历史面板留在搜索框和键盘之间。
+  useEffect(() => {
+    const shell = shellRef.current;
+    if (!shell) return;
+    return bindKeyboardViewport(shell);
+  }, []);
+
   return (
     <div
+      ref={shellRef}
       className={cn(
         "relative flex flex-col h-dvh overflow-hidden bg-background",
         // tab 页的顶部内边距由 --tab-bar-top-offset 独占（max(44px, 安全区)）。

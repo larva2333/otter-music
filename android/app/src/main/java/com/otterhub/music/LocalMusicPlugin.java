@@ -3,6 +3,7 @@ package com.otterhub.music;
 import android.Manifest;
 import android.app.Activity;
 import android.app.RecoverableSecurityException;
+import android.app.UiModeManager;
 import android.content.ContentResolver;
 import android.content.ContentUris;
 import android.content.Context;
@@ -25,6 +26,7 @@ import android.provider.DocumentsContract;
 import android.provider.MediaStore;
 import android.provider.Settings;
 import android.util.Base64;
+import android.util.Log;
 
 import androidx.activity.result.ActivityResult;
 
@@ -206,6 +208,45 @@ public class LocalMusicPlugin extends Plugin {
 
     public void notifyDarkModeChange(boolean isDarkMode) {
         notifyListeners("darkModeChange", new JSObject().put("isDarkMode", isDarkMode));
+    }
+
+    /**
+     * 保存 APP 内的主题偏好（system / light / dark）。
+     * 网页层的 localStorage 原生存不到，冷启动时 MainActivity 又要靠它决定
+     * 启动窗口和 WebView 的底色，所以在这里另存一份到 SharedPreferences。
+     */
+    @PluginMethod
+    public void setStoredTheme(PluginCall call) {
+        String value = call.getString("value", "system");
+        if (!"dark".equals(value) && !"light".equals(value)) {
+            value = "system";
+        }
+        getContext()
+            .getSharedPreferences(MainActivity.THEME_PREFS, Context.MODE_PRIVATE)
+            .edit()
+            .putString(MainActivity.THEME_KEY, value)
+            .apply();
+
+        // Android 12+：把 APP 内的主题告诉系统，系统才会用对应的日夜资源去画
+        // 启动窗口和 Splash（否则深色用户冷启动会先看到一帧浅色）。
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            try {
+                UiModeManager uiModeManager =
+                    (UiModeManager) getContext().getSystemService(Context.UI_MODE_SERVICE);
+                if (uiModeManager != null) {
+                    int mode = "dark".equals(value)
+                        ? UiModeManager.MODE_NIGHT_YES
+                        : "light".equals(value)
+                            ? UiModeManager.MODE_NIGHT_NO
+                            : UiModeManager.MODE_NIGHT_AUTO;
+                    uiModeManager.setApplicationNightMode(mode);
+                }
+            } catch (Exception e) {
+                // 个别 ROM 会限制这个接口，失败就退回「运行时刷窗口底色」的兜底方案
+                Log.w("LocalMusic", "setApplicationNightMode failed", e);
+            }
+        }
+        call.resolve();
     }
 
     // --- 内部扫描逻辑 ---

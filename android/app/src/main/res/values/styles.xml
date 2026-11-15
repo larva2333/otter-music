@@ -4,11 +4,23 @@
         <item name="colorPrimary">#319795</item>
         <item name="colorPrimaryDark">#2C7A7B</item>
         <item name="colorAccent">#38B2AC</item>
+        <!--
+          @color/app_window_background 有 values / values-night 两套。
+          APP 内的主题偏好在 Android 12+ 会用 UiModeManager.setApplicationNightMode
+          告知系统，系统据此选日夜资源，启动窗口和 Splash 也能对上；
+          API 30 及以下没这个能力，由 MainActivity 运行时再刷一次兜底。
+        -->
+        <item name="android:windowBackground">@color/app_window_background</item>
     </style>
 
     <style name="AppTheme.NoActionBarLaunch" parent="AppTheme">
         <item name="android:windowActionBar">false</item>
         <item name="android:windowNoTitle">true</item>
-        <item name="android:windowBackground">@android:color/white</item>
+        <item name="android:windowBackground">@color/app_window_background</item>
+        <!--
+          Android 12+ 的系统 Splash 默认取 windowSplashScreenBackground；
+          不显式指定时部分 ROM 会退化成黑色，冷启动就会出现「黑一下」。
+        -->
+        <item name="android:windowSplashScreenBackground">@color/app_window_background</item>
     </style>
 </resources>

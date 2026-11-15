@@ -4,17 +4,28 @@ import static androidx.core.view.WindowCompat.enableEdgeToEdge;
 
 import android.content.pm.ActivityInfo;
 import android.content.res.Configuration;
+import android.graphics.drawable.ColorDrawable;
 import android.os.Build;
 import android.os.Bundle;
+import android.view.View;
+import androidx.core.content.ContextCompat;
+import androidx.core.view.ViewCompat;
 import androidx.core.view.WindowCompat;
+import androidx.core.view.WindowInsetsCompat;
 import androidx.core.view.WindowInsetsControllerCompat;
 import com.getcapacitor.BridgeActivity;
 import com.getcapacitor.PluginHandle;
 
 public class MainActivity extends BridgeActivity {
 
+    /** 主题偏好由网页层写入，原生在冷启动时读取，用来决定启动底色 */
+    public static final String THEME_PREFS = "otter_theme";
+    public static final String THEME_KEY = "theme";
+
     @Override
     public void onCreate(Bundle savedInstanceState) {
+        // 必须在 super.onCreate 之前把窗口底色换掉，否则布局出来时会先闪一帧静态底色
+        applyWindowBackground();
         // Android 15 enforces edge-to-edge; older versions should let the
         // system keep WebView content above the navigation bar.
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.VANILLA_ICE_CREAM) {
@@ -25,8 +36,67 @@ public class MainActivity extends BridgeActivity {
         registerPlugin(AudioRoutePlugin.class);
         registerPlugin(WebViewLoginPlugin.class);
         registerPlugin(DesktopLyricPlugin.class);
+        registerPlugin(AppInstallerPlugin.class);
         super.onCreate(savedInstanceState);
         useTransientSystemBars();
+        applyWebViewBackground();
+        padWebViewForIme();
+    }
+
+    /**
+     * Android 15 起 edge-to-edge 不再跟着 adjustResize 缩小窗口，键盘会直接盖住页面，
+     * 系统再把焦点顶到键盘上方，搜索历史就被顶没了。这里按输入法高度给 WebView 留出底边距。
+     */
+    private void padWebViewForIme() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.VANILLA_ICE_CREAM) return;
+        if (getBridge() == null || getBridge().getWebView() == null) return;
+        View webView = getBridge().getWebView();
+        ViewCompat.setOnApplyWindowInsetsListener(webView, (v, insets) -> {
+            int imeBottom = insets.getInsets(WindowInsetsCompat.Type.ime()).bottom;
+            v.setPadding(0, 0, 0, imeBottom);
+            return insets;
+        });
+        ViewCompat.requestApplyInsets(webView);
+    }
+
+    /**
+     * 冷启动「闪一下黑」的根因：WebView 在首帧渲染之前，它自己的 surface 是黑的。
+     * 启动窗口（windowBackground）退出时正好把这块黑色露出来，于是白 → 黑 → 白闪一下。
+     *
+     * 这里把 WebView 背景显式刷成启动窗口同色，网页层也刻意不写 html 背景
+     * （见 index.html），首帧之前透出的就是这层颜色，冷启动全程只有一个底色。
+     * 注意：WebView 的 prefers-color-scheme 与原生 Configuration 可能不一致
+     * （实测系统浅色时 WebView 仍报 dark），所以这里不能按媒体查询取值。
+     */
+    private void applyWebViewBackground() {
+        if (getBridge() == null || getBridge().getWebView() == null) return;
+        getBridge().getWebView().setBackgroundColor(resolveWindowBackgroundColor());
+    }
+
+    private void applyWindowBackground() {
+        getWindow().setBackgroundDrawable(new ColorDrawable(resolveWindowBackgroundColor()));
+    }
+
+    /**
+     * 启动底色取哪一套：优先 APP 内的主题偏好（网页层通过 LocalMusicPlugin
+     * .setStoredTheme 写进来），"跟随系统"时看 Configuration 的日夜。
+     * 这样系统深色 + APP 内选浅色、或系统浅色 + APP 内选深色，都不会串色。
+     */
+    private int resolveWindowBackgroundColor() {
+        String pref = getSharedPreferences(THEME_PREFS, MODE_PRIVATE).getString(THEME_KEY, "system");
+        boolean dark;
+        if ("dark".equals(pref)) {
+            dark = true;
+        } else if ("light".equals(pref)) {
+            dark = false;
+        } else {
+            dark = (getResources().getConfiguration().uiMode & Configuration.UI_MODE_NIGHT_MASK)
+                == Configuration.UI_MODE_NIGHT_YES;
+        }
+        return ContextCompat.getColor(
+            this,
+            dark ? R.color.app_window_background_dark : R.color.app_window_background_light
+        );
     }
 
     /**
@@ -68,6 +138,9 @@ public class MainActivity extends BridgeActivity {
     @Override
     public void onConfigurationChanged(Configuration newConfig) {
         super.onConfigurationChanged(newConfig);
+        // 日夜切换后「跟随系统」的底色要跟着换，WebView 底和窗口底一起刷
+        applyWindowBackground();
+        applyWebViewBackground();
         int nightModeFlags = newConfig.uiMode & Configuration.UI_MODE_NIGHT_MASK;
         boolean isDarkMode = nightModeFlags == Configuration.UI_MODE_NIGHT_YES;
         PluginHandle handle = getBridge().getPlugin("LocalMusicPlugin");

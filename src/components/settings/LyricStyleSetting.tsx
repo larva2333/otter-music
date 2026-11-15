@@ -91,7 +91,7 @@ export function LyricStyleSetting() {
             <Slider
               value={[lyricFontSize]}
               onValueChange={([value]) => setLyricFontSize(value)}
-              min={14}
+              min={13}
               max={28}
               step={1}
             />

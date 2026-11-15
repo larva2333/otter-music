@@ -31,6 +31,35 @@
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
 
     <!--
+      刻意不按 prefers-color-scheme 写底色：Android WebView 的 prefers-color-scheme
+      与原生 Configuration 不一致（实测系统浅色时 WebView 仍报 dark）。
+      这里同步读 localStorage 里的主题偏好 + 上次解析出的实际主题，先把底色铺上，
+      避免深色主题下页面首帧先白一下（otter_resolved_theme 由主题 Provider 持续写入）。
+    -->
+    <script>
+      (function () {
+        try {
+          var pref = null;
+          var resolved = null;
+          try {
+            pref = localStorage.getItem("theme");
+            resolved = localStorage.getItem("otter_resolved_theme");
+          } catch (e) {}
+          var dark =
+            pref === "dark" || (pref !== "light" && resolved === "dark");
+          document.documentElement.style.backgroundColor = dark
+            ? "#0f151f"
+            : "#fafcff";
+          // 不要在 <html> 上写 color-scheme。Android WebView 会把它同步到
+          // 三键导航栏（Home 键变色），并且部分机型上输入框聚焦后输入法弹不出来。
+          // 提前把 .dark 挂上，否则 React 挂载前 body 的 --background 还是浅色，
+          // 深色主题下会先亮一帧（next-themes 挂载后按同一主题接管 class）
+          if (dark) document.documentElement.classList.add("dark");
+        } catch (e) {}
+      })();
+    </script>
+
+    <!--
       首帧前应用「字体大小」设置（存储 key 与 storeKey.UiPrefsStore 保持一致），
       避免先按默认字号渲染、再跳变一下。
     -->

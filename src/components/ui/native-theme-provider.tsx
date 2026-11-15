@@ -87,6 +87,18 @@ export function NativeThemeProvider({
     try {
       localStorage.setItem("theme", pref);
     } catch {}
+    // 同步给原生：冷启动时启动窗口/WebView 的底色由它决定，早于网页加载
+    if (IS_NATIVE) {
+      void LocalMusicPlugin.setStoredTheme({ value: pref }).catch(() => {});
+    }
+  }, []);
+
+  // 首启时把当前偏好补写一份给原生（升级上来的用户 SharedPreferences 里还没有）
+  useEffect(() => {
+    if (!IS_NATIVE) return;
+    void LocalMusicPlugin.setStoredTheme({ value: readStoredPreference() }).catch(
+      () => {},
+    );
   }, []);
 
   useEffect(() => {
@@ -143,6 +155,21 @@ export function NativeThemeProvider({
   useEffect(() => {
     if (!IS_NATIVE || !isReady) return;
     void applySystemBarsStyle(isDarkTheme);
+  }, [isDarkTheme, isReady]);
+
+  // 首帧底色由 index.html 的内联脚本铺（读 localStorage），这里跟随主题变化保持一致，
+  // 并把「实际解析出的主题」写回去，供下次冷启动的首帧使用。
+  // 只改 backgroundColor，不写 color-scheme：WebView 会把根节点的 color-scheme
+  // 同步成导航栏按钮颜色，并让部分输入框聚焦时弹不出输入法。
+  useEffect(() => {
+    if (!isReady) return;
+    document.documentElement.style.backgroundColor = isDarkTheme
+      ? "#0f151f"
+      : "#fafcff";
+    document.documentElement.style.colorScheme = "";
+    try {
+      localStorage.setItem("otter_resolved_theme", isDarkTheme ? "dark" : "light");
+    } catch {}
   }, [isDarkTheme, isReady]);
 
   // 从后台/下拉通知栏回到 App 后，部分 ROM 会重置系统栏外观，重新应用一次

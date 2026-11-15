@@ -34,6 +34,19 @@ export const useMusicStore = create<MusicState>()(
     {
       name: storeKey.MusicStore,
       storage: createJSONStorage(() => idbStorage),
+      version: 2,
+      // 迁移只在版本升级时跑一次，之后用户手动改回别的值不会被再次覆盖。
+      // v0 → v1：歌词正文字号默认值 18 → 13。
+      // v1 → v2：歌词正文字号 13 → 15，对齐 left → center。
+      migrate: (persisted, version) => {
+        const old = persisted as Partial<MusicState>;
+        if (version < 1 && old.lyricFontSize === 18) old.lyricFontSize = 13;
+        if (version < 2) {
+          if (old.lyricFontSize === 13) old.lyricFontSize = 15;
+          if (old.lyricAlign === "left") old.lyricAlign = "center";
+        }
+        return old as MusicState;
+      },
       merge: (persisted, current) => {
         const state = { ...current, ...(persisted as Partial<MusicState>) };
         // 「上次浏览位置」不做跨进程记忆：老版本可能把「说唱」这类分类存进了

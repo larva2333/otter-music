@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<paths>
+    <!-- 应用内部 cache 目录：更新包下载到这里，再经 FileProvider 交给系统安装器 -->
+    <cache-path name="cache" path="." />
+    <files-path name="files" path="." />
+</paths>

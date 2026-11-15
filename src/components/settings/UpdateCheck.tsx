@@ -1,6 +1,13 @@
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { SettingItem } from "./SettingItem";
-import { Download, ExternalLink, Milestone, RefreshCw } from "lucide-react";
+import {
+  Download,
+  Github,
+  Loader2,
+  Milestone,
+  RefreshCw,
+  RotateCcw,
+} from "lucide-react";
 import { useAppStore } from "@/store/app-store";
 import { Badge } from "@/components/ui/badge";
 import { Footer } from "@/components/footer";
@@ -12,12 +19,16 @@ import {
   DrawerTitle,
 } from "@/components/ui/drawer";
 import { format } from "date-fns";
-import { openUrl } from "@/lib/utils";
+import toast from "react-hot-toast";
+import { downloadAndInstallApk } from "@/lib/apk-update";
+import { logger } from "@/lib/logger";
 
 interface UpdateDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }
+
+type DownloadSource = "proxy" | "direct";
 
 export function UpdateDialog({ open, onOpenChange }: UpdateDialogProps) {
   const {
@@ -30,6 +41,76 @@ export function UpdateDialog({ open, onOpenChange }: UpdateDialogProps) {
   } = useAppStore();
 
   const neverChecked = lastCheckTime === 0;
+
+  // 正在下载的源与进度；同时只允许一个下载任务
+  const [downloading, setDownloading] = useState<{
+    source: DownloadSource;
+    percent: number;
+  } | null>(null);
+  // 上次失败（或需要授权）的源，按钮显示「重试」
+  const [failedSource, setFailedSource] = useState<DownloadSource | null>(null);
+
+  const startDownload = async (source: DownloadSource) => {
+    // 已是最新版本时不允许下载：latestVersionInfo 只是更新日志缓存，
+    // 与「是否有新版本」是两件事
+    if (!latestVersionInfo || !hasUpdate || downloading) return;
+
+    const url =
+      source === "proxy"
+        ? latestVersionInfo.downloadUrl
+        : latestVersionInfo.directUrl;
+
+    setFailedSource(null);
+    setDownloading({ source, percent: 0 });
+
+    try {
+      await downloadAndInstallApk({
+        url,
+        expectedSize: latestVersionInfo.size,
+        onProgress: (percent) => setDownloading({ source, percent }),
+      });
+    } catch (err) {
+      logger.error("update", "应用内下载更新包失败", err as Error, { source });
+      setFailedSource(source);
+      const message = err instanceof Error ? err.message : String(err);
+      toast.error(`下载失败：${message}`);
+    } finally {
+      setDownloading(null);
+    }
+  };
+
+  const renderButtonContent = (
+    source: DownloadSource,
+    label: string,
+    icon: ReactNode
+  ) => {
+    const active = downloading?.source === source;
+
+    if (active) {
+      return (
+        <>
+          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+          下载中 {downloading.percent}%
+        </>
+      );
+    }
+
+    if (failedSource === source) {
+      return (
+        <>
+          <RotateCcw className="mr-2 h-4 w-4" />
+          下载失败，点击重试
+        </>
+      );
+    }
+
+    return (
+      <>
+        {icon}
+        {label}
+      </>
+    );
+  };
 
   return (
     <Drawer open={open} onOpenChange={onOpenChange}>
@@ -90,23 +171,32 @@ export function UpdateDialog({ open, onOpenChange }: UpdateDialogProps) {
               </div>
             )}
 
-            {/* 仅在有新版本更新时才显示下载按钮 */}
-            {latestVersionInfo && (
+            {/* 仅在有新版本时才显示下载按钮；已是最新版本时只展示更新日志 */}
+            {latestVersionInfo && hasUpdate && (
               <>
                 <Button
                   className="w-full"
-                  onClick={() => openUrl(latestVersionInfo.downloadUrl)}
+                  disabled={!!downloading}
+                  onClick={() => startDownload("proxy")}
                 >
-                  <Download className="mr-2 h-4 w-4" />
-                  国内加速下载
+                  {renderButtonContent(
+                    "proxy",
+                    "国内加速下载",
+                    <Download className="mr-2 h-4 w-4" />
+                  )}
                 </Button>
 
                 <Button
                   variant="outline"
                   className="w-full"
-                  onClick={() => openUrl(latestVersionInfo.directUrl)}
+                  disabled={!!downloading}
+                  onClick={() => startDownload("direct")}
                 >
-                  <ExternalLink className="mr-2 h-4 w-4" />从 GitHub 下载
+                  {renderButtonContent(
+                    "direct",
+                    "从 GitHub 下载",
+                    <Github className="mr-2 h-4 w-4" />
+                  )}
                 </Button>
               </>
             )}
@@ -136,7 +226,7 @@ export function UpdateCheck() {
             </span>
 
             {hasUpdate && (
-              <Badge variant="destructive" className="gap-1 animate-bounce">
+              <Badge variant="destructive" className="gap-1">
                 新版本
               </Badge>
             )}

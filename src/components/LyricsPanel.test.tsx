@@ -11,7 +11,13 @@ vi.mock("@/lib/music-api", () => ({
   },
 }));
 
-const { mockSeek } = vi.hoisted(() => ({ mockSeek: vi.fn() }));
+const { mockSeek, mockSetLyricAlign, mockSetLyricFontSize } = vi.hoisted(
+  () => ({
+    mockSeek: vi.fn(),
+    mockSetLyricAlign: vi.fn(),
+    mockSetLyricFontSize: vi.fn(),
+  })
+);
 
 vi.mock("@/store/music-store", () => ({
   useMusicStore: vi.fn(() => ({
@@ -21,6 +27,8 @@ vi.mock("@/store/music-store", () => ({
     lyricAlign: "center",
     lyricFontSize: 18,
     lyricOffset: -0.5,
+    setLyricAlign: mockSetLyricAlign,
+    setLyricFontSize: mockSetLyricFontSize,
   })),
 }));
 
@@ -164,6 +172,8 @@ describe("LyricsPanel", () => {
 
     await act(async () => {
       viewport.dispatchEvent(new Event("scroll"));
+      // 基准线在滚动停稳（静默 200ms）后才吸附，这里等过这个去抖窗口
+      await new Promise((resolve) => setTimeout(resolve, 260));
     });
 
     const baselineLine = container!.querySelector('[class*="bg-white/10"]');
@@ -191,6 +201,8 @@ describe("LyricsPanel", () => {
 
     await act(async () => {
       viewport.dispatchEvent(new Event("scroll"));
+      // 基准线在滚动停稳（静默 200ms）后才吸附，这里等过这个去抖窗口
+      await new Promise((resolve) => setTimeout(resolve, 260));
     });
 
     const baseline = container!.querySelector<HTMLButtonElement>(
@@ -233,6 +245,8 @@ describe("LyricsPanel", () => {
 
     await act(async () => {
       viewport.dispatchEvent(new Event("scroll"));
+      // 基准线在滚动停稳（静默 200ms）后才吸附，这里等过这个去抖窗口
+      await new Promise((resolve) => setTimeout(resolve, 260));
     });
 
     const baseline = container!.querySelector<HTMLButtonElement>(
@@ -245,6 +259,61 @@ describe("LyricsPanel", () => {
 
     expect(mockSeek).toHaveBeenCalledWith(0);
     expect(onOuterClick).not.toHaveBeenCalled();
+    cleanup();
+  });
+
+  it("长按歌词弹出样式面板，可切换对齐与字号", async () => {
+    vi.mocked(musicApi.getLyric).mockResolvedValue({
+      lyric: "[00:00.00]第一句歌词\n[00:10.00]第二句歌词",
+      tlyric: "",
+    });
+
+    renderPanel(neteaseTrack);
+
+    await act(async () => {
+      await Promise.resolve();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+
+    const line = container!.querySelector(
+      'p[class*="tracking-wide"]'
+    ) as HTMLElement;
+
+    expect(line.textContent).toContain("第一句歌词");
+
+    await act(async () => {
+      line.dispatchEvent(
+        new MouseEvent("pointerdown", {
+          bubbles: true,
+          clientX: 10,
+          clientY: 10,
+        })
+      );
+      await new Promise((resolve) => setTimeout(resolve, 560));
+    });
+
+    expect(container!.textContent).toContain("歌词样式");
+
+    const alignLeft = Array.from(container!.querySelectorAll("button")).find(
+      (btn) => btn.textContent?.includes("居左")
+    )!;
+
+    act(() => {
+      alignLeft.click();
+    });
+
+    expect(mockSetLyricAlign).toHaveBeenCalledWith("left");
+
+    const bigger = container!.querySelector<HTMLButtonElement>(
+      'button[aria-label="增大字号"]'
+    )!;
+
+    act(() => {
+      bigger.click();
+    });
+
+    expect(mockSetLyricFontSize).toHaveBeenCalledWith(19);
+
     cleanup();
   });
 });

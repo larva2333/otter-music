@@ -23,6 +23,13 @@ import {
 } from "@/lib/utils/search-helper";
 import { toastUtils } from "@/lib/utils/toast";
 import { enrichBilibiliSearchResults } from "@/lib/bilibili/bilibili-api";
+import {
+  EMPTY_SEARCH_CATEGORIES,
+  EMPTY_SEARCH_CATEGORY_PAGING,
+  hasSearchCategoryHits,
+  SEARCH_CATEGORY_PAGE_SIZE,
+  type SearchResultTab,
+} from "@/lib/search-categories";
 
 import { Input } from "./ui/input";
 import {
@@ -33,7 +40,11 @@ import {
   SelectValue,
 } from "./ui/select";
 import { SearchSuggestions } from "./SearchSuggestions";
+import { SearchHistory } from "./SearchHistory";
+import { PageHeader } from "./PageHeader";
+import { useSearchHistory } from "@/hooks/useSearchHistory";
 import { MusicTrackList } from "./MusicTrackList";
+import { SearchCategoryResults } from "./SearchCategoryResults";
 import { PlaylistMarket } from "./PlaylistMarket/PlaylistMarket";
 import {
   type MusicTrack,
@@ -55,6 +66,7 @@ export function MusicSearchView({
   isPlaying,
 }: MusicSearchViewProps) {
   const resultsScrollRef = useRef<HTMLDivElement>(null);
+  const categoryVersionRef = useRef(0);
   const {
     source,
     setSource,
@@ -62,6 +74,14 @@ export function MusicSearchView({
     setSearchQuery,
     searchResults,
     setSearchResults,
+    searchCategories,
+    setSearchCategories,
+    searchCategoryPaging,
+    setSearchCategoryPaging,
+    searchCategoryLoading,
+    setSearchCategoryLoading,
+    searchTab,
+    setSearchTab,
     searchLoading,
     setSearchLoading,
     searchHasMore,
@@ -79,6 +99,14 @@ export function MusicSearchView({
       setSearchQuery: s.setSearchQuery,
       searchResults: s.searchResults,
       setSearchResults: s.setSearchResults,
+      searchCategories: s.searchCategories,
+      setSearchCategories: s.setSearchCategories,
+      searchCategoryPaging: s.searchCategoryPaging,
+      setSearchCategoryPaging: s.setSearchCategoryPaging,
+      searchCategoryLoading: s.searchCategoryLoading,
+      setSearchCategoryLoading: s.setSearchCategoryLoading,
+      searchTab: s.searchTab,
+      setSearchTab: s.setSearchTab,
       searchLoading: s.searchLoading,
       setSearchLoading: s.setSearchLoading,
       searchHasMore: s.searchHasMore,
@@ -98,6 +126,10 @@ export function MusicSearchView({
   const wrapperRef = useRef<HTMLDivElement>(null);
   const isSearchingRef = useRef(false);
   const isInputFocusedRef = useRef(false);
+  const suggestionContextRef = useRef<{
+    query: string;
+    suggestions: SearchSuggestionItem[];
+  } | null>(null);
   const navigate = useNavigate();
 
   const visibleSourceOptions = useMemo(() => {
@@ -117,9 +149,17 @@ export function MusicSearchView({
   const [activeSuggestionIndex, setActiveSuggestionIndex] = useState(-1);
   const debouncedSearchQuery = useDebounce(searchQuery, 300);
 
+  /* ---------------- 搜索历史 ---------------- */
+  const { history, addHistory, removeHistory, clearHistory } =
+    useSearchHistory();
+  const [showHistory, setShowHistory] = useState(false);
+  const [drilledFromSuggestions, setDrilledFromSuggestions] = useState(false);
+  const hasHistory = history.length > 0;
+
   useEffect(() => {
+    let cancelled = false;
     const fetchSuggestions = async () => {
-      // 守卫 1：空查询或正在搜索 → 清空并隐藏
+      // 空查询或正在搜索歌曲 → 清空并隐藏
       if (!debouncedSearchQuery.trim() || isSearchingRef.current) {
         setSuggestions([]);
         setShowSuggestions(false);
@@ -128,10 +168,17 @@ export function MusicSearchView({
       try {
         const results =
           await musicApi.getSearchSuggestions(debouncedSearchQuery);
-        // 守卫 2：双重检查——输入框仍聚焦 && 未进入搜索状态
+        if (cancelled) return;
+        // 还没提交歌曲搜索时（刚输入，或从歌单页返回），即使输入框已失焦也要展示建议。
+        // 否则返回后只剩空的歌曲列表，会显示「未找到相关结果」。
+        const { searchPage, searchResults, searchLoading } =
+          useMusicStore.getState();
+        const browsingSuggestions =
+          searchPage === 0 && searchResults.length === 0 && !searchLoading;
         if (
-          document.activeElement === searchInputRef.current &&
-          !isSearchingRef.current
+          !isSearchingRef.current &&
+          (document.activeElement === searchInputRef.current ||
+            browsingSuggestions)
         ) {
           setSuggestions(results);
           setShowSuggestions(results.length > 0);
@@ -142,40 +189,103 @@ export function MusicSearchView({
       }
     };
     fetchSuggestions();
+    return () => {
+      cancelled = true;
+    };
   }, [debouncedSearchQuery]);
 
   useEffect(() => {
+    // 键盘动画会让 WebView 补发一次落在页面外的 mousedown，历史面板会跟着被收掉。
+    let ignoreOutsideUntil = 0;
+    const viewport = window.visualViewport;
+    const onViewportChange = () => {
+      ignoreOutsideUntil = Date.now() + 400;
+      if (document.activeElement !== searchInputRef.current) return;
+      const scroller = wrapperRef.current?.closest("[data-page-scroll]");
+      if (scroller instanceof HTMLElement) scroller.scrollTop = 0;
+    };
+    viewport?.addEventListener("resize", onViewportChange);
+    viewport?.addEventListener("scroll", onViewportChange);
+
     const handleClickOutside = (event: MouseEvent) => {
-      if (
-        wrapperRef.current &&
-        !wrapperRef.current.contains(event.target as Node)
-      ) {
+      if (Date.now() < ignoreOutsideUntil) return;
+      const target = event.target;
+      if (target === document.documentElement || target === document.body)
+        return;
+      if (wrapperRef.current && !wrapperRef.current.contains(target as Node)) {
         setShowSuggestions(false);
       }
     };
     document.addEventListener("mousedown", handleClickOutside);
-    return () => document.removeEventListener("mousedown", handleClickOutside);
+    return () => {
+      viewport?.removeEventListener("resize", onViewportChange);
+      viewport?.removeEventListener("scroll", onViewportChange);
+      document.removeEventListener("mousedown", handleClickOutside);
+    };
   }, []);
 
   const handleSelectSuggestion = (suggestion: SearchSuggestionItem) => {
-    if (suggestion.type === "playlist" && suggestion.id) {
-      navigate(`/netease-playlist/${suggestion.id}`);
-      setShowSuggestions(false);
-      return;
-    }
+    // 点聚合结果里的某一类，进入对应 tab；返回先回到这组建议。
+    suggestionContextRef.current = {
+      query: searchQuery,
+      suggestions: [...suggestions],
+    };
+    setDrilledFromSuggestions(true);
     setSearchQuery(suggestion.text);
     setShowSuggestions(false);
-    performSearch(suggestion.text);
+    performSearch(suggestion.text, suggestion.type);
+  };
+
+  /** 点历史词：直接用它搜索 */
+  const handleSelectHistory = (keyword: string) => {
+    setShowHistory(false);
+    setSearchQuery(keyword);
+    performSearch(keyword);
   };
 
   const handleSearchChange = (event: ChangeEvent<HTMLInputElement>) => {
-    setSearchQuery(event.target.value);
+    const value = event.target.value;
+    suggestionContextRef.current = null;
+    setDrilledFromSuggestions(false);
+    setSearchQuery(value);
     isSearchingRef.current = false;
     setActiveSuggestionIndex(-1);
+    // 输入框空了就回到搜索历史，有内容则交给搜索建议
+    setShowHistory(!value.trim() && hasHistory);
+  };
+
+  const openHistory = () => {
+    if (!searchQuery.trim() && hasHistory) setShowHistory(true);
+  };
+
+  const closeHistory = () => {
+    setShowHistory(false);
+    // 返回发现页后若仍保持聚焦，再点搜索框不会重新触发 focus，历史页就进不去。
+    searchInputRef.current?.blur();
+  };
+
+  const handleInputFocus = () => {
+    isInputFocusedRef.current = true;
+    if (!searchQuery.trim()) {
+      openHistory();
+      return;
+    }
+    if (suggestions.length > 0) setShowSuggestions(true);
+  };
+
+  const handleInputBlur = () => {
+    isInputFocusedRef.current = false;
+    setShowSuggestions(false);
   };
 
   const handleKeyDown = (e: KeyboardEvent<HTMLInputElement>) => {
     const hasSuggest = suggestions.length > 0;
+
+    // 收起搜索历史
+    if (e.key === "Escape") {
+      setShowHistory(false);
+      return;
+    }
 
     // 上下方向键逻辑
     if (["ArrowDown", "ArrowUp"].includes(e.key)) {
@@ -219,36 +329,113 @@ export function MusicSearchView({
       seenRef.current.clear();
 
       isSearchingRef.current = true;
+      suggestionContextRef.current = null;
+      categoryVersionRef.current++;
+      setDrilledFromSuggestions(false);
       setSearchQuery("");
       setSearchResults([]);
+      setSearchCategories(null);
+      setSearchCategoryPaging(EMPTY_SEARCH_CATEGORY_PAGING);
+      setSearchCategoryLoading(false);
+      setSearchTab("song");
       setSearchHasMore(false);
       setSearchPage(0);
       setSearchIntent(null);
       setSearchLoading(false);
       setSuggestions([]);
       setShowSuggestions(false);
+      setShowHistory(focus && hasHistory);
       if (focus) searchInputRef.current?.focus();
+      else searchInputRef.current?.blur();
       isSearchingRef.current = false;
     },
     [
       setSearchQuery,
       setSearchResults,
+      setSearchCategories,
+      setSearchCategoryPaging,
+      setSearchCategoryLoading,
+      setSearchTab,
       setSearchHasMore,
       setSearchPage,
       setSearchIntent,
       setSearchLoading,
+      hasHistory,
     ]
   );
 
+  const restoreSuggestions = useCallback(() => {
+    const ctx = suggestionContextRef.current;
+    suggestionContextRef.current = null;
+    setDrilledFromSuggestions(false);
+    if (!ctx?.query.trim()) {
+      resetSearch();
+      return;
+    }
+    versionRef.current++;
+    abortRef.current?.abort();
+    abortRef.current = null;
+    seenRef.current.clear();
+    categoryVersionRef.current++;
+    isSearchingRef.current = false;
+    setSearchResults([]);
+    setSearchCategories(null);
+    setSearchCategoryPaging(EMPTY_SEARCH_CATEGORY_PAGING);
+    setSearchCategoryLoading(false);
+    setSearchTab("song");
+    setSearchHasMore(false);
+    setSearchPage(0);
+    setSearchIntent(null);
+    setSearchLoading(false);
+    setSearchQuery(ctx.query);
+    setSuggestions(ctx.suggestions);
+    setShowSuggestions(ctx.suggestions.length > 0);
+    setShowHistory(false);
+    searchInputRef.current?.blur();
+  }, [
+    resetSearch,
+    setSearchQuery,
+    setSearchResults,
+    setSearchCategories,
+    setSearchCategoryPaging,
+    setSearchCategoryLoading,
+    setSearchTab,
+    setSearchHasMore,
+    setSearchPage,
+    setSearchIntent,
+    setSearchLoading,
+  ]);
+
   // 有搜索内容时挂一层退出栈：侧边返回 / 返回键先清空搜索回到首页，
   // 清空后栈为空，再按返回才走 RootLayout 的默认行为（最小化 App）。
+  // 从聚合建议点进歌曲后再返回，先回到那组建议，再返回才清空。
+  // 搜索历史是单独一页，返回先离开历史页，再回到发现。
   const hasSearchContent = Boolean(searchQuery.trim());
   const { push: pushExitLayer, pop: popExitLayer } = useExitLayer();
   useEffect(() => {
     if (!hasSearchContent) return;
-    const id = pushExitLayer({ close: () => resetSearch() });
+    const baseId = pushExitLayer({ close: () => resetSearch() });
+    const drillId = drilledFromSuggestions
+      ? pushExitLayer({ close: () => restoreSuggestions() })
+      : null;
+    return () => {
+      if (drillId) popExitLayer(drillId);
+      popExitLayer(baseId);
+    };
+  }, [
+    hasSearchContent,
+    drilledFromSuggestions,
+    pushExitLayer,
+    popExitLayer,
+    resetSearch,
+    restoreSuggestions,
+  ]);
+
+  useEffect(() => {
+    if (!showHistory || searchQuery.trim()) return;
+    const id = pushExitLayer({ close: closeHistory });
     return () => popExitLayer(id);
-  }, [hasSearchContent, pushExitLayer, popExitLayer, resetSearch]);
+  }, [showHistory, searchQuery, pushExitLayer, popExitLayer]);
 
   /* ---------------- 请求核心 ---------------- */
   useEffect(() => {
@@ -258,11 +445,14 @@ export function MusicSearchView({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchIntent, searchResults.length]);
 
-  /** 用户确认搜索后统一调用（回车／点击搜索建议），锁定建议弹窗并执行搜索 */
-  const performSearch = (queryText?: string) => {
+  /** 用户确认搜索后统一调用（回车／点击搜索建议／点历史词），锁定建议弹窗并执行搜索 */
+  const performSearch = (queryText?: string, tab: SearchResultTab = "song") => {
     isSearchingRef.current = true;
     setShowSuggestions(false);
+    setShowHistory(false);
+    setSearchTab(tab);
     const q = queryText ?? searchQuery;
+    if (q.trim()) addHistory(q);
     if (searchIntent?.type !== "album") setSearchIntent(null);
     fetchPage(1, true, q);
   };
@@ -277,11 +467,17 @@ export function MusicSearchView({
 
     const version = ++versionRef.current;
 
+    const categorize = reset && !searchIntent;
+
     if (reset) {
       abortRef.current?.abort();
       abortRef.current = new AbortController();
       seenRef.current.clear();
+      categoryVersionRef.current++;
       setSearchResults([]);
+      setSearchCategories(null);
+      setSearchCategoryPaging(EMPTY_SEARCH_CATEGORY_PAGING);
+      setSearchCategoryLoading(false);
       setSearchPage(0);
     }
 
@@ -289,6 +485,9 @@ export function MusicSearchView({
 
     try {
       const signal = abortRef.current?.signal;
+      const categoriesPromise = categorize
+        ? musicApi.searchCategories(query)
+        : Promise.resolve(null);
       const res =
         source === "all"
           ? await musicApi.searchAll(query, nextPage, 20, signal, searchIntent)
@@ -300,8 +499,38 @@ export function MusicSearchView({
               signal,
               searchIntent
             );
+      const categories = await categoriesPromise;
 
       if (version !== versionRef.current) return;
+      if (reset) {
+        setSearchCategories(
+          categories
+            ? {
+                artists: categories.artists,
+                albums: categories.albums,
+                playlists: categories.playlists,
+              }
+            : null
+        );
+        setSearchCategoryPaging(
+          categories
+            ? {
+                artist: {
+                  offset: SEARCH_CATEGORY_PAGE_SIZE,
+                  hasMore: categories.hasMore?.artist ?? false,
+                },
+                album: {
+                  offset: SEARCH_CATEGORY_PAGE_SIZE,
+                  hasMore: categories.hasMore?.album ?? false,
+                },
+                playlist: {
+                  offset: SEARCH_CATEGORY_PAGE_SIZE,
+                  hasMore: categories.hasMore?.playlist ?? false,
+                },
+              }
+            : EMPTY_SEARCH_CATEGORY_PAGING
+        );
+      }
 
       let items =
         source === "all" ? res.items : mergeAndSortTracks(res.items, query);
@@ -321,7 +550,13 @@ export function MusicSearchView({
       );
       setSearchPage(nextPage);
 
-      if (reset && filtered.length === 0) toastUtils.notFound("未找到相关歌曲");
+      if (
+        reset &&
+        filtered.length === 0 &&
+        !hasSearchCategoryHits(categories)
+      ) {
+        toastUtils.notFound(categorize ? "未找到相关结果" : "未找到相关歌曲");
+      }
 
       if (reset && filtered.some((t) => t.source === "bilibili")) {
         enrichBilibiliSearchResults(
@@ -360,9 +595,80 @@ export function MusicSearchView({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [source]);
 
+  const loadMoreCategories = () => {
+    const snap = useMusicStore.getState();
+    const kind = snap.searchTab;
+    if (kind === "song" || snap.searchCategoryLoading) return;
+    const paging = snap.searchCategoryPaging[kind];
+    if (!paging.hasMore) return;
+    const query = snap.searchQuery.trim();
+    if (!query) return;
+
+    const version = categoryVersionRef.current;
+    setSearchCategoryLoading(true);
+    void musicApi
+      .searchCategoryPage(query, kind, paging.offset)
+      .then((page) => {
+        if (version !== categoryVersionRef.current) return;
+        const key =
+          kind === "artist"
+            ? "artists"
+            : kind === "album"
+              ? "albums"
+              : "playlists";
+        const current =
+          useMusicStore.getState().searchCategories ?? EMPTY_SEARCH_CATEGORIES;
+        const seen = new Set(current[key].map((item) => item.id));
+        const incoming = page[key].filter((item) => !seen.has(item.id));
+        setSearchCategories({
+          ...current,
+          [key]: [...current[key], ...incoming],
+        });
+        setSearchCategoryPaging({
+          ...useMusicStore.getState().searchCategoryPaging,
+          [kind]: {
+            offset: paging.offset + SEARCH_CATEGORY_PAGE_SIZE,
+            hasMore: page.hasMore,
+          },
+        });
+      })
+      .catch((e) => {
+        logger.warn("MusicSearchView", "分类搜索翻页失败", e);
+      })
+      .finally(() => {
+        if (version === categoryVersionRef.current)
+          setSearchCategoryLoading(false);
+      });
+  };
+
+  const historyOpen = showHistory && !searchQuery.trim();
+  // 只输入了关键词、还没回车或点建议时，不要提前铺出空的歌曲页。
+  const hasCommittedSearch =
+    searchLoading ||
+    searchPage > 0 ||
+    searchResults.length > 0 ||
+    searchCategories !== null;
+
   /* ---------------- UI ---------------- */
   return (
     <div className="flex h-full min-h-0 flex-col bg-background">
+      {historyOpen && (
+        <PageHeader
+          title="搜索历史"
+          onBack={closeHistory}
+          action={
+            history.length > 0 ? (
+              <button
+                type="button"
+                onClick={clearHistory}
+                className="text-xs text-muted-foreground"
+              >
+                清空
+              </button>
+            ) : null
+          }
+        />
+      )}
       <div data-tap-top="" className="shrink-0 border-b border-border/40 p-3">
         <div ref={wrapperRef} className="relative w-full">
           {/* 搜索框主体 */}
@@ -378,14 +684,9 @@ export function MusicSearchView({
               value={searchQuery}
               onChange={handleSearchChange}
               onKeyDown={handleKeyDown}
-              onFocus={() => {
-                isInputFocusedRef.current = true;
-                if (suggestions.length > 0) setShowSuggestions(true);
-              }}
-              onBlur={() => {
-                isInputFocusedRef.current = false;
-                setShowSuggestions(false);
-              }}
+              onFocus={handleInputFocus}
+              onClick={openHistory}
+              onBlur={handleInputBlur}
               placeholder="搜索音乐、歌手或专辑..."
               className="h-full flex-1 border-0 bg-transparent! px-3 text-sm shadow-none focus-visible:ring-0 placeholder:text-muted-foreground/60"
             />
@@ -411,14 +712,25 @@ export function MusicSearchView({
               onValueChange={(v) => setSource(v as MusicSource)}
             >
               <SelectTrigger
-                onPointerDown={() => searchInputRef.current?.blur()}
-                className="h-7 w-auto min-w-[72px] shrink-0 border-0 bg-transparent! px-2 text-xs text-muted-foreground shadow-none hover:text-foreground focus:ring-0"
+                onPointerDown={() => {
+                  searchInputRef.current?.blur();
+                  setShowHistory(false);
+                }}
+                className="-mr-1.5 h-7 w-auto min-w-[108px] shrink-0 border-0 bg-transparent! px-2 text-xs text-muted-foreground shadow-none hover:text-foreground focus:ring-0"
               >
                 <SelectValue />
               </SelectTrigger>
-              <SelectContent align="end">
+              {/* 面板与按钮等宽：右边对齐后不会再往左探出，菜单项文字也与按钮文字同一左边缘 */}
+              <SelectContent
+                align="end"
+                className="w-[var(--radix-popover-trigger-width)]"
+              >
                 {visibleSourceOptions.map((opt) => (
-                  <SelectItem key={opt.value} value={opt.value}>
+                  <SelectItem
+                    key={opt.value}
+                    value={opt.value}
+                    className="pl-1 whitespace-nowrap"
+                  >
                     {opt.label}
                   </SelectItem>
                 ))}
@@ -438,10 +750,38 @@ export function MusicSearchView({
         </div>
       </div>
 
-      {/* 列表区域 */}
+      {/* 列表区域。历史是整页内容，不再盖在发现页上。 */}
       <div className="flex-1 min-h-0">
-        {!searchQuery.trim() ? (
+        {historyOpen ? (
+          <SearchHistory
+            items={history}
+            onSelect={handleSelectHistory}
+            onRemove={removeHistory}
+          />
+        ) : !searchQuery.trim() ? (
           <PlaylistMarket />
+        ) : !hasCommittedSearch ? null : !searchIntent ? (
+          <SearchCategoryResults
+            tab={searchTab}
+            onTabChange={setSearchTab}
+            categories={searchCategories}
+            tracks={searchResults}
+            scrollContainerRef={resultsScrollRef}
+            onPlay={(track) => onPlay(track, searchResults, "search")}
+            onOpenArtist={(id) => navigate(`/netease-artist/${id}`)}
+            onOpenAlbum={(id) => navigate(`/netease-album/${id}`)}
+            onOpenPlaylist={(id) => navigate(`/netease-playlist/${id}`)}
+            currentTrackId={currentTrackId}
+            isPlaying={isPlaying}
+            loading={searchLoading}
+            hasMore={searchHasMore}
+            onLoadMore={() => fetchPage(searchPage + 1)}
+            categoryHasMore={
+              searchTab !== "song" && searchCategoryPaging[searchTab].hasMore
+            }
+            categoryLoading={searchCategoryLoading}
+            onLoadMoreCategories={loadMoreCategories}
+          />
         ) : (
           <div
             ref={resultsScrollRef}

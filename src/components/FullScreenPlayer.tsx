@@ -510,7 +510,7 @@ export function FullScreenPlayer({
             onTouchEnd={trackInfoPressHandlers.onTouchEnd}
             title="长按复制歌曲信息"
           >
-            <h2 className="truncate text-lg font-semibold text-white">
+            <h2 className="truncate text-sm font-semibold text-white">
               {currentTrack?.name || "未知歌曲"}
             </h2>
             <p className="truncate text-xs text-white/60 mt-1">

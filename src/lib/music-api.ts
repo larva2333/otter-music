@@ -9,6 +9,11 @@ import type {
 } from "@/types/music";
 import { cachedFetch } from "@/lib/utils/cache";
 import { searchSuggest } from "@/lib/netease/netease-api";
+import {
+  fetchSearchCategories,
+  fetchSearchCategoryPage,
+  type SearchCategoryKind,
+} from "@/lib/search-categories";
 import { MusicProviderFactory, isAbort } from "./music-provider";
 import { logger } from "@/lib/logger";
 
@@ -54,6 +59,16 @@ export const musicApi = {
     return provider.search(query, page, count, signal, searchIntent) as Promise<
       SearchPageResult<MergedMusicTrack>
     >;
+  },
+
+  /** 聚合 / 网易云搜索时，歌手、专辑、歌单各走一次类型搜索。 */
+  searchCategories(query: string) {
+    return fetchSearchCategories(query);
+  },
+
+  /** 歌手、专辑、歌单的后续页。offset 为已加载条数。 */
+  searchCategoryPage(query: string, kind: SearchCategoryKind, offset: number) {
+    return fetchSearchCategoryPage(query, kind, offset);
   },
 
   /* ---------------- 最佳匹配搜索（串行） ---------------- */

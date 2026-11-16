@@ -1,5 +1,6 @@
 import {
   useMusicStore,
+  DEFAULT_VINYL_COLOR,
   type FullScreenBackgroundMode,
   type LyricAlign,
 } from "@/store/music-store";
@@ -91,8 +92,10 @@ interface BackupPayload {
   bilibiliKeepOriginalMeta: boolean;
   bilibiliAutoMatchSuffix: string;
   fullScreenBackgroundMode: FullScreenBackgroundMode;
+  customBackgroundImage: string | null;
   coverSize: number;
   coverRadius: number;
+  vinylColor: string;
   showSourceBadge: boolean;
   lyricAlign: LyricAlign;
   lyricFontSize: number;
@@ -163,8 +166,10 @@ export function serializeStoreData(): string {
     bilibiliKeepOriginalMeta: state.bilibiliKeepOriginalMeta,
     bilibiliAutoMatchSuffix: state.bilibiliAutoMatchSuffix,
     fullScreenBackgroundMode: state.fullScreenBackgroundMode,
+    customBackgroundImage: state.customBackgroundImage,
     coverSize: state.coverSize,
     coverRadius: state.coverRadius,
+    vinylColor: state.vinylColor,
     showSourceBadge: state.showSourceBadge,
     lyricAlign: state.lyricAlign,
     lyricFontSize: state.lyricFontSize,
@@ -357,8 +362,10 @@ export function importStoreData(payload: BackupPayload): void {
     bilibiliKeepOriginalMeta: payload.bilibiliKeepOriginalMeta ?? false,
     bilibiliAutoMatchSuffix: payload.bilibiliAutoMatchSuffix ?? "高音质 原曲",
     fullScreenBackgroundMode: payload.fullScreenBackgroundMode ?? "theme",
+    customBackgroundImage: payload.customBackgroundImage ?? null,
     coverSize: payload.coverSize ?? 328,
     coverRadius: payload.coverRadius ?? 24,
+    vinylColor: payload.vinylColor ?? DEFAULT_VINYL_COLOR,
     showSourceBadge: payload.showSourceBadge ?? true,
     lyricAlign: payload.lyricAlign ?? "center",
     lyricFontSize: payload.lyricFontSize ?? 15,

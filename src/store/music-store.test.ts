@@ -61,6 +61,28 @@ describe("MusicStore", () => {
 
       useMusicStore.getState().setFullScreenBackgroundMode("texture");
       expect(useMusicStore.getState().fullScreenBackgroundMode).toBe("texture");
+
+      useMusicStore.getState().setFullScreenBackgroundMode("photo");
+      expect(useMusicStore.getState().fullScreenBackgroundMode).toBe("photo");
+    });
+
+    it("自定义背景图与黑胶颜色可写入并重置", () => {
+      expect(useMusicStore.getState().customBackgroundImage).toBeNull();
+      expect(useMusicStore.getState().vinylColor).toBe("#0A0A0A");
+
+      useMusicStore
+        .getState()
+        .setCustomBackgroundImage("data:image/jpeg;base64,AA");
+      useMusicStore.getState().setVinylColor("transparent");
+      expect(useMusicStore.getState().customBackgroundImage).toContain(
+        "data:image"
+      );
+      expect(useMusicStore.getState().vinylColor).toBe("transparent");
+
+      useMusicStore.getState().setCustomBackgroundImage(null);
+      useMusicStore.getState().setVinylColor("#0A0A0A");
+      expect(useMusicStore.getState().customBackgroundImage).toBeNull();
+      expect(useMusicStore.getState().vinylColor).toBe("#0A0A0A");
     });
   });
 

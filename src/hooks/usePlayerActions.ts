@@ -137,10 +137,23 @@ export function usePlayerActions(
     }
   }, []);
 
+  /**
+   * 长按后紧随的 click 是否应忽略（消费一次）。
+   * 长按从封面扩展到整块内容区后，长按抬手补发的 click 会落到内容区容器，
+   * 这里读取并清空标记，避免它顺带切到/切回歌词页。
+   */
+  const consumeLongPressClick = useCallback(() => {
+    const recent =
+      Date.now() - coverLongPressAtRef.current < LONG_PRESS_CLICK_WINDOW;
+    if (recent) coverLongPressAtRef.current = 0;
+    return recent;
+  }, []);
+
   return {
     handleShare,
     handleToggleLike,
     isCurrentTrackFavorite,
+    consumeLongPressClick,
     trackInfoPressHandlers: {
       onMouseDown: handleTrackInfoPressStart,
       onMouseUp: handleTrackInfoPressEnd,

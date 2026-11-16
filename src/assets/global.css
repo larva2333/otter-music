@@ -334,6 +334,19 @@
   will-change: transform;
 }
 
+/* 黑胶唱片：暂停时由组件写 animation-play-state 停在当前角度，
+   不能靠移除 animation（那样会跳回 0°，看起来像“倒转了一下”） */
+@keyframes vinyl-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.vinyl-spin {
+  animation: vinyl-spin 24s linear infinite;
+  will-change: transform;
+}
+
 /* 骨架占位：底色不动，只有一条柔和高光从左扫到右。
    比 animate-pulse 的整块忽明忽暗平顺得多，接近 Apple Music 的占位观感。 */
 @keyframes skeleton-shimmer {

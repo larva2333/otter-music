@@ -19,6 +19,8 @@ interface MusicCoverProps {
   iconClassName?: string;
   fallbackIcon?: React.ReactNode;
   previewable?: boolean;
+  /** 额外的 img 内联样式（例如裁掉图片自带白边用的 scale） */
+  imgStyle?: React.CSSProperties;
   /** 受控：外部控制预览浮层开关（配合 onPreviewOpenChange），不传则走内部状态 */
   previewOpen?: boolean;
   onPreviewOpenChange?: (open: boolean) => void;
@@ -31,6 +33,7 @@ export function MusicCover({
   iconClassName,
   fallbackIcon,
   previewable = false,
+  imgStyle,
   previewOpen,
   onPreviewOpenChange,
 }: MusicCoverProps) {
@@ -128,6 +131,7 @@ export function MusicCover({
           className
         )}
         draggable={false}
+        style={imgStyle}
         onError={() => setError(true)}
         onClick={() => previewable && openPreview()}
         onContextMenu={(e) => e.preventDefault()}

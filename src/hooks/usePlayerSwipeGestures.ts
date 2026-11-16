@@ -61,8 +61,9 @@ interface UsePlayerSwipeGesturesOptions {
    * 轻点回调。放在 touchend 里执行而不是等浏览器的 click：
    * 上滑/滚动之后的惯性期内，WebView 会把紧跟的 tap 用于「停止滚动」，
    * click 根本不会派发，只监听 click 就会表现为「点一下没反应」。
+   * 带上 target：区分点在黑胶上（播放/暂停）还是空白处（切歌词）。
    */
-  onTap?: () => void;
+  onTap?: (target: EventTarget | null) => void;
   /** 手势区域容器：用于注册非 passive 的 touchmove 监听，阻止 WebView 滚动 */
   containerRef?: React.RefObject<HTMLDivElement | null>;
 }
@@ -219,72 +220,75 @@ export function usePlayerSwipeGestures({
     [enabled]
   );
 
-  const handleTouchEnd = useCallback(() => {
-    const gesture = gestureRef.current;
-    gestureRef.current = null;
-    if (!gesture) {
-      reset();
-      return;
-    }
-
-    const { dx, dy, axis } = gesture;
-    const duration = Date.now() - gesture.startAt;
-    const distance = Math.hypot(dx, dy);
-
-    /**
-     * 轻点判定放在最前面，并且不依赖 click 事件：
-     * 上滑或滚动之后的惯性期内，浏览器会把紧跟的 tap 当成「停止滚动」，
-     * click 不会派发。在 touchend 里直接处理，点击才不会被吞。
-     */
-    if (onTap && distance <= TAP_MAX_MOVE && duration < TAP_MAX_DURATION) {
-      tapHandledAtRef.current = Date.now();
-      onTap();
-      reset();
-      return;
-    }
-
-    if (!enabled) {
-      reset();
-      return;
-    }
-
-    const isFling = duration < FLING_DURATION;
-
-    /**
-     * 只有手势真正触发了动作，才拦一次紧随其后的 click（否则会误切到歌词页）。
-     * 上滑、斜向滑动、距离不足这些没有产生动作的手势一律不拦，
-     * 不然用户滑完再点一下会发现点击「被吃掉」。
-     */
-    const markClickSuppression = () => {
-      suppressClickUntilRef.current = Date.now() + CLICK_SUPPRESS_WINDOW;
-    };
-
-    if (axis === "vertical") {
-      const shouldClose =
-        dy >= CLOSE_THRESHOLD || (isFling && dy >= FLING_DISTANCE);
-      setIsDragging(false);
-      if (shouldClose) {
-        markClickSuppression();
-        onClose();
+  const handleTouchEnd = useCallback(
+    (e?: React.TouchEvent) => {
+      const gesture = gestureRef.current;
+      gestureRef.current = null;
+      if (!gesture) {
+        reset();
+        return;
       }
-      setDragY(0);
-      return;
-    }
 
-    if (axis === "horizontal") {
-      const shouldSwitch =
-        Math.abs(dx) >= SWIPE_THRESHOLD ||
-        (isFling && Math.abs(dx) >= FLING_DISTANCE);
-      if (shouldSwitch) {
-        markClickSuppression();
-        // 自然方向：左滑看到下一首，右滑回到上一首
-        if (dx < 0) onNext();
-        else onPrev();
+      const { dx, dy, axis } = gesture;
+      const duration = Date.now() - gesture.startAt;
+      const distance = Math.hypot(dx, dy);
+
+      /**
+       * 轻点判定放在最前面，并且不依赖 click 事件：
+       * 上滑或滚动之后的惯性期内，浏览器会把紧跟的 tap 当成「停止滚动」，
+       * click 不会派发。在 touchend 里直接处理，点击才不会被吞。
+       */
+      if (onTap && distance <= TAP_MAX_MOVE && duration < TAP_MAX_DURATION) {
+        tapHandledAtRef.current = Date.now();
+        onTap(e?.target ?? null);
+        reset();
+        return;
       }
-    }
 
-    reset();
-  }, [enabled, onClose, onNext, onPrev, onTap, reset]);
+      if (!enabled) {
+        reset();
+        return;
+      }
+
+      const isFling = duration < FLING_DURATION;
+
+      /**
+       * 只有手势真正触发了动作，才拦一次紧随其后的 click（否则会误切到歌词页）。
+       * 上滑、斜向滑动、距离不足这些没有产生动作的手势一律不拦，
+       * 不然用户滑完再点一下会发现点击「被吃掉」。
+       */
+      const markClickSuppression = () => {
+        suppressClickUntilRef.current = Date.now() + CLICK_SUPPRESS_WINDOW;
+      };
+
+      if (axis === "vertical") {
+        const shouldClose =
+          dy >= CLOSE_THRESHOLD || (isFling && dy >= FLING_DISTANCE);
+        setIsDragging(false);
+        if (shouldClose) {
+          markClickSuppression();
+          onClose();
+        }
+        setDragY(0);
+        return;
+      }
+
+      if (axis === "horizontal") {
+        const shouldSwitch =
+          Math.abs(dx) >= SWIPE_THRESHOLD ||
+          (isFling && Math.abs(dx) >= FLING_DISTANCE);
+        if (shouldSwitch) {
+          markClickSuppression();
+          // 自然方向：左滑看到下一首，右滑回到上一首
+          if (dx < 0) onNext();
+          else onPrev();
+        }
+      }
+
+      reset();
+    },
+    [enabled, onClose, onNext, onPrev, onTap, reset]
+  );
 
   const shouldSuppressClick = useCallback(() => {
     const now = Date.now();

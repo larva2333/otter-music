@@ -60,6 +60,10 @@ describe("usePlayerActions 封面长按", () => {
         );
         return stopPropagation;
       },
+      consumeLongPressClick: () =>
+        (
+          handlers as ReturnType<typeof usePlayerActions>
+        ).consumeLongPressClick(),
       advance: (ms: number) =>
         act(() => {
           vi.advanceTimersByTime(ms);
@@ -148,6 +152,22 @@ describe("usePlayerActions 封面长按", () => {
     actions.touchEnd();
 
     expect(actions.click()).not.toHaveBeenCalled();
+
+    actions.cleanup();
+  });
+
+  it("内容区长按弹菜单后，消费型标记只吞掉一次补发 click", () => {
+    const onCoverLongPress = vi.fn();
+    const actions = renderActions(onCoverLongPress);
+
+    actions.touchStart();
+    actions.advance(500);
+    actions.touchEnd();
+
+    // 补发的那一次 click 被吞掉
+    expect(actions.consumeLongPressClick()).toBe(true);
+    // 用户随后点菜单外的地方关菜单：这一次 click 必须放行，不再被吞
+    expect(actions.consumeLongPressClick()).toBe(false);
 
     actions.cleanup();
   });

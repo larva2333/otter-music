@@ -227,6 +227,21 @@ describe("usePlayerSwipeGestures 播放页手势", () => {
     h.cleanup();
   });
 
+  it("轻点回调带上 target，用于区分黑胶与周围空白", () => {
+    const h = renderGestures();
+    const target = document.createElement("div");
+
+    act(() => {
+      h.getLatest().handlers.onTouchStart(touch(300, 300));
+      h.getLatest().handlers.onTouchEnd({
+        target,
+      } as unknown as React.TouchEvent);
+    });
+
+    expect(h.onTap).toHaveBeenCalledWith(target);
+    h.cleanup();
+  });
+
   it("轻点后浏览器补发的 click 会被拦一次", () => {
     const h = renderGestures();
     h.tap();

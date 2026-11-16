@@ -125,8 +125,13 @@ export function PlaylistOperations({
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <Button variant="secondary" size="icon" title="更多操作">
-          <MoreHorizontal className="h-4 w-4" />
+        <Button
+          variant="secondary"
+          size="icon"
+          className="size-7"
+          title="更多操作"
+        >
+          <MoreHorizontal className="size-3.5" />
         </Button>
       </DropdownMenuTrigger>
 

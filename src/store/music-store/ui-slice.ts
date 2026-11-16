@@ -6,8 +6,14 @@ import {
   type SourceConfig,
 } from "@/types/music";
 
-export type FullScreenBackgroundMode = "theme" | "cover" | "texture";
+export type FullScreenBackgroundMode = "theme" | "cover" | "texture" | "photo";
 export type LyricAlign = "center" | "left" | "right";
+export type CoverStyle = "original" | "vinyl";
+
+/** 黑胶盘面默认色：与原来的 bg-neutral-950 一致 */
+export const DEFAULT_VINYL_COLOR = "#0A0A0A";
+/** 黑胶盘面「透明」的特殊取值：透出播放器背景 */
+export const TRANSPARENT_VINYL_COLOR = "transparent";
 
 /**
  * 「上次浏览位置」的出厂值：歌单广场第一个分类 = 全部。
@@ -42,8 +48,14 @@ export interface UiSlice {
   bilibiliKeepOriginalMeta: boolean;
   bilibiliAutoMatchSuffix: string;
   fullScreenBackgroundMode: FullScreenBackgroundMode;
+  /** 自定义播放器背景图（压缩后的 data URL），mode === "photo" 时使用 */
+  customBackgroundImage: string | null;
   coverSize: number;
   coverRadius: number;
+  /** 播放页封面样式：原始 / 黑胶唱片 */
+  coverStyle: CoverStyle;
+  /** 黑胶盘面颜色（hex，或 "transparent" 表示透明） */
+  vinylColor: string;
   showSourceBadge: boolean;
   lyricAlign: LyricAlign;
   lyricFontSize: number;
@@ -82,8 +94,11 @@ export interface UiSlice {
   setBilibiliKeepOriginalMeta: (enable: boolean) => void;
   setBilibiliAutoMatchSuffix: (suffix: string) => void;
   setFullScreenBackgroundMode: (mode: FullScreenBackgroundMode) => void;
+  setCustomBackgroundImage: (dataUrl: string | null) => void;
   setCoverSize: (size: number) => void;
   setCoverRadius: (radius: number) => void;
+  setCoverStyle: (style: CoverStyle) => void;
+  setVinylColor: (color: string) => void;
   setShowSourceBadge: (show: boolean) => void;
   setLyricAlign: (align: LyricAlign) => void;
   setLyricFontSize: (size: number) => void;
@@ -115,8 +130,11 @@ export const createUiSlice: StateCreator<MusicState, [], [], UiSlice> = (
   bilibiliKeepOriginalMeta: false,
   bilibiliAutoMatchSuffix: "高音质 原曲",
   fullScreenBackgroundMode: "theme",
+  customBackgroundImage: null,
   coverSize: 328,
   coverRadius: 24,
+  coverStyle: "original",
+  vinylColor: DEFAULT_VINYL_COLOR,
   showSourceBadge: true,
   lyricAlign: "center",
   lyricFontSize: 15,
@@ -154,8 +172,12 @@ export const createUiSlice: StateCreator<MusicState, [], [], UiSlice> = (
     set({ bilibiliAutoMatchSuffix }),
   setFullScreenBackgroundMode: (fullScreenBackgroundMode) =>
     set({ fullScreenBackgroundMode }),
+  setCustomBackgroundImage: (customBackgroundImage) =>
+    set({ customBackgroundImage }),
   setCoverSize: (coverSize) => set({ coverSize }),
   setCoverRadius: (coverRadius) => set({ coverRadius }),
+  setCoverStyle: (coverStyle) => set({ coverStyle }),
+  setVinylColor: (vinylColor) => set({ vinylColor }),
   setShowSourceBadge: (showSourceBadge) => set({ showSourceBadge }),
   setLyricAlign: (lyricAlign) => set({ lyricAlign }),
   setLyricFontSize: (lyricFontSize) => set({ lyricFontSize }),

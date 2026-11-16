@@ -128,6 +128,9 @@ export function useAudioTrackLoader(
 
     const loadAudio = async () => {
       const audio = audioRef.current!;
+      // 连续切歌时旧请求仍在 await 中；一旦被新请求取代就不许再碰 audio/store，
+      // 否则旧歌 URL 晚返回会覆盖新歌，表现为"先播上一首，几秒后才切过来"
+      const isStale = () => requestId !== requestIdRef.current;
       const prev = prevTrackRef.current;
 
       // prev.recoveryKey 为 undefined说明是本 effect 首次运行，非错误恢复
@@ -171,6 +174,7 @@ export function useAudioTrackLoader(
 
       /** 核心播放器加载逻辑 */
       const play = async (audioUrl: string) => {
+        if (isStale()) return;
         if (audio.src !== audioUrl) {
           getState().setCurrentAudioUrl(audioUrl);
           // 先清空再赋值，强制 WebView 释放旧缓冲、重置 media element 状态
@@ -179,6 +183,8 @@ export function useAudioTrackLoader(
           audio.load();
         }
         await waitForAudioReady(audio);
+        // 等待就绪期间可能已被下一次切歌接管：旧请求不得写回进度或调 play
+        if (isStale()) return;
         audio.currentTime = resumeTime;
         audio.playbackRate = getState().playbackSpeed;
         await audio.play();
@@ -196,8 +202,8 @@ export function useAudioTrackLoader(
           parseInt(quality, 10),
           { forceRefresh: isRecovery }
         );
-        // 同步到 remoteUrlRef 以支持代理备用线路容灾
-        if (result.url && !result.dlKey) {
+        // 同步到 remoteUrlRef 以支持代理备用线路容灾（旧请求不得污染新歌的备用线路）
+        if (result.url && !result.dlKey && !isStale()) {
           remoteUrlRef.current = result.url;
         }
         return result;
@@ -205,6 +211,7 @@ export function useAudioTrackLoader(
 
       try {
         const { url: primaryUrl, dlKey } = await resolveOptimalUrl();
+        if (isStale()) return;
 
         // 离线无资源容灾跳过
         if (!primaryUrl && !navigator.onLine && source !== "local") {

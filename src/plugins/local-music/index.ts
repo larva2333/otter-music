@@ -60,6 +60,13 @@ export interface PickDirectoryResult {
   error?: string;
 }
 
+/** 选图并压缩后的背景图（data URL 直接可当 CSS background-image 用） */
+export interface PickImageResult {
+  success: boolean;
+  dataUrl?: string;
+  error?: string;
+}
+
 export interface SystemDarkModeResult {
   isDarkMode: boolean;
 }
@@ -125,6 +132,8 @@ export interface LocalMusicPlugin {
   hasAllStoragePermission(): Promise<HasPermissionResult>;
   deleteLocalMusic(options: { localPath: string }): Promise<DeleteResult>;
   pickDownloadDirectory(): Promise<PickDirectoryResult>;
+  /** 自选播放器背景图：原生 SAF 选图 + 压缩，Web 端由 input[type=file] 兜底 */
+  pickBackgroundImage(): Promise<PickImageResult>;
   getSystemDarkMode(): Promise<SystemDarkModeResult>;
   /**
    * 把 APP 内的主题偏好同步给原生。网页层用 localStorage 存主题，原生读不到，

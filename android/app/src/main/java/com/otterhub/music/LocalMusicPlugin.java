@@ -12,6 +12,8 @@ import android.content.IntentSender;
 import android.content.SharedPreferences;
 import android.content.res.Configuration;
 import android.database.Cursor;
+import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
 import android.media.MediaMetadataRetriever;
 import android.media.MediaExtractor;
 import android.media.MediaMuxer;
@@ -183,6 +185,75 @@ public class LocalMusicPlugin extends Plugin {
             .put("success", true)
             .put("path", relativePath != null ? relativePath : "")
             .put("uri", treeUri.toString()));
+    }
+
+    /** 选一张图片作为全屏播放器背景：走 SAF，不需要 READ_MEDIA_IMAGES 权限 */
+    @PluginMethod
+    public void pickBackgroundImage(PluginCall call) {
+        Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+        intent.addCategory(Intent.CATEGORY_OPENABLE);
+        intent.setType("image/*");
+        startActivityForResult(call, intent, "handlePickBackgroundImageResult");
+    }
+
+    @ActivityCallback
+    private void handlePickBackgroundImageResult(PluginCall call, ActivityResult result) {
+        if (result.getResultCode() != Activity.RESULT_OK || result.getData() == null) {
+            call.resolve(new JSObject().put("success", false).put("error", "cancelled"));
+            return;
+        }
+        Uri uri = result.getData().getData();
+        if (uri == null) {
+            call.resolve(new JSObject().put("success", false).put("error", "No image selected"));
+            return;
+        }
+        try {
+            call.resolve(new JSObject()
+                .put("success", true)
+                .put("dataUrl", compressImageToDataUrl(uri)));
+        } catch (Exception e) {
+            Log.e("LocalMusicPlugin", "pickBackgroundImage failed", e);
+            call.resolve(new JSObject().put("success", false).put("error", e.getMessage()));
+        }
+    }
+
+    /** 先读边界算 inSampleSize 再解码，避免大图直接 decode 撑爆 WebView 进程；再缩到 1080/JPEG75 回传 */
+    private String compressImageToDataUrl(Uri uri) throws IOException {
+        final int MAX_SIDE = 1080;
+        ContentResolver resolver = getContext().getContentResolver();
+
+        BitmapFactory.Options bounds = new BitmapFactory.Options();
+        bounds.inJustDecodeBounds = true;
+        try (InputStream in = resolver.openInputStream(uri)) {
+            BitmapFactory.decodeStream(in, null, bounds);
+        }
+        if (bounds.outWidth <= 0 || bounds.outHeight <= 0) throw new IOException("Invalid image");
+
+        int sample = 1;
+        int maxSide = Math.max(bounds.outWidth, bounds.outHeight);
+        while (maxSide / (sample * 2) >= MAX_SIDE) sample *= 2;
+
+        BitmapFactory.Options opts = new BitmapFactory.Options();
+        opts.inSampleSize = sample;
+        Bitmap bitmap;
+        try (InputStream in = resolver.openInputStream(uri)) {
+            bitmap = BitmapFactory.decodeStream(in, null, opts);
+        }
+        if (bitmap == null) throw new IOException("Decode failed");
+
+        int w = bitmap.getWidth();
+        int h = bitmap.getHeight();
+        if (Math.max(w, h) > MAX_SIDE) {
+            float scale = (float) MAX_SIDE / Math.max(w, h);
+            Bitmap scaled = Bitmap.createScaledBitmap(bitmap, Math.round(w * scale), Math.round(h * scale), true);
+            bitmap.recycle();
+            bitmap = scaled;
+        }
+
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        bitmap.compress(Bitmap.CompressFormat.JPEG, 75, out);
+        bitmap.recycle();
+        return "data:image/jpeg;base64," + Base64.encodeToString(out.toByteArray(), Base64.NO_WRAP);
     }
 
     @PermissionCallback

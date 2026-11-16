@@ -9,7 +9,7 @@ import {
   type PointerEvent as ReactPointerEvent,
   type MouseEvent as ReactMouseEvent,
 } from "react";
-import { flushSync } from "react-dom";
+import { createPortal, flushSync } from "react-dom";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { cn } from "@/lib/utils";
 import { musicApi } from "@/lib/music-api";
@@ -705,104 +705,106 @@ export function LyricsPanel({ track, active = true }: LyricsPanelProps) {
       </div>
 
       {/* 长按歌词弹出的样式面板 */}
-      {stylePanelOpen && (
-        <>
-          <div
-            className="absolute inset-0 z-20 bg-black/30"
-            onClick={(e) => {
-              // 别让遮罩的点击冒泡出去，否则外层会把歌词切成封面
-              e.stopPropagation();
-              setStylePanelOpen(false);
-            }}
-          />
+      {stylePanelOpen &&
+        createPortal(
+          <div className="fixed inset-0 z-500 flex items-end justify-center">
+            <div
+              data-no-tap
+              className="absolute inset-0 bg-black/60 animate-in fade-in duration-200"
+              onClick={(e) => {
+                e.stopPropagation();
+                setStylePanelOpen(false);
+              }}
+            />
 
-          <div
-            className={cn(
-              "absolute bottom-3 left-1/2 z-30 -translate-x-1/2",
-              "w-[min(420px,calc(100%-24px))]",
-              "rounded-2xl bg-neutral-900/95 p-4",
-              "ring-1 ring-white/10 shadow-2xl backdrop-blur-xl"
-            )}
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="mb-3 flex items-center justify-between">
-              <span className="text-sm font-medium text-white">歌词样式</span>
+            <div
+              data-no-tap
+              className={cn(
+                "relative mb-6 w-[min(420px,calc(100%-32px))] rounded-2xl p-4",
+                "bg-neutral-900/95 ring-1 ring-white/10 shadow-2xl backdrop-blur-xl",
+                "animate-in slide-in-from-bottom-4 duration-200"
+              )}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="mb-3 flex items-center justify-between">
+                <span className="text-sm font-medium text-white">歌词样式</span>
 
-              <button
-                type="button"
-                onClick={() => setStylePanelOpen(false)}
-                className="flex h-8 w-8 items-center justify-center rounded-full text-white/60 transition-colors hover:bg-white/10 hover:text-white"
-                aria-label="关闭"
-              >
-                <X size={16} />
-              </button>
-            </div>
-
-            <div className="flex rounded-xl bg-white/5 p-1">
-              {ALIGN_OPTIONS.map(({ value, label, icon: Icon }) => (
                 <button
-                  key={value}
                   type="button"
-                  onClick={() => setLyricAlign(value)}
-                  className={cn(
-                    "flex flex-1 items-center justify-center gap-1.5 rounded-lg py-2 text-xs transition-all",
-                    lyricAlign === value
-                      ? "bg-white/15 text-white"
-                      : "text-white/50 hover:text-white/80"
-                  )}
+                  onClick={() => setStylePanelOpen(false)}
+                  className="flex h-8 w-8 items-center justify-center rounded-full text-white/60 transition-colors hover:bg-white/10 hover:text-white"
+                  aria-label="关闭"
                 >
-                  <Icon size={15} />
-                  {label}
+                  <X size={16} />
                 </button>
-              ))}
+              </div>
+
+              <div className="flex rounded-xl bg-white/5 p-1">
+                {ALIGN_OPTIONS.map(({ value, label, icon: Icon }) => (
+                  <button
+                    key={value}
+                    type="button"
+                    onClick={() => setLyricAlign(value)}
+                    className={cn(
+                      "flex flex-1 items-center justify-center gap-1.5 rounded-lg py-2 text-xs transition-all",
+                      lyricAlign === value
+                        ? "bg-white/15 text-white"
+                        : "text-white/50 hover:text-white/80"
+                    )}
+                  >
+                    <Icon size={15} />
+                    {label}
+                  </button>
+                ))}
+              </div>
+
+              <div className="mt-3 flex items-center gap-3">
+                <span className="shrink-0 text-xs text-white/60">字号</span>
+
+                <button
+                  type="button"
+                  onClick={() =>
+                    setLyricFontSize(
+                      Math.max(LYRIC_MIN_FONT_SIZE, lyricFontSize - 1)
+                    )
+                  }
+                  disabled={lyricFontSize <= LYRIC_MIN_FONT_SIZE}
+                  className={cn(
+                    "flex h-9 w-9 shrink-0 items-center justify-center rounded-full",
+                    "bg-white/10 text-white transition-colors active:bg-white/20",
+                    "disabled:opacity-30"
+                  )}
+                  aria-label="减小字号"
+                >
+                  <Minus size={16} />
+                </button>
+
+                <span className="flex-1 text-center text-sm tabular-nums text-white">
+                  {lyricFontSize}px
+                </span>
+
+                <button
+                  type="button"
+                  onClick={() =>
+                    setLyricFontSize(
+                      Math.min(LYRIC_MAX_FONT_SIZE, lyricFontSize + 1)
+                    )
+                  }
+                  disabled={lyricFontSize >= LYRIC_MAX_FONT_SIZE}
+                  className={cn(
+                    "flex h-9 w-9 shrink-0 items-center justify-center rounded-full",
+                    "bg-white/10 text-white transition-colors active:bg-white/20",
+                    "disabled:opacity-30"
+                  )}
+                  aria-label="增大字号"
+                >
+                  <Plus size={16} />
+                </button>
+              </div>
             </div>
-
-            <div className="mt-3 flex items-center gap-3">
-              <span className="shrink-0 text-xs text-white/60">字号</span>
-
-              <button
-                type="button"
-                onClick={() =>
-                  setLyricFontSize(
-                    Math.max(LYRIC_MIN_FONT_SIZE, lyricFontSize - 1)
-                  )
-                }
-                disabled={lyricFontSize <= LYRIC_MIN_FONT_SIZE}
-                className={cn(
-                  "flex h-9 w-9 shrink-0 items-center justify-center rounded-full",
-                  "bg-white/10 text-white transition-colors active:bg-white/20",
-                  "disabled:opacity-30"
-                )}
-                aria-label="减小字号"
-              >
-                <Minus size={16} />
-              </button>
-
-              <span className="flex-1 text-center text-sm tabular-nums text-white">
-                {lyricFontSize}px
-              </span>
-
-              <button
-                type="button"
-                onClick={() =>
-                  setLyricFontSize(
-                    Math.min(LYRIC_MAX_FONT_SIZE, lyricFontSize + 1)
-                  )
-                }
-                disabled={lyricFontSize >= LYRIC_MAX_FONT_SIZE}
-                className={cn(
-                  "flex h-9 w-9 shrink-0 items-center justify-center rounded-full",
-                  "bg-white/10 text-white transition-colors active:bg-white/20",
-                  "disabled:opacity-30"
-                )}
-                aria-label="增大字号"
-              >
-                <Plus size={16} />
-              </button>
-            </div>
-          </div>
-        </>
-      )}
+          </div>,
+          document.body
+        )}
     </div>
   );
 }

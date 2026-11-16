@@ -19,6 +19,8 @@ import type { MusicState } from "./types";
 export type { MusicState } from "./types";
 export type { FullScreenBackgroundMode } from "./ui-slice";
 export type { LyricAlign } from "./ui-slice";
+export type { CoverStyle } from "./ui-slice";
+export { DEFAULT_VINYL_COLOR, TRANSPARENT_VINYL_COLOR } from "./ui-slice";
 
 export const useMusicStore = create<MusicState>()(
   persist(
@@ -99,8 +101,11 @@ export const useMusicStore = create<MusicState>()(
         bilibiliKeepOriginalMeta: state.bilibiliKeepOriginalMeta,
         bilibiliAutoMatchSuffix: state.bilibiliAutoMatchSuffix,
         fullScreenBackgroundMode: state.fullScreenBackgroundMode,
+        customBackgroundImage: state.customBackgroundImage,
         coverSize: state.coverSize,
         coverRadius: state.coverRadius,
+        coverStyle: state.coverStyle,
+        vinylColor: state.vinylColor,
         showSourceBadge: state.showSourceBadge,
         lyricAlign: state.lyricAlign,
         lyricFontSize: state.lyricFontSize,

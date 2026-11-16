@@ -100,7 +100,7 @@ export function FavoritesView({
             />
           </div>
         </div>
-        <div className="flex-1 space-y-1">
+        <div className="flex-1 self-stretch flex flex-col justify-center gap-1">
           <h2 className="text-base font-bold tracking-tight line-clamp-1">
             我的喜欢
           </h2>
@@ -110,10 +110,10 @@ export function FavoritesView({
           <div className="pt-1 flex gap-2 items-center">
             <Button
               onClick={() => onPlay(null)}
-              className="rounded-full px-3 h-8"
+              className="rounded-full px-3 h-7"
               size="sm"
             >
-              <Play className="h-3 w-3 fill-current" />
+              <Play className="size-3 fill-current" />
             </Button>
 
             <PlaylistOperations

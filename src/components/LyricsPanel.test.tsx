@@ -292,10 +292,19 @@ describe("LyricsPanel", () => {
       await new Promise((resolve) => setTimeout(resolve, 560));
     });
 
-    expect(container!.textContent).toContain("歌词样式");
+    // 样式面板 portal 到 body、全屏遮罩（和播放风格弹窗一致）：
+    // 遮罩不在歌词容器内，点它关面板时不会冒泡到手势层切回封面
+    const panel = Array.from(document.body.querySelectorAll("div")).find(
+      (el) =>
+        el.className.includes("fixed inset-0 z-500") &&
+        el.textContent?.includes("歌词样式")
+    ) as HTMLElement;
+    expect(panel).toBeTruthy();
+    expect(panel.querySelector(".bg-black\\/60")).toBeTruthy();
+    expect(panel.querySelector(".mb-6")).toBeTruthy();
 
-    const alignLeft = Array.from(container!.querySelectorAll("button")).find(
-      (btn) => btn.textContent?.includes("居左")
+    const alignLeft = Array.from(panel.querySelectorAll("button")).find((btn) =>
+      btn.textContent?.includes("居左")
     )!;
 
     act(() => {
@@ -304,7 +313,7 @@ describe("LyricsPanel", () => {
 
     expect(mockSetLyricAlign).toHaveBeenCalledWith("left");
 
-    const bigger = container!.querySelector<HTMLButtonElement>(
+    const bigger = panel.querySelector<HTMLButtonElement>(
       'button[aria-label="增大字号"]'
     )!;
 

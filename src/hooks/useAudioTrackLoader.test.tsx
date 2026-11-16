@@ -52,6 +52,12 @@ const TRACK = {
   duration: 180,
 } as unknown as MusicTrack;
 
+const TRACK_2 = {
+  ...TRACK,
+  id: "t2",
+  name: "Second Song",
+} as unknown as MusicTrack;
+
 /** 单一品质音源样本（站点恒定 128kbps mp3，切音质无流可换） */
 const HIGEQU_TRACK = {
   id: "higequ_228908",
@@ -213,20 +219,14 @@ describe("useAudioTrackLoader", () => {
     cleanup();
   });
 
-  it("requestId 失效（被恢复流程取代）时，失效缓存清理仍执行", async () => {
+  it("requestId 失效（被恢复流程取代）时，旧请求不再覆盖新歌与缓存", async () => {
     let resolveFirst!: (v: { url: string }) => void;
     vi.mocked(resolveTrackUrl)
       .mockImplementationOnce(() => new Promise((res) => (resolveFirst = res)))
       .mockResolvedValue({ url: MOCK_URL_2 });
 
-    // 首次播放成功，使后续被取代的旧请求在 play 阶段失败
-    const playStub = vi
-      .fn<() => Promise<void>>()
-      .mockResolvedValueOnce()
-      .mockRejectedValueOnce(new Error("LATE_FAIL"));
-
-    const { cleanup } = await setup((audio) => {
-      audio.play = playStub;
+    const { audio, cleanup } = await setup((a) => {
+      a.play = vi.fn().mockResolvedValue(undefined);
     });
     await flushAsync(); // load#1 挂起在 resolveTrackUrl
 
@@ -236,8 +236,8 @@ describe("useAudioTrackLoader", () => {
     });
     await flushAsync(); // load#2 成功
 
-    // 预置失效缓存，释放挂起的 load#1
-    useUrlCacheStore.getState().set(TRACK_KEY, MOCK_URL);
+    // 哨兵缓存：释放挂起的 load#1 后不得被旧请求的失败分支清掉
+    useUrlCacheStore.getState().set(TRACK_KEY, "sentinel-url");
     await act(async () => {
       resolveFirst({ url: MOCK_URL });
       await drainMicrotasks();
@@ -245,8 +245,11 @@ describe("useAudioTrackLoader", () => {
       await drainMicrotasks();
     });
 
-    // 旧请求虽被守卫拦截（不触发失败 UI），但失效缓存仍被清理
-    expect(useUrlCacheStore.getState().urlMap[TRACK_KEY]).toBeUndefined();
+    expect(audio.src).toBe(MOCK_URL_2);
+    expect(audio.play).toHaveBeenCalledTimes(1);
+    expect(useUrlCacheStore.getState().urlMap[TRACK_KEY]?.url).toBe(
+      "sentinel-url"
+    );
     expect(toast.error).not.toHaveBeenCalled();
     cleanup();
   });
@@ -321,6 +324,71 @@ describe("useAudioTrackLoader", () => {
     expect(resolveTrackUrl).toHaveBeenLastCalledWith(TRACK, 128, {
       forceRefresh: false,
     });
+    cleanup();
+  });
+
+  it("连续切歌：旧请求晚返回时不得覆盖新歌的播放源", async () => {
+    useMusicStore.setState({ queue: [TRACK, TRACK_2], currentIndex: 0 });
+
+    let resolveFirst!: (v: { url: string }) => void;
+    vi.mocked(resolveTrackUrl)
+      .mockImplementationOnce(() => new Promise((res) => (resolveFirst = res)))
+      .mockResolvedValue({ url: MOCK_URL_2 });
+
+    const { audio, cleanup } = await setup();
+    await flushAsync(); // load#1 挂起在 resolveTrackUrl
+
+    await act(async () => {
+      useMusicStore.getState().setCurrentIndexAndPlay(1);
+    });
+    await flushAsync(); // load#2 完成，src 应为新歌
+    expect(audio.src).toBe(MOCK_URL_2);
+
+    // 释放已过期的 load#1：它拿到旧歌 URL 后不得再碰 audio
+    await act(async () => {
+      resolveFirst({ url: MOCK_URL });
+      await drainMicrotasks();
+      await new Promise((r) => setTimeout(r, 0));
+      await drainMicrotasks();
+    });
+
+    expect(resolveTrackUrl).toHaveBeenCalledTimes(2);
+    expect(audio.src).toBe(MOCK_URL_2);
+    expect(audio.play).toHaveBeenCalledTimes(1);
+    cleanup();
+  });
+
+  it("旧请求等待音频就绪期间被切歌，不得写回旧进度或重复播放", async () => {
+    useMusicStore.setState({
+      queue: [TRACK, TRACK_2],
+      currentIndex: 0,
+      currentAudioTime: 42,
+    });
+    vi.mocked(resolveTrackUrl)
+      .mockResolvedValueOnce({ url: MOCK_URL })
+      .mockResolvedValue({ url: MOCK_URL_2 });
+
+    const { audio, cleanup } = await setup((a) => {
+      a.load = vi.fn(); // 不自动派发 canplay，手动控制就绪时机
+    });
+    await flushAsync(); // load#1 挂在 waitForAudioReady（resumeTime=42）
+
+    await act(async () => {
+      useMusicStore.getState().setCurrentIndexAndPlay(1);
+    });
+    await flushAsync(); // load#2 同样等待就绪
+    expect(audio.src).toBe(MOCK_URL_2);
+
+    // 两个请求都在等 canplay，派发一次让旧请求续跑
+    await act(async () => {
+      audio.dispatchEvent(new Event("canplay"));
+      await drainMicrotasks();
+      await new Promise((r) => setTimeout(r, 0));
+      await drainMicrotasks();
+    });
+
+    expect(audio.play).toHaveBeenCalledTimes(1);
+    expect(audio.currentTime).toBe(0); // 不得写回旧请求的 42 秒
     cleanup();
   });
 });

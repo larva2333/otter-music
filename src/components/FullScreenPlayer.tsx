@@ -411,7 +411,7 @@ export function FullScreenPlayer({
               onClose();
             }}
           >
-            <ChevronDown className="h-6 w-6" />
+            <ChevronDown className="size-7" strokeWidth={1.5} />
           </Button>
         </div>
         <div className="flex justify-center">

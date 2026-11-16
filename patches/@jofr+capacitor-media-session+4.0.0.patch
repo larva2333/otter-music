@@ -214,10 +214,19 @@ index 6f54b7f..59ac0e8 100644
          if (service != null) { service.updatePossibleActions(); };
      }
 diff --git a/node_modules/@jofr/capacitor-media-session/android/src/main/java/io/github/jofr/capacitor/mediasessionplugin/MediaSessionService.java b/node_modules/@jofr/capacitor-media-session/android/src/main/java/io/github/jofr/capacitor/mediasessionplugin/MediaSessionService.java
-index cb0417f..1c6f7d4 100644
+index cb0417f..70985de 100644
 --- a/node_modules/@jofr/capacitor-media-session/android/src/main/java/io/github/jofr/capacitor/mediasessionplugin/MediaSessionService.java
 +++ b/node_modules/@jofr/capacitor-media-session/android/src/main/java/io/github/jofr/capacitor/mediasessionplugin/MediaSessionService.java
-@@ -21,10 +21,14 @@ import androidx.core.app.NotificationCompat;
+@@ -8,6 +8,8 @@ import android.app.Service;
+ import android.content.Intent;
+ import android.content.pm.ServiceInfo;
+ import android.graphics.Bitmap;
++import android.graphics.Canvas;
++import android.graphics.drawable.Drawable;
+ import android.os.Build;
+ import android.os.IBinder;
+ import android.os.Binder;
+@@ -21,10 +23,14 @@ import androidx.core.app.NotificationCompat;
  import androidx.media.session.MediaButtonReceiver;
  import androidx.media.app.NotificationCompat.MediaStyle;
  
@@ -232,7 +241,7 @@ index cb0417f..1c6f7d4 100644
  import java.util.Set;
  
  public class MediaSessionService extends Service {
-@@ -38,19 +42,41 @@ public class MediaSessionService extends Service {
+@@ -38,19 +44,48 @@ public class MediaSessionService extends Service {
      private MediaStyle notificationStyle;
      private final Map<String, NotificationCompat.Action> notificationActions = new HashMap<>();
      private final Map<String, Long> playbackStateActions = new HashMap<>();
@@ -263,6 +272,13 @@ index cb0417f..1c6f7d4 100644
      private String artist = "";
      private String album = "";
      private Bitmap artwork = null;
++    /**
++     * 无封面时的占位图（应用图标）。largeIcon 为 null 时系统会拿 smallIcon
++     * （音量喇叭）顶上，通知栏/媒体卡片就会出现一个莫名其妙的音量图标。
++     */
++    private Bitmap defaultArtwork = null;
++    /** smallIcon 资源 id 缓存；0 表示未解析 */
++    private int smallIconRes = 0;
 +    /** 非 null 时覆写 AVRCP 的 TITLE 字段（车载歌词），不影响通知栏 */
 +    private String carLyric = null;
      private long duration = 0;
@@ -275,7 +291,7 @@ index cb0417f..1c6f7d4 100644
      private boolean possibleActionsUpdate = true;
      private boolean playbackStateUpdate = false;
      private boolean mediaMetadataUpdate = false;
-@@ -82,8 +108,26 @@ public class MediaSessionService extends Service {
+@@ -82,8 +117,26 @@ public class MediaSessionService extends Service {
      public void connectAndInitialize(MediaSessionPlugin plugin, Intent intent) {
          this.plugin = plugin;
  
@@ -302,17 +318,32 @@ index cb0417f..1c6f7d4 100644
          mediaSession.setActive(true);
  
          playbackStateBuilder = new PlaybackStateCompat.Builder()
-@@ -105,7 +149,8 @@ public class MediaSessionService extends Service {
+@@ -92,7 +145,9 @@ public class MediaSessionService extends Service {
+         mediaSession.setPlaybackState(playbackStateBuilder.build());
+ 
+         mediaMetadataBuilder = new MediaMetadataCompat.Builder()
+-                .putLong(MediaMetadataCompat.METADATA_KEY_DURATION, duration);
++                .putLong(MediaMetadataCompat.METADATA_KEY_DURATION, duration)
++                // 冷启动还没歌时，媒体卡片也先显示应用图标
++                .putBitmap(MediaMetadataCompat.METADATA_KEY_ALBUM_ART, getDefaultArtwork());
+         mediaSession.setMetadata(mediaMetadataBuilder.build());
+ 
+         notificationManager = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
+@@ -104,8 +159,11 @@ public class MediaSessionService extends Service {
+         notificationStyle = new MediaStyle().setMediaSession(mediaSession.getSessionToken());
          notificationBuilder = new NotificationCompat.Builder(this, "playback")
                  .setStyle(notificationStyle)
-                 .setSmallIcon(R.drawable.ic_baseline_volume_up_24)
+-                .setSmallIcon(R.drawable.ic_baseline_volume_up_24)
 -                .setContentIntent(PendingIntent.getActivity(getApplicationContext(), 0, intent, PendingIntent.FLAG_IMMUTABLE))
++                .setSmallIcon(resolveSmallIcon())
++                // 首帧通知还没有歌，先摆应用图标，别让系统拿 smallIcon 顶上
++                .setLargeIcon(getDefaultArtwork())
 +                // FLAG_UPDATE_CURRENT：contentIntent 带深链 data，复用旧 PendingIntent 会丢掉新 Intent
 +                .setContentIntent(PendingIntent.getActivity(getApplicationContext(), 0, intent, PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT))
                  .setVisibility(NotificationCompat.VISIBILITY_PUBLIC);
  
          if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-@@ -149,14 +194,90 @@ public class MediaSessionService extends Service {
+@@ -149,14 +207,90 @@ public class MediaSessionService extends Service {
      public void destroy() {
          stopForeground(true);
          stopSelf();
@@ -403,7 +434,7 @@ index cb0417f..1c6f7d4 100644
      public void setPlaybackState(int playbackState) {
          if (this.playbackState != playbackState) {
              this.playbackState = playbackState;
-@@ -173,6 +294,60 @@ public class MediaSessionService extends Service {
+@@ -173,6 +307,60 @@ public class MediaSessionService extends Service {
          }
      }
  
@@ -464,7 +495,54 @@ index cb0417f..1c6f7d4 100644
      public void setArtist(String artist) {
          if (!this.artist.equals(artist)) {
              this.artist = artist;
-@@ -219,18 +394,26 @@ public class MediaSessionService extends Service {
+@@ -195,6 +383,46 @@ public class MediaSessionService extends Service {
+         notificationUpdate = true;
+     }
+ 
++    /**
++     * 通知小图标。Android 13+ 会把 smallIcon 同时用在两处：状态栏，
++     * 以及媒体卡片封面右下角的 app 角标。原来用喇叭图标，角标里就挂着个音量符号，
++     * 所以换成应用logo的单色剪影（资源放在宿主 app，插件里不放图片）。
++     */
++    private int resolveSmallIcon() {
++        if (smallIconRes == 0) {
++            smallIconRes = getResources().getIdentifier("ic_notification_small", "drawable", getPackageName());
++            if (smallIconRes == 0) {
++                smallIconRes = R.drawable.ic_baseline_volume_up_24;
++            }
++        }
++        return smallIconRes;
++    }
++
++    /** 懒加载应用图标作为默认封面，解码失败返回 null（退回系统原有行为） */
++    private Bitmap getDefaultArtwork() {
++        if (defaultArtwork == null) {
++            try {
++                // 直接读宿主 launcher 图标：不在插件里另放图片资源，
++                // 避免 patch-package 对二进制文件的处理问题，也省 apk 体积
++                Drawable icon = getPackageManager().getApplicationIcon(getPackageName());
++                int size = Math.round(128 * getResources().getDisplayMetrics().density);
++                Bitmap bitmap = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888);
++                Canvas canvas = new Canvas(bitmap);
++                icon.setBounds(0, 0, size, size);
++                icon.draw(canvas);
++                defaultArtwork = bitmap;
++            } catch (Exception e) {
++                Log.w(TAG, "load default artwork failed", e);
++            }
++        }
++        return defaultArtwork;
++    }
++
++    /** 通知栏大图 / 媒体卡片封面：有封面用封面，没有就用应用图标 */
++    private Bitmap resolveArtwork() {
++        return artwork != null ? artwork : getDefaultArtwork();
++    }
++
+     public void setDuration(long duration) {
+         if (this.duration != duration) {
+             this.duration = duration;
+@@ -219,18 +447,26 @@ public class MediaSessionService extends Service {
  
      @SuppressLint("RestrictedApi")
      public void update() {
@@ -493,7 +571,7 @@ index cb0417f..1c6f7d4 100644
                      if (actionName.equals("play") && playbackState != PlaybackStateCompat.STATE_PAUSED) {
                          continue;
                      }
-@@ -238,13 +421,26 @@ public class MediaSessionService extends Service {
+@@ -238,13 +474,26 @@ public class MediaSessionService extends Service {
                          continue;
                      }
  
@@ -521,7 +599,7 @@ index cb0417f..1c6f7d4 100644
                              activeCompactViewActionIndices[compactNotificationActionIndicesIndex] = notificationActionIndex;
                              compactNotificationActionIndicesIndex++;
                          }
-@@ -253,8 +449,10 @@ public class MediaSessionService extends Service {
+@@ -253,8 +502,10 @@ public class MediaSessionService extends Service {
                  }
              }
  
@@ -534,7 +612,7 @@ index cb0417f..1c6f7d4 100644
              }
              if (notificationStyle != null) {
                if (compactNotificationActionIndicesIndex > 0) {
-@@ -276,8 +474,28 @@ public class MediaSessionService extends Service {
+@@ -276,11 +527,31 @@ public class MediaSessionService extends Service {
          }
  
          if (mediaMetadataUpdate && mediaMetadataBuilder != null) {
@@ -563,16 +641,22 @@ index cb0417f..1c6f7d4 100644
 +                    .putString(MediaMetadataCompat.METADATA_KEY_DISPLAY_DESCRIPTION, album)
                      .putString(MediaMetadataCompat.METADATA_KEY_ARTIST, artist)
                      .putString(MediaMetadataCompat.METADATA_KEY_ALBUM, album)
-                     .putBitmap(MediaMetadataCompat.METADATA_KEY_ALBUM_ART, artwork)
-@@ -289,7 +507,7 @@ public class MediaSessionService extends Service {
+-                    .putBitmap(MediaMetadataCompat.METADATA_KEY_ALBUM_ART, artwork)
++                    .putBitmap(MediaMetadataCompat.METADATA_KEY_ALBUM_ART, resolveArtwork())
+                     .putLong(MediaMetadataCompat.METADATA_KEY_DURATION, duration);
+             mediaSession.setMetadata(mediaMetadataBuilder.build());
+             mediaMetadataUpdate = false;
+@@ -289,8 +560,8 @@ public class MediaSessionService extends Service {
          if (notificationUpdate && notificationBuilder != null) {
              notificationBuilder
                      .setContentTitle(title)
 -                    .setContentText(artist + " - " + album)
+-                    .setLargeIcon(artwork);
 +                    .setContentText(buildNotificationSubtitle())
-                     .setLargeIcon(artwork);
++                    .setLargeIcon(resolveArtwork());
              notificationManager.notify(NOTIFICATION_ID, notificationBuilder.build());
              notificationUpdate = false;
+         }
 diff --git a/node_modules/@jofr/capacitor-media-session/android/src/main/res/drawable/ic_baseline_favorite_24.xml b/node_modules/@jofr/capacitor-media-session/android/src/main/res/drawable/ic_baseline_favorite_24.xml
 new file mode 100644
 index 0000000..7f7d98f

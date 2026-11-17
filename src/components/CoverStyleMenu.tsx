@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Disc3, Image as ImageIcon, ImagePlus, Palette, X } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -15,6 +15,7 @@ import {
 import { LocalMusicPlugin } from "@/plugins/local-music";
 import { IS_NATIVE } from "@/lib/api/config";
 import toast from "react-hot-toast";
+import { BackgroundImageCropper } from "./BackgroundImageCropper";
 
 interface CoverStyleMenuProps {
   open: boolean;
@@ -100,6 +101,8 @@ export function CoverStyleMenu({
   const setVinylColor = useMusicStore((s) => s.setVinylColor);
   const { push, pop } = useExitLayer();
   const fileInputRef = useRef<HTMLInputElement>(null);
+  // 待裁剪的原图 dataUrl：选完图先进裁剪器，确定后才写进 store
+  const [cropSrc, setCropSrc] = useState<string | null>(null);
 
   const close = useCallback(() => onOpenChange(false), [onOpenChange]);
 
@@ -126,14 +129,15 @@ export function CoverStyleMenu({
     try {
       const result = await LocalMusicPlugin.pickBackgroundImage();
       if (result.success && result.dataUrl) {
-        applyBackground(result.dataUrl);
+        // 相册选完先裁剪，不直接应用
+        setCropSrc(result.dataUrl);
       } else if (result.error && result.error !== "cancelled") {
         toast.error("选择图片失败");
       }
     } catch {
       toast.error("选择图片失败");
     }
-  }, [applyBackground]);
+  }, []);
 
   const handleFileChange = useCallback(
     async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -142,17 +146,17 @@ export function CoverStyleMenu({
       e.target.value = "";
       if (!file) return;
       try {
-        applyBackground(await compressImageFile(file));
+        setCropSrc(await compressImageFile(file));
       } catch {
         toast.error("图片处理失败");
       }
     },
-    [applyBackground]
+    []
   );
 
   if (!open) return null;
 
-  return createPortal(
+  const menuPortal = createPortal(
     <div className="fixed inset-0 z-500 flex items-end justify-center">
       <div
         className="absolute inset-0 bg-black/60 animate-in fade-in duration-200"
@@ -370,5 +374,22 @@ export function CoverStyleMenu({
       </div>
     </div>,
     document.body
+  );
+
+  return (
+    <>
+      {menuPortal}
+      {/* 选完照片先进裁剪器：拖动平移、捏合缩放，框内所见即最终背景 */}
+      {cropSrc && (
+        <BackgroundImageCropper
+          src={cropSrc}
+          onCancel={() => setCropSrc(null)}
+          onConfirm={(dataUrl) => {
+            setCropSrc(null);
+            applyBackground(dataUrl);
+          }}
+        />
+      )}
+    </>
   );
 }

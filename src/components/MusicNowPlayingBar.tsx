@@ -4,20 +4,26 @@ import { ListVideo, Pause, Play } from "lucide-react";
 import { useMusicStore } from "@/store/music-store";
 import { useShallow } from "zustand/react/shallow";
 import { PlayerQueueDrawer } from "./PlayerQueueDrawer";
+import { confirmDialog } from "./ui/confirm-dialog";
 import { MusicCover } from "./MusicCover";
+import { VinylCover } from "./VinylCover";
 import { useCallback } from "react";
 import toast from "react-hot-toast";
-import { cn } from "@/lib/utils";
 import type { MusicTrack } from "@/types/music";
 
 interface MusicNowPlayingBarProps {
   onOpenFullScreen?: () => void;
-  isTab?: boolean;
 }
 
+/**
+ * 全站唯一的迷你播放条：固定胶囊形态（不随页面放大）。
+ *
+ * 历史上有 isTab 分支——非 tab 页会渲染成全宽底栏（更大的封面、更高的内边距）。
+ * 进入歌单/专辑等二级页时突然"放大 + 下移"的观感就是它造成的，已移除。
+ * 需要改高度/尺寸时只改这里，布局位置由 MusicLayout 负责。
+ */
 export function MusicNowPlayingBar({
   onOpenFullScreen,
-  isTab = true,
 }: MusicNowPlayingBarProps) {
   const {
     isPlaying,
@@ -33,6 +39,8 @@ export function MusicNowPlayingBar({
     reshuffle,
     removeFromQueue,
     playTrackAsNext,
+    coverStyle,
+    vinylColor,
   } = useMusicStore(
     useShallow((state) => ({
       isPlaying: state.isPlaying,
@@ -48,6 +56,8 @@ export function MusicNowPlayingBar({
       reshuffle: state.reshuffle,
       removeFromQueue: state.removeFromQueue,
       playTrackAsNext: state.playTrackAsNext,
+      coverStyle: state.coverStyle,
+      vinylColor: state.vinylColor,
     }))
   );
 
@@ -60,8 +70,14 @@ export function MusicNowPlayingBar({
     [setCurrentIndexAndPlay]
   );
 
-  const handleClearQueue = () => {
-    if (confirm("确定要清空播放列表吗？")) {
+  const handleClearQueue = async () => {
+    if (
+      await confirmDialog({
+        title: "确定要清空播放列表吗？",
+        destructive: true,
+        confirmText: "清空",
+      })
+    ) {
       clearQueue();
       toast.success("播放列表已清空");
     }
@@ -86,63 +102,54 @@ export function MusicNowPlayingBar({
   }
 
   return (
-    <div className={cn(isTab ? "px-3" : "w-full")}>
+    <div className="px-3">
       <div
-        className={cn(
-          // 胶囊必须是实色：半透明 / 磨砂会让滚动内容透上来，滑动时忽明忽暗
-          "flex items-center transition-all duration-300",
-          isTab
-            ? "gap-2 px-2 py-1.5 rounded-full border border-transparent dark:border-white/10 bg-card shadow-[0_2px_10px_rgba(15,46,66,0.10)]"
-            : "gap-3 px-4 py-2.5 bg-background border-t border-border/50 pb-[calc(0.75rem+var(--safe-area-bottom))]"
-        )}
+        // 胶囊必须是实色：半透明 / 磨砂会让滚动内容透上来，滑动时忽明忽暗
+        className="flex items-center transition-all duration-300 gap-2 px-2 py-1.5 rounded-full border border-transparent dark:border-white/10 bg-card shadow-[0_2px_10px_rgba(15,46,66,0.10)]"
       >
         {/* 不含列表按钮，避免遮罩层关闭时 ghost click 误触发全屏 */}
         <div
           className="flex items-center flex-1 min-w-0 cursor-pointer"
           onClick={() => onOpenFullScreen?.()}
         >
-          {/* 专辑封面 */}
-          <div
-            className={cn(
-              "relative shrink-0 overflow-hidden rounded-md transition-all duration-300 shadow-sm",
-              isTab ? "h-8 w-8" : "h-11 w-11"
-            )}
-          >
-            <MusicCover
-              src={coverUrl}
-              alt={currentTrack.name}
-              className="w-full h-full"
-              iconClassName={isTab ? "h-4 w-4" : "h-5 w-5"}
-            />
-          </div>
+          {/* 专辑封面：跟随播放页选择的封面样式。播放页是黑胶，胶囊里也必须是黑胶，
+              否则同一个封面在两地长得不一样（用户明确要求"外面显示一样的"）。
+              32px 的小盘面不放唱臂骨架，只有黑胶盘+中心封面。 */}
+          {coverStyle === "vinyl" ? (
+            <div className="relative shrink-0 overflow-hidden rounded-full transition-all duration-300 h-9 w-9">
+              <VinylCover
+                src={coverUrl}
+                alt={currentTrack.name}
+                isPlaying={isPlaying}
+                className="h-full w-full"
+                iconClassName="h-3.5 w-3.5"
+                discColor={vinylColor}
+                showTonearm={false}
+              />
+            </div>
+          ) : (
+            <div className="relative shrink-0 overflow-hidden rounded-md transition-all duration-300 shadow-sm h-8 w-8">
+              <MusicCover
+                src={coverUrl}
+                alt={currentTrack.name}
+                className="w-full h-full"
+                iconClassName="h-4 w-4"
+              />
+            </div>
+          )}
 
           {/* 歌曲信息 - 单行 */}
           <p className="flex-1 min-w-0 truncate flex items-baseline gap-1.5 ml-2">
-            <span
-              className={cn(
-                "font-medium text-foreground transition-all duration-300",
-                isTab ? "text-sm" : "text-base"
-              )}
-            >
+            <span className="font-medium text-foreground transition-all duration-300 text-sm">
               {currentTrack.name}
             </span>
-            <span
-              className={cn(
-                "text-muted-foreground truncate transition-all duration-300",
-                "text-xs"
-              )}
-            >
+            <span className="text-muted-foreground truncate transition-all duration-300 text-xs">
               - {currentTrack.artist?.join(", ")}
             </span>
           </p>
 
           {/* 圆环播放按钮 - 参照网易云：视觉体量贴近纯图标，不宜过大 */}
-          <div
-            className={cn(
-              "relative shrink-0 transition-all duration-300 ml-2",
-              isTab ? "w-4 h-4" : "w-[22px] h-[22px]"
-            )}
-          >
+          <div className="relative shrink-0 transition-all duration-300 ml-2 w-4 h-4">
             {/* SVG 圆环进度 (利用 viewBox 自动等比缩放) */}
             <svg className="absolute inset-0 w-full h-full" viewBox="0 0 40 40">
               {/* 背景圆环 */}
@@ -181,19 +188,9 @@ export function MusicNowPlayingBar({
               aria-label={isPlaying ? "暂停" : "播放"}
             >
               {isPlaying ? (
-                <Pause
-                  className={cn(
-                    "fill-current transition-all duration-300",
-                    isTab ? "h-3 w-3" : "h-4 w-4"
-                  )}
-                />
+                <Pause className="fill-current transition-all duration-300 h-2.5 w-2.5" />
               ) : (
-                <Play
-                  className={cn(
-                    "fill-current ml-0.5 transition-all duration-300",
-                    isTab ? "h-3 w-3" : "h-4 w-4"
-                  )}
-                />
+                <Play className="fill-current ml-0.5 transition-all duration-300 h-2.5 w-2.5" />
               )}
             </button>
           </div>
@@ -212,18 +209,10 @@ export function MusicNowPlayingBar({
           onPlayTrack={playTrackAsNext}
           trigger={
             <button
-              className={cn(
-                "text-muted-foreground hover:text-foreground transition-all shrink-0 focus:outline-none",
-                isTab ? "p-1.5" : "p-2 ml-1"
-              )}
+              className="text-muted-foreground hover:text-foreground transition-all shrink-0 focus:outline-none p-1.5"
               aria-label="播放列表"
             >
-              <ListVideo
-                className={cn(
-                  "transition-all duration-300",
-                  isTab ? "h-4 w-4" : "h-[22px] w-[22px]"
-                )}
-              />
+              <ListVideo className="transition-all duration-300 h-4 w-4" />
             </button>
           }
         />

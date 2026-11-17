@@ -26,21 +26,59 @@ export const PAGE_SCROLL_SELECTOR = "[data-page-scroll]";
 export function scrollPageToTop(behavior: ScrollBehavior = "auto"): boolean {
   if (typeof document === "undefined") return false;
 
-  let moved = false;
-
+  const targets: HTMLElement[] = [];
   document.querySelectorAll<HTMLElement>(PAGE_SCROLL_SELECTOR).forEach((el) => {
-    if (el.scrollTop <= 0) return;
-    el.scrollTo({ top: 0, behavior });
-    moved = true;
+    if (el.scrollTop > 0) targets.push(el);
   });
 
+  const windowMoved = typeof window !== "undefined" && window.scrollY > 0;
+
+  if (targets.length === 0 && !windowMoved) return false;
+
+  targets.forEach((el) => el.scrollTo({ top: 0, behavior }));
+
   // 浏览器（非 Capacitor WebView）里 document 自身也可能滚动，兜底一次
-  if (typeof window !== "undefined" && window.scrollY > 0) {
+  if (windowMoved) {
     window.scrollTo({ top: 0, behavior });
-    moved = true;
   }
 
-  return moved;
+  /**
+   * 惯性滑动的页面点「回顶」时会失效：手势虽然结束了，滚动还在按惯性继续推进，
+   * 我们这一帧设成 0 之后，下一帧又被 fling 顶回去，看起来就是「点了没反应」。
+   *
+   * 一次 fling 在 WebView 里能滑 1s 以上，按固定帧数按住 0 根本压不住（8 帧只有
+   * ~130ms，剩下的惯性照样把列表带下去）。这里改成「陪跑」：每帧都按回 0，
+   * 直到连续若干帧都没再被顶走（惯性耗尽）才收手，另有 1.2s 的兜底上限。
+   *
+   * 平滑滚动时不这么做，会和动画抢位置。
+   */
+  if (behavior !== "smooth" && targets.length > 0) {
+    let frames = 0;
+    let idleFrames = 0;
+    const MAX_FRAMES = 72; // ≈1.2s，正常 fling 早就结束了
+    const IDLE_FRAMES = 8; // 连续静止 ~130ms 视为惯性已停
+
+    const hold = () => {
+      let moved = false;
+      targets.forEach((el) => {
+        if (el.scrollTop !== 0) {
+          el.scrollTop = 0;
+          moved = true;
+        }
+      });
+
+      idleFrames = moved ? 0 : idleFrames + 1;
+      frames += 1;
+
+      if (idleFrames < IDLE_FRAMES && frames < MAX_FRAMES) {
+        requestAnimationFrame(hold);
+      }
+    };
+
+    requestAnimationFrame(hold);
+  }
+
+  return true;
 }
 
 /**

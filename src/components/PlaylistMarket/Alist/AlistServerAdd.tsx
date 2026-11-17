@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo } from "react";
 import { Button } from "@/components/ui/button";
+import { confirmDialog } from "@/components/ui/confirm-dialog";
 import { Input } from "@/components/ui/input";
 import {
   Drawer,
@@ -118,9 +119,16 @@ export function AlistServerAdd({
     }
   };
 
-  const handleDelete = () => {
+  const handleDelete = async () => {
     if (!editingServer) return;
-    if (!confirm("确定删除此站点?")) return;
+    if (
+      !(await confirmDialog({
+        title: "确定删除此站点?",
+        destructive: true,
+        confirmText: "删除",
+      }))
+    )
+      return;
     removeServer(editingServer.id);
     toast.success("已删除");
     onOpenChange(false);

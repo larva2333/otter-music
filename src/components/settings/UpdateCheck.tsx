@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { SettingItem } from "./SettingItem";
 import {
   Download,
@@ -30,6 +30,41 @@ interface UpdateDialogProps {
 
 type DownloadSource = "proxy" | "direct";
 
+/**
+ * 更新说明的逐行渲染。
+ *
+ * 原来的 `whitespace-pre-wrap` 有个问题：一条说明换行后，第二行会顶到最左边，
+ * 和第一行的第一个字（"·"/"-" 后面的正文）对不齐，看着像另起一条。
+ * 这里把行首标记单独放进定宽列，正文整块右移，折行自然与首字对齐。
+ */
+function ChangelogText({ text }: { text: string }) {
+  const lines = text.split(/\r?\n/);
+  return (
+    <div className="text-xs leading-relaxed">
+      {lines.map((line, index) => {
+        const match = line.match(/^(\s*(?:[-*•·]|\d+[.)、]))\s+/);
+        if (!match) {
+          return (
+            <div key={index} className="whitespace-pre-wrap break-words">
+              {line || "\u00A0"}
+            </div>
+          );
+        }
+        return (
+          <div key={index} className="flex gap-1">
+            <span className="w-3 shrink-0 text-right opacity-60">
+              {match[1].trim()}
+            </span>
+            <span className="min-w-0 flex-1 whitespace-pre-wrap break-words">
+              {line.slice(match[0].length)}
+            </span>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 export function UpdateDialog({ open, onOpenChange }: UpdateDialogProps) {
   const {
     currentVersion,
@@ -37,10 +72,45 @@ export function UpdateDialog({ open, onOpenChange }: UpdateDialogProps) {
     hasUpdate,
     isChecking,
     checkUpdate,
-    lastCheckTime,
   } = useAppStore();
 
-  const neverChecked = lastCheckTime === 0;
+  /**
+   * 本次打开弹窗后是否已经真的检查完一轮。
+   *
+   * 之前一打开就显示上一次的结果（"已是最新版本"），可用户还没点检查，
+   * 看到的就是个陈旧结论。现在打开即发起检查：先显示"检查更新"，
+   * 检查中显示"检查中…"，拿到结果再显示"新版本 x"/"已是最新版本"。
+   */
+  const [checkedThisOpen, setCheckedThisOpen] = useState(false);
+  const [wasOpen, setWasOpen] = useState(open);
+  const wasCheckingRef = useRef(false);
+
+  // 打开的那一帧就复位（渲染期改状态，不会先闪一帧旧结论）
+  if (open !== wasOpen) {
+    setWasOpen(open);
+    if (open) setCheckedThisOpen(false);
+  }
+
+  useEffect(() => {
+    if (!open) {
+      wasCheckingRef.current = false;
+      return;
+    }
+    void checkUpdate(false);
+  }, [open, checkUpdate]);
+
+  useEffect(() => {
+    if (!open) return;
+    if (isChecking) {
+      wasCheckingRef.current = true;
+      return;
+    }
+    // 只有真的看到「检查中 → 结束」才认这次结果
+    if (wasCheckingRef.current) {
+      wasCheckingRef.current = false;
+      setCheckedThisOpen(true);
+    }
+  }, [isChecking, open]);
 
   // 正在下载的源与进度；同时只允许一个下载任务
   const [downloading, setDownloading] = useState<{
@@ -118,10 +188,10 @@ export function UpdateDialog({ open, onOpenChange }: UpdateDialogProps) {
         <DrawerHeader className="items-center pt-4">
           <img
             src="/favicon.svg"
-            alt="Otter Music"
+            alt="水獭音乐"
             className="w-16 h-16 rounded-xl shadow"
           />
-          <DrawerTitle className="font-bold mt-2">Otter Music</DrawerTitle>
+          <DrawerTitle className="font-bold mt-2">水獭音乐</DrawerTitle>
           <div className="text-xs font-mono text-muted-foreground">
             {currentVersion}
           </div>
@@ -142,7 +212,7 @@ export function UpdateDialog({ open, onOpenChange }: UpdateDialogProps) {
                 />
                 {isChecking
                   ? "检查中..."
-                  : neverChecked
+                  : !checkedThisOpen
                     ? "检查更新"
                     : hasUpdate
                       ? `新版本 ${latestVersionInfo?.latestVersion}`
@@ -165,8 +235,8 @@ export function UpdateDialog({ open, onOpenChange }: UpdateDialogProps) {
                   </span>
                 </div>
 
-                <div className="max-h-32 overflow-y-auto whitespace-pre-wrap text-xs leading-relaxed bg-muted/40 p-2 rounded">
-                  {latestVersionInfo.changelog}
+                <div className="max-h-32 overflow-y-auto bg-muted/40 p-2 rounded">
+                  <ChangelogText text={latestVersionInfo.changelog} />
                 </div>
               </div>
             )}

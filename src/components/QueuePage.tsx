@@ -4,6 +4,7 @@ import { Trash2, ListVideo } from "lucide-react";
 import { MusicPlaylistView } from "./MusicPlaylistView";
 import { MusicTrack } from "@/types/music";
 import { Button } from "./ui/button";
+import { confirmDialog } from "./ui/confirm-dialog";
 import { PageLayout } from "./PageLayout";
 
 interface QueuePageProps {
@@ -34,7 +35,17 @@ export function QueuePage({
           <Button
             variant="ghost"
             size="sm"
-            onClick={() => confirm("确定清空播放列表吗？") && onClear()}
+            onClick={async () => {
+              if (
+                await confirmDialog({
+                  title: "确定清空播放列表吗？",
+                  destructive: true,
+                  confirmText: "清空",
+                })
+              ) {
+                onClear();
+              }
+            }}
           >
             <Trash2 className="h-4 w-4" />
           </Button>

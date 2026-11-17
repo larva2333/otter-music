@@ -94,7 +94,7 @@ export function SearchCategoryResults({
               aria-selected={active}
               onClick={() => onTabChange(item.id)}
               className={cn(
-                "flex-1 border-b-2 py-2.5 text-sm",
+                "flex-1 border-b-2 py-2.5 text-[13px]",
                 active
                   ? "border-foreground font-medium text-foreground"
                   : "border-transparent text-muted-foreground"

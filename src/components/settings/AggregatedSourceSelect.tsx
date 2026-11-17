@@ -123,7 +123,10 @@ export function AggregatedSourceSelect() {
   const [activeId, setActiveId] = useState<string | null>(null);
 
   const sensors = useSensors(
-    useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
+    // 长按 350ms 才进入拖拽，与列表排序一致；避免点眼睛/复选框时误触发
+    useSensor(PointerSensor, {
+      activationConstraint: { delay: 350, tolerance: 8 },
+    }),
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
   );
 
@@ -181,10 +184,14 @@ export function AggregatedSourceSelect() {
       icon={Radio}
       title="聚合音源"
       action={
-        <span className="text-sm truncate max-w-[140px]">{selectedLabels}</span>
+        <span className="text-sm truncate max-w-[140px] inline-block align-middle">
+          {selectedLabels}
+        </span>
       }
       onClick={() => setShowSourcePicker(!showSourcePicker)}
       showChevron
+      chevronPosition="end"
+      actionPassThrough
       isExpanded={showSourcePicker}
       expandedContent={
         <div>

@@ -4,6 +4,7 @@ import { Trash2, History } from "lucide-react";
 import { MusicPlaylistView } from "./MusicPlaylistView";
 import { MusicTrack } from "@/types/music";
 import { Button } from "./ui/button";
+import { confirmDialog } from "./ui/confirm-dialog";
 import { PageLayout } from "./PageLayout";
 
 interface HistoryPageProps {
@@ -34,7 +35,17 @@ export function HistoryPage({
           <Button
             variant="ghost"
             size="sm"
-            onClick={() => confirm("确定清空播放历史吗？") && onClear()}
+            onClick={async () => {
+              if (
+                await confirmDialog({
+                  title: "确定清空播放历史吗？",
+                  destructive: true,
+                  confirmText: "清空",
+                })
+              ) {
+                onClear();
+              }
+            }}
           >
             <Trash2 className="h-4 w-4" />
           </Button>

@@ -1,5 +1,6 @@
 import { Drawer, DrawerContent, DrawerTitle } from "@/components/ui/drawer";
 import { Button } from "@/components/ui/button";
+import { confirmDialog } from "@/components/ui/confirm-dialog";
 import { writeClipboardText } from "@/lib/clipboard";
 import { usePodcastStore } from "@/store/podcast-store";
 import type { PodcastRssSource } from "@/types/podcast";
@@ -54,8 +55,14 @@ export function PodcastActionDrawer({
     }
   };
 
-  const handleUnsubscribe = () => {
-    if (confirm(`确定要取消订阅 "${rss.name}" 吗？`)) {
+  const handleUnsubscribe = async () => {
+    if (
+      await confirmDialog({
+        title: `确定要取消订阅 "${rss.name}" 吗？`,
+        destructive: true,
+        confirmText: "取消订阅",
+      })
+    ) {
       removeRssSource(rss.id);
       toast.success("已取消订阅");
       onOpenChange(false);

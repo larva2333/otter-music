@@ -19,6 +19,7 @@ import { PlaylistCover } from "./PlaylistCover";
 import { useMusicStore } from "@/store/music-store";
 import { useShallow } from "zustand/react/shallow";
 import { Button } from "./ui/button";
+import { confirmDialog } from "./ui/confirm-dialog";
 import {
   Drawer,
   DrawerContent,
@@ -103,8 +104,14 @@ export function MinePage({ onSelectPlaylist }: MinePageProps) {
     toast.success("歌单重命名成功");
   };
 
-  const handleDelete = (playlistId: string) => {
-    if (confirm("确定要删除这个歌单吗？")) {
+  const handleDelete = async (playlistId: string) => {
+    if (
+      await confirmDialog({
+        title: "确定要删除这个歌单吗？",
+        destructive: true,
+        confirmText: "删除",
+      })
+    ) {
       deletePlaylist(playlistId);
       toast.success("歌单已删除");
     }

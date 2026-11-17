@@ -13,6 +13,7 @@ import {
 } from "lucide-react";
 import { useShallow } from "zustand/react/shallow";
 import { Button } from "@/components/ui/button";
+import { confirmDialog } from "@/components/ui/confirm-dialog";
 import { Spinner } from "@/components/ui/spinner";
 import { cn } from "@/lib/utils";
 import { LyricsPanel } from "@/components/LyricsPanel";
@@ -103,8 +104,14 @@ export function LandscapePlayer({ background, onExit }: LandscapePlayerProps) {
     );
   };
 
-  const handleClearQueue = () => {
-    if (confirm("确定要清空播放列表吗？")) {
+  const handleClearQueue = async () => {
+    if (
+      await confirmDialog({
+        title: "确定要清空播放列表吗？",
+        destructive: true,
+        confirmText: "清空",
+      })
+    ) {
       clearQueue();
       toast.success("播放列表已清空");
     }

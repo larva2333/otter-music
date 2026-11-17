@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Trash2, X, Maximize2, Dices, LocateFixed } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { confirmDialog } from "@/components/ui/confirm-dialog";
 import {
   Drawer,
   DrawerContent,
@@ -54,9 +55,16 @@ function QueueTrackItem({
 }: QueueTrackItemProps) {
   const coverUrl = useMusicCover(track);
 
-  const handleRemove = (e: React.MouseEvent) => {
+  const handleRemove = async (e: React.MouseEvent) => {
     e.stopPropagation();
-    if (isCurrent && !confirm(`确定删除《${track.name}》吗？`)) {
+    if (
+      isCurrent &&
+      !(await confirmDialog({
+        title: `确定删除《${track.name}》吗？`,
+        destructive: true,
+        confirmText: "删除",
+      }))
+    ) {
       return;
     }
     onRemove();
@@ -277,13 +285,25 @@ export function PlayerQueueDrawer({
                 className="h-9 w-9 text-muted-foreground/70 hover:bg-destructive/10 hover:text-destructive transition-colors"
                 onClick={
                   activeTab === "queue"
-                    ? () => {
-                        if (confirm("确定清空播放列表吗？")) {
+                    ? async () => {
+                        if (
+                          await confirmDialog({
+                            title: "确定清空播放列表吗？",
+                            destructive: true,
+                            confirmText: "清空",
+                          })
+                        ) {
                           onClear();
                         }
                       }
-                    : () => {
-                        if (confirm("确定清空播放历史吗？")) {
+                    : async () => {
+                        if (
+                          await confirmDialog({
+                            title: "确定清空播放历史吗？",
+                            destructive: true,
+                            confirmText: "清空",
+                          })
+                        ) {
                           clearHistory();
                         }
                       }

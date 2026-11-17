@@ -1,4 +1,5 @@
 import { Button } from "@/components/ui/button";
+import { confirmDialog } from "@/components/ui/confirm-dialog";
 import {
   Drawer,
   DrawerContent,
@@ -450,11 +451,15 @@ export function MusicTrackMobileMenu({
               <ActionButton
                 icon={Trash2}
                 className="text-destructive hover:text-destructive"
-                onClick={() => {
+                onClick={async () => {
                   onOpenChange(false);
                   if (
                     !confirmRemove ||
-                    window.confirm(`确定${removeLabel}《${track.name}》吗？`)
+                    (await confirmDialog({
+                      title: `确定${removeLabel}《${track.name}》吗？`,
+                      destructive: true,
+                      confirmText: removeLabel,
+                    }))
                   ) {
                     onRemove();
                   }

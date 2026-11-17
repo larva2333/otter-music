@@ -716,7 +716,7 @@ export function MusicSearchView({
                   searchInputRef.current?.blur();
                   setShowHistory(false);
                 }}
-                className="-mr-1.5 h-7 w-auto min-w-[108px] shrink-0 border-0 bg-transparent! px-2 text-xs text-muted-foreground shadow-none hover:text-foreground focus:ring-0"
+                className="-mr-1.5 h-7 w-auto min-w-[108px] shrink-0 border-0 bg-transparent! px-2 text-[13px] text-muted-foreground shadow-none hover:text-foreground focus:ring-0"
               >
                 <SelectValue />
               </SelectTrigger>
@@ -729,7 +729,7 @@ export function MusicSearchView({
                   <SelectItem
                     key={opt.value}
                     value={opt.value}
-                    className="pl-1 whitespace-nowrap"
+                    className="pl-1 whitespace-nowrap text-[13px]"
                   >
                     {opt.label}
                   </SelectItem>

@@ -13,6 +13,7 @@ import {
   Users,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { confirmDialog } from "@/components/ui/confirm-dialog";
 import { Input } from "@/components/ui/input";
 import {
   Card,
@@ -224,9 +225,12 @@ function KeyManager({ onLogout }: KeyManagerProps) {
 
   const handleDelete = async (key: string) => {
     if (
-      !confirm(
-        `确认删除 Key：${key}？\n此操作不可恢复，该 Key 关联的同步数据将被永久删除。`
-      )
+      !(await confirmDialog({
+        title: `确认删除 Key：${key}？`,
+        description: "此操作不可恢复，该 Key 关联的同步数据将被永久删除。",
+        destructive: true,
+        confirmText: "删除",
+      }))
     )
       return;
     setDeletingKey(key);

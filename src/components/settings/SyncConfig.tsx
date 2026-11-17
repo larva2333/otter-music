@@ -3,6 +3,7 @@
 import { useState, useRef } from "react";
 import { Trash2, RefreshCw } from "lucide-react";
 import { Button } from "../ui/button";
+import { confirmDialog } from "../ui/confirm-dialog";
 import {
   Drawer,
   DrawerContent,
@@ -37,8 +38,14 @@ export function SyncConfig() {
     return `${key.slice(0, 4)}****${key.slice(-4)}`;
   };
 
-  const handleConfirm = () => {
-    if (!confirm("确认覆盖当前配置？")) return;
+  const handleConfirm = async () => {
+    if (
+      !(await confirmDialog({
+        title: "确认覆盖当前配置？",
+        confirmText: "覆盖",
+      }))
+    )
+      return;
     if (inputKey.trim()) {
       setSyncKey(inputKey.trim());
       setInputKey("");
@@ -46,8 +53,15 @@ export function SyncConfig() {
     }
   };
 
-  const handleClear = () => {
-    if (!confirm("确认清除当前配置吗？")) return;
+  const handleClear = async () => {
+    if (
+      !(await confirmDialog({
+        title: "确认清除当前配置吗？",
+        destructive: true,
+        confirmText: "清除",
+      }))
+    )
+      return;
     clearSyncConfig();
     setDialogOpen(false);
   };
@@ -107,7 +121,11 @@ export function SyncConfig() {
                 清除密钥
               </Button>
             )}
-            <Button onClick={handleConfirm} disabled={!inputKey.trim()} className="h-11">
+            <Button
+              onClick={handleConfirm}
+              disabled={!inputKey.trim()}
+              className="h-11"
+            >
               确认
             </Button>
           </DrawerFooter>

@@ -33,6 +33,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Button } from "@/components/ui/button";
+import { confirmDialog } from "@/components/ui/confirm-dialog";
 import { useMusicStore } from "@/store/music-store";
 import { useNeteaseStore } from "@/store/netease-store";
 import { SongDetail } from "@/lib/netease/netease-raw-types";
@@ -226,7 +227,15 @@ export function NeteaseDetail({
     if (!id || !cookie || type !== "album" || !detail) return;
     const shouldSub = !detail.sub;
 
-    if (!shouldSub && !confirm("确定不再收藏吗？")) return;
+    if (
+      !shouldSub &&
+      !(await confirmDialog({
+        title: "确定不再收藏吗？",
+        destructive: true,
+        confirmText: "取消收藏",
+      }))
+    )
+      return;
 
     try {
       let success = false;

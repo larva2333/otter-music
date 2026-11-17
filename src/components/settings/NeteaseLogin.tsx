@@ -17,6 +17,7 @@ import {
   DrawerDescription,
 } from "@/components/ui/drawer";
 import { Button } from "@/components/ui/button";
+import { confirmDialog } from "@/components/ui/confirm-dialog";
 import { Textarea } from "@/components/ui/textarea";
 import { Avatar, AvatarImage, AvatarFallback } from "@/components/ui/avatar";
 import { SettingItem } from "./SettingItem";
@@ -186,8 +187,15 @@ export function NeteaseLogin() {
     }
   };
 
-  const handleLogout = () => {
-    if (!window.confirm("确定要退出网易云登录吗？")) return;
+  const handleLogout = async () => {
+    if (
+      !(await confirmDialog({
+        title: "确定要退出网易云登录吗？",
+        destructive: true,
+        confirmText: "退出",
+      }))
+    )
+      return;
     logout();
     setShowUserDrawer(false);
     toast.success("已退出登录");
@@ -235,10 +243,10 @@ export function NeteaseLogin() {
               size="sm"
               onClick={startLogin}
               disabled={loading && loginMode === "qr"}
-              className="px-4"
+              className="h-7 gap-1.5 px-3 text-xs"
             >
               {loading && loginMode === "qr" && (
-                <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />
+                <Loader2 className="mr-0.5 h-3 w-3 animate-spin" />
               )}
               登录
             </Button>

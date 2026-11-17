@@ -9,6 +9,7 @@ import {
   DrawerTitle,
 } from "@/components/ui/drawer";
 import { Button } from "@/components/ui/button";
+import { confirmDialog } from "@/components/ui/confirm-dialog";
 import { Textarea } from "@/components/ui/textarea";
 import { SettingItem } from "./SettingItem";
 import { IS_NATIVE } from "@/lib/api/config";
@@ -55,8 +56,15 @@ export function QqMusicLogin() {
     }
   };
 
-  const handleLogout = () => {
-    if (!window.confirm("确定要退出 QQ 音乐登录吗？")) return;
+  const handleLogout = async () => {
+    if (
+      !(await confirmDialog({
+        title: "确定要退出 QQ 音乐登录吗？",
+        destructive: true,
+        confirmText: "退出",
+      }))
+    )
+      return;
     logout();
     setOpen(false);
     reset();
@@ -93,7 +101,12 @@ export function QqMusicLogin() {
               <AvatarFallback>{user.nickname?.[0] || "Q"}</AvatarFallback>
             </Avatar>
           ) : (
-            <Button variant="outline" size="sm" onClick={() => setOpen(true)}>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setOpen(true)}
+              className="h-7 gap-1.5 px-3 text-xs"
+            >
               登录
             </Button>
           )

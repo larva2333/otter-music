@@ -17,7 +17,7 @@
     "ci-test": "node scripts/ci-test.js",
     "verify:car-lyric": "node scripts/verify-car-lyric.mjs",
     "preview": "vite preview",
-    "resources": "capacitor-assets generate",
+    "resources": "capacitor-assets generate && node scripts/fix-adaptive-icon.mjs",
     "cap:add:android": "npx cap add android",
     "cap:sync:android": "npm run build && npx cap sync android",
     "cap:sync:android:release": "npm run build && npx cap sync android",

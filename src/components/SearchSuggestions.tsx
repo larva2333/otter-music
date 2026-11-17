@@ -88,7 +88,7 @@ export function SearchSuggestions({
       <button
         type="button"
         onClick={onClose}
-        className="flex w-full justify-center border-t p-1 text-muted-foreground transition-colors hover:bg-accent"
+        className="flex w-full justify-center p-1 text-muted-foreground transition-colors hover:bg-accent"
       >
         <ChevronUp className="h-4 w-4" />
       </button>

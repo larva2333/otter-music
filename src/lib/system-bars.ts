@@ -10,9 +10,24 @@ import { logger } from "@/lib/logger";
  */
 let styleOverride: boolean | null = null;
 
+/**
+ * 全屏遮罩（弹窗、抽屉）的打开层数。
+ *
+ * 遮罩是一层半透明黑，压在页面上（包括状态栏下方那条），此时状态栏若还是
+ * 深色图标，就等于黑底黑字看不见。层数 > 0 时强制浅色图标。
+ * 用计数而不是布尔：弹窗上再开一个抽屉，先关掉的那个不能把图标又切回深色。
+ */
+let scrimDepth = 0;
+
 function themeIsDarkNow(): boolean {
   if (typeof document === "undefined") return false;
   return document.documentElement.classList.contains("dark");
+}
+
+/** 遮罩优先于页面级覆盖：遮罩下面永远是深色 */
+function resolveDarkContent(themeIsDark: boolean): boolean {
+  if (scrimDepth > 0) return true;
+  return styleOverride ?? themeIsDark;
 }
 
 /**
@@ -26,7 +41,7 @@ function themeIsDarkNow(): boolean {
  */
 export async function applySystemBarsStyle(themeIsDark: boolean) {
   if (!IS_NATIVE) return;
-  const isDarkContent = styleOverride ?? themeIsDark;
+  const isDarkContent = resolveDarkContent(themeIsDark);
   try {
     await SystemBars.setStyle({
       style: isDarkContent ? SystemBarsStyle.Dark : SystemBarsStyle.Light,
@@ -45,5 +60,18 @@ export async function applySystemBarsStyle(themeIsDark: boolean) {
  */
 export function setSystemBarsStyleOverride(override: boolean | null) {
   styleOverride = override;
+  void applySystemBarsStyle(themeIsDarkNow());
+}
+
+/**
+ * 登记 / 注销一层全屏遮罩，用于把状态栏图标切成浅色。
+ *
+ * 每个遮罩组件挂载时 `true`、卸载时 `false`，内部按层数计数，
+ * 最后一个遮罩消失才把图标交还给主题。
+ */
+export function setScrimActive(active: boolean) {
+  const next = Math.max(0, scrimDepth + (active ? 1 : -1));
+  if (next === scrimDepth) return;
+  scrimDepth = next;
   void applySystemBarsStyle(themeIsDarkNow());
 }

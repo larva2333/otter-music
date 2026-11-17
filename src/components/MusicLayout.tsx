@@ -56,26 +56,44 @@ export function MusicLayout({
         </div>
       </div>
 
-      {/* Now Playing Bar (Floating Island) */}
+      {/* Now Playing Bar (Floating Island)
+          两种页面都用同一颗胶囊：tab 页浮在导航栏上方，二级页贴安全区上方。
+          不要在这里换宽度/封面尺寸，否则进歌单页会突然"放大"。
+          位置统一锚在二级页的 bottom，tab 页靠 translateY 上抬 68px。
+          用 transform 而不是切 bottom：bottom 过渡走的是布局，WebView 上每帧重排，
+          tab ↔ 二级页切换时会掉帧、看起来"跳"一下；transform 走合成层，稳得多。
+          叠加 --kb-lift：键盘弹出时窗口被 adjustResize 压缩，胶囊下移同样高度，
+          视觉上钉在屏幕原位（被键盘盖住），而不是跟着窗口底边被顶到键盘上方。 */}
       {!hidePlayer && (
         <div
           className={cn(
-            "flex-none z-50 absolute left-0 right-0 transition-all duration-300",
-            // tab 页在导航栏之上留 4px 空隙，让胶囊"浮"起来而不是贴在导航栏顶边
+            "flex-none z-50 absolute left-0 right-0 will-change-transform",
+            "bottom-[calc(var(--safe-area-bottom)+8px)]",
+            "transition-transform duration-[320ms] ease-[cubic-bezier(0.32,0.72,0,1)]",
+            // 68px = 原 tab 页位置(72+安全区+4) 减去 二级页位置(安全区+8)
             isTab
-              ? "bottom-[calc(var(--now-playing-safe-height)+4px)]"
-              : "bottom-0"
+              ? "translate-y-[calc(var(--kb-lift,0px)-68px)]"
+              : "translate-y-[var(--kb-lift,0px)]"
           )}
         >
           {player}
         </div>
       )}
 
+      {/* 二级页没有 tab bar 底板，胶囊两侧会露出滚动内容；补一层底部羽化，
+          保证文字在胶囊附近渐隐，而不是硬切到胶囊边缘 */}
+      {!isTab && !hidePlayer && (
+        <div
+          aria-hidden
+          className="pointer-events-none absolute inset-x-0 bottom-0 z-40 h-[calc(var(--safe-area-bottom)+76px)] translate-y-[var(--kb-lift,0px)] bg-background [-webkit-mask-image:linear-gradient(to_bottom,transparent_0px,black_32px)] [mask-image:linear-gradient(to_bottom,transparent_0px,black_32px)]"
+        />
+      )}
+
       {/* Tab Bar —— 导航栏底板只做到播放胶囊的垂直中线，上边界用渐变羽化，
           不画成一条硬线。底板本身保持不透明（半透明底会让滑动时忽明忽暗），
           羽化只发生在最上面那 48px，是纯透明→实色的遮罩，不做内容模糊。 */}
       {isTab && (
-        <div className="relative flex-none z-40">
+        <div className="relative flex-none z-40 translate-y-[var(--kb-lift,0px)] transition-transform duration-300">
           <div
             aria-hidden
             className={cn(

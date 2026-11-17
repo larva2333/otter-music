@@ -1,11 +1,5 @@
 import { Type } from "lucide-react";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
+import { cn } from "@/lib/utils";
 import { SettingItem } from "./SettingItem";
 import {
   FONT_SCALE_OPTIONS,
@@ -13,6 +7,11 @@ import {
   type FontScale,
 } from "@/store/ui-prefs-store";
 
+/**
+ * 字体大小：平铺分段控件，与主题切换一致。
+ *
+ * 只有三档，下拉要先展开再选，等于两步；平铺一眼看到全部档位和当前值。
+ */
 export function FontSizeSetting() {
   const fontScale = useUiPrefsStore((state) => state.fontScale);
   const setFontScale = useUiPrefsStore((state) => state.setFontScale);
@@ -23,21 +22,32 @@ export function FontSizeSetting() {
       title="字体大小"
       subtitle="调整全站文字大小"
       action={
-        <Select
-          value={fontScale}
-          onValueChange={(value) => setFontScale(value as FontScale)}
+        <div
+          role="radiogroup"
+          aria-label="字体大小"
+          className="flex items-center gap-0.5 rounded-lg bg-muted/60 p-0.5"
         >
-          <SelectTrigger className="h-8 w-24 border-muted bg-transparent px-2.5 text-xs text-foreground hover:bg-muted/20">
-            <SelectValue placeholder="字体大小" />
-          </SelectTrigger>
-          <SelectContent>
-            {FONT_SCALE_OPTIONS.map(({ value, label }) => (
-              <SelectItem key={value} value={value}>
+          {FONT_SCALE_OPTIONS.map(({ value, label }) => {
+            const active = fontScale === value;
+            return (
+              <button
+                key={value}
+                type="button"
+                role="radio"
+                aria-checked={active}
+                onClick={() => setFontScale(value as FontScale)}
+                className={cn(
+                  "h-7 rounded-md px-2 text-xs transition-colors",
+                  active
+                    ? "bg-background text-foreground shadow-sm"
+                    : "text-muted-foreground hover:text-foreground"
+                )}
+              >
                 {label}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+              </button>
+            );
+          })}
+        </div>
       }
     />
   );

@@ -10,6 +10,7 @@ import {
   Download,
 } from "lucide-react";
 import { Button } from "../ui/button";
+import { confirmDialog } from "../ui/confirm-dialog";
 import {
   Drawer,
   DrawerContent,
@@ -97,7 +98,13 @@ export function WebDavBackup() {
 
   const handleUpload = async () => {
     if (!currentConfig) return;
-    if (!confirm("将用当前收藏与歌单覆盖云端备份，确定上传吗？")) return;
+    if (
+      !(await confirmDialog({
+        title: "将用当前收藏与歌单覆盖云端备份，确定上传吗？",
+        confirmText: "上传",
+      }))
+    )
+      return;
     setUploading(true);
     try {
       const json = serializeStoreData();
@@ -120,7 +127,13 @@ export function WebDavBackup() {
         toastUtils.error(validation.error);
         return;
       }
-      if (!confirm("将用云端备份覆盖当前收藏与歌单，确定恢复吗？")) return;
+      if (
+        !(await confirmDialog({
+          title: "将用云端备份覆盖当前收藏与歌单，确定恢复吗？",
+          confirmText: "恢复",
+        }))
+      )
+        return;
       importStoreData(validation.data);
       toastUtils.success("已从云端恢复备份");
       setDialogOpen(false);
@@ -131,8 +144,15 @@ export function WebDavBackup() {
     }
   };
 
-  const handleClear = () => {
-    if (!confirm("确认清除当前配置吗？")) return;
+  const handleClear = async () => {
+    if (
+      !(await confirmDialog({
+        title: "确认清除当前配置吗？",
+        destructive: true,
+        confirmText: "清除",
+      }))
+    )
+      return;
     clearConfig();
     setInputUrl("");
     setInputUsername("");

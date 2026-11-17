@@ -9,6 +9,7 @@ import {
   DrawerTitle,
 } from "@/components/ui/drawer";
 import { Button } from "@/components/ui/button";
+import { confirmDialog } from "@/components/ui/confirm-dialog";
 import { Textarea } from "@/components/ui/textarea";
 import { SettingItem } from "./SettingItem";
 import { IS_NATIVE } from "@/lib/api/config";
@@ -86,8 +87,15 @@ export function BilibiliLogin() {
     }
   };
 
-  const handleLogout = () => {
-    if (!window.confirm("确定要退出 B 站登录吗？")) return;
+  const handleLogout = async () => {
+    if (
+      !(await confirmDialog({
+        title: "确定要退出 B 站登录吗？",
+        destructive: true,
+        confirmText: "退出",
+      }))
+    )
+      return;
     // 后台清除残留 cookie，不阻塞退出流程
     clearBilibiliCookies().catch(() => {});
     logout();
@@ -129,6 +137,7 @@ export function BilibiliLogin() {
               variant="outline"
               size="sm"
               onClick={() => setShowLogin(true)}
+              className="h-7 gap-1.5 px-3 text-xs"
             >
               登录
             </Button>

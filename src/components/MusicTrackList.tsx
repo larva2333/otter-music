@@ -33,6 +33,7 @@ import {
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { Button } from "@/components/ui/button";
+import { confirmDialog } from "@/components/ui/confirm-dialog";
 import {
   ListChecks,
   Plus,
@@ -57,6 +58,7 @@ import { AddToPlaylistDrawer } from "./AddToPlaylistDrawer";
 import { downloadMusicTrackBatch } from "@/lib/utils/download";
 import { useMusicStore } from "@/store/music-store";
 import { useAutoLoadMore } from "@/hooks/use-auto-load-more";
+import { useExitLayerStore } from "@/hooks/useExitLayer";
 import { MusicTrack } from "@/types/music";
 import toast from "react-hot-toast";
 import { processBatchCPU } from "@/lib/utils";
@@ -92,9 +94,12 @@ const ROW_HEIGHT = 60;
 
 function SortableTrackItem({
   track,
+  enabled,
   children,
 }: {
   track: MusicTrack;
+  /** 仅多选态可拖拽排序；容器始终渲染，避免进出多选时行被重建 */
+  enabled: boolean;
   children: React.ReactElement;
 }) {
   const {
@@ -104,7 +109,7 @@ function SortableTrackItem({
     transform,
     transition,
     isDragging,
-  } = useSortable({ id: track.id });
+  } = useSortable({ id: track.id, disabled: !enabled });
 
   const style = {
     transform: CSS.Transform.toString(transform),
@@ -118,7 +123,7 @@ function SortableTrackItem({
     <div ref={setNodeRef} style={style} {...attributes}>
       {React.cloneElement(children as React.ReactElement<any>, {
         dragHandleProps: listeners,
-        isSortable: true,
+        isSortable: enabled,
       })}
     </div>
   );
@@ -154,9 +159,11 @@ export function MusicTrackList({
   const internalRef = useRef<HTMLDivElement | null>(null);
 
   const sensors = useSensors(
+    // 长按 350ms 才进入拖拽，避免手指一碰行就开始拖（滑动多选也靠滑动手势）
     useSensor(PointerSensor, {
       activationConstraint: {
-        distance: 8,
+        delay: 350,
+        tolerance: 8,
       },
     }),
     useSensor(KeyboardSensor, {
@@ -206,6 +213,63 @@ export function MusicTrackList({
     });
   }, []);
 
+  /* ---------------- 长按后滑动多选 ----------------
+   *
+   * 手指按住某行 450ms 进入多选后，只要不抬手，上下滑动划过哪些行就选中哪些行；
+   * 划过已经选中的行则取消（每进入一行切换一次，靠 lastDragIdRef 去重复）。
+   *
+   * 监听挂在 document 上而不是行元素上：长按瞬间列表会切到多选形态（出现勾选框、
+   * 排序页还会多包一层拖拽容器），行元素有机会被重建，挂在行上的 touch 序列会断掉。
+   */
+  const lastDragIdRef = useRef<string | null>(null);
+  const stopDragSelectRef = useRef<(() => void) | null>(null);
+
+  const startDragSelect = useCallback((anchorId: string) => {
+    lastDragIdRef.current = anchorId;
+    if (stopDragSelectRef.current) return; // 上一次还没结束（理论上不会），别叠监听
+
+    const applyAt = (x: number, y: number) => {
+      const el = document.elementFromPoint(x, y);
+      const row = el instanceof Element ? el.closest("[data-track-id]") : null;
+      const id = row?.getAttribute("data-track-id");
+      if (!id || id === lastDragIdRef.current) return;
+      lastDragIdRef.current = id;
+      setSelectedIds((prev) => {
+        const next = new Set(prev);
+        next.has(id) ? next.delete(id) : next.add(id);
+        return next;
+      });
+    };
+
+    const onMove = (e: TouchEvent) => {
+      const touch = e.touches[0];
+      if (!touch) return;
+      // 滑动多选期间不能让它滚起来，否则行会从指下跑掉
+      if (e.cancelable) e.preventDefault();
+      applyAt(touch.clientX, touch.clientY);
+    };
+
+    const finish = () => {
+      document.removeEventListener("touchmove", onMove);
+      document.removeEventListener("touchend", finish);
+      document.removeEventListener("touchcancel", finish);
+      stopDragSelectRef.current = null;
+      lastDragIdRef.current = null;
+    };
+
+    document.addEventListener("touchmove", onMove, { passive: false });
+    document.addEventListener("touchend", finish);
+    document.addEventListener("touchcancel", finish);
+    stopDragSelectRef.current = finish;
+  }, []);
+
+  // 列表在长按中途被卸载时，document 上的监听必须收回
+  useEffect(() => {
+    return () => {
+      stopDragSelectRef.current?.();
+    };
+  }, []);
+
   const toggleSelectAll = useCallback(() => {
     setSelectedIds(
       selectedIds.size === tracks.length
@@ -231,6 +295,20 @@ export function MusicTrackList({
     setSelectedIds(new Set());
     onSelectionModeChange?.(false);
   }, [onSelectionModeChange]);
+
+  /* 多选态注册成「退出层」：系统返回键 / 安卓返回手势先退出多选，
+   * 而不是直接退出歌单详情页。RootLayout 的 backButton 处理会优先消费这层。
+   * 用 ref 转发回调，避免调用方传内联函数时反复重注册。 */
+  const resetSelectionRef = useRef(resetSelection);
+  resetSelectionRef.current = resetSelection;
+  const pushExitLayer = useExitLayerStore((s) => s.push);
+  const popExitLayer = useExitLayerStore((s) => s.pop);
+
+  useEffect(() => {
+    if (!isSelectionMode) return;
+    const id = pushExitLayer({ close: () => resetSelectionRef.current() });
+    return () => popExitLayer(id);
+  }, [isSelectionMode, pushExitLayer, popExitLayer]);
 
   const getSelectedTracks = useCallback(
     () => tracks.filter((t) => selectedIds.has(t.id)),
@@ -262,7 +340,11 @@ export function MusicTrackList({
     const delegatesConfirm = confirmRemove === false;
     if (
       !delegatesConfirm &&
-      !confirm(`确定${removeLabel}选中的 ${count} 首歌曲吗？`)
+      !(await confirmDialog({
+        title: `确定${removeLabel}选中的 ${count} 首歌曲吗？`,
+        destructive: true,
+        confirmText: removeLabel,
+      }))
     )
       return;
 
@@ -369,23 +451,14 @@ export function MusicTrackList({
               />
             </div>
 
-            {/* 第二列：已选统计和基础操作 */}
-            <div className="flex items-center min-w-0 justify-between">
-              <span className="text-foreground">
+            {/* 第二列：已选统计 */}
+            <div className="flex items-center min-w-0">
+              <span className="text-[13px] text-foreground truncate">
                 已选 {selectedIds.size} 首
               </span>
-              <Button
-                size="sm"
-                variant="secondary"
-                className="h-7 px-2 text-xs"
-                onClick={handleBatchNextPlay}
-                disabled={selectedIds.size === 0}
-              >
-                <Plus className="w-3 h-3" /> 下一首
-              </Button>
             </div>
 
-            {/* 第三列：更多操作 + 确认/退出 */}
+            {/* 第三列：更多操作 + 退出 */}
             <div className="flex items-center gap-1 justify-end">
               <Popover>
                 <PopoverTrigger asChild>
@@ -400,26 +473,32 @@ export function MusicTrackList({
                 </PopoverTrigger>
                 <PopoverContent side="bottom" align="end" className="w-40 p-1">
                   <div
-                    className="flex items-center px-2 py-1.5 text-xs rounded-sm hover:bg-accent cursor-pointer"
+                    className="flex items-center px-2 py-1.5 text-[13px] rounded-sm hover:bg-accent cursor-pointer"
+                    onClick={handleBatchNextPlay}
+                  >
+                    <Plus className="mr-2 h-3.5 w-3.5" /> 添加到播放列表
+                  </div>
+                  <div
+                    className="flex items-center px-2 py-1.5 text-[13px] rounded-sm hover:bg-accent cursor-pointer"
                     onClick={handleBatchFavorites}
                   >
                     <Heart className="mr-2 h-3.5 w-3.5" /> 喜欢
                   </div>
                   <div
-                    className="flex items-center px-2 py-1.5 text-xs rounded-sm hover:bg-accent cursor-pointer"
+                    className="flex items-center px-2 py-1.5 text-[13px] rounded-sm hover:bg-accent cursor-pointer"
                     onClick={handleBatchDownload}
                   >
                     <Download className="mr-2 h-3.5 w-3.5" /> 下载
                   </div>
                   <div
-                    className="flex items-center px-2 py-1.5 text-xs rounded-sm hover:bg-accent cursor-pointer"
+                    className="flex items-center px-2 py-1.5 text-[13px] rounded-sm hover:bg-accent cursor-pointer"
                     onClick={() => setIsAddToPlaylistOpen(true)}
                   >
                     <ListPlus className="mr-2 h-3.5 w-3.5" /> 添加到歌单
                   </div>
                   {onBatchConvertToSimplified && (
                     <div
-                      className="flex items-center px-2 py-1.5 text-xs rounded-sm hover:bg-accent cursor-pointer"
+                      className="flex items-center px-2 py-1.5 text-[13px] rounded-sm hover:bg-accent cursor-pointer"
                       data-testid="batch-convert-traditional"
                       onClick={handleBatchConvertToSimplified}
                     >
@@ -430,7 +509,7 @@ export function MusicTrackList({
                     <>
                       <div className="border-t my-1" />
                       <div
-                        className="flex items-center px-2 py-1.5 text-xs rounded-sm hover:bg-accent cursor-pointer text-destructive"
+                        className="flex items-center px-2 py-1.5 text-[13px] rounded-sm hover:bg-accent cursor-pointer text-destructive"
                         onClick={handleBatchRemove}
                       >
                         <Trash2 className="mr-2 h-3.5 w-3.5" /> {removeLabel}
@@ -487,6 +566,16 @@ export function MusicTrackList({
                   showCheckbox={isSelectionMode}
                   isSelected={selectedIds.has(track.id)}
                   onSelect={() => toggleSelect(track.id)}
+                  // 长按任意一行直接进多选，并把这行带上；之后不抬手继续上下滑，
+                  // 划过哪行选哪行（已选的划过去就是取消）
+                  onLongPress={() => {
+                    setIsSelectionMode(true);
+                    onSelectionModeChange?.(true);
+                    setSelectedIds((prev) =>
+                      prev.has(track.id) ? prev : new Set(prev).add(track.id)
+                    );
+                    startDragSelect(track.id);
+                  }}
                   onRemove={
                     !isSelectionMode && onRemove && showItemRemove
                       ? () => onRemove(track)
@@ -548,8 +637,8 @@ export function MusicTrackList({
                   className="absolute left-0 top-0 w-full"
                   style={{ transform: `translateY(${item.start}px)` }}
                 >
-                  {track && enableDnd ? (
-                    <SortableTrackItem track={track}>
+                  {track && onReorder ? (
+                    <SortableTrackItem track={track} enabled={enableDnd}>
                       {content}
                     </SortableTrackItem>
                   ) : (

@@ -1,12 +1,19 @@
-import { Outlet, useLocation, useNavigate } from "react-router-dom";
+import {
+  Outlet,
+  useLocation,
+  useNavigate,
+  useNavigationType,
+} from "react-router-dom";
 import { MusicLayout } from "@/components/MusicLayout";
 import { MusicNowPlayingBar } from "@/components/MusicNowPlayingBar";
 import { MusicTabBar } from "@/components/MusicTabBar";
 import { GlobalMusicPlayer } from "@/components/GlobalMusicPlayer";
+import { ConfirmDialogHost } from "@/components/ui/confirm-dialog";
 import { useMusicStore } from "@/store/music-store";
 import { useShallow } from "zustand/react/shallow";
 import { useExitLayer } from "@/hooks/useExitLayer";
 import { useTapTopToScrollTop } from "@/hooks/useTapTopToScrollTop";
+import { useScrollRestoration } from "@/hooks/useScrollRestoration";
 import { App as CapacitorApp } from "@capacitor/app";
 import { useEffect, useCallback, useRef, lazy, Suspense } from "react";
 import { IS_NATIVE } from "@/lib/api/config";
@@ -48,6 +55,7 @@ const HOME_PATH = "/search";
 export function RootLayout() {
   const location = useLocation();
   const navigate = useNavigate();
+  const navigationType = useNavigationType();
   const { isFullScreenPlayer, setIsFullScreenPlayer: setStoreFullScreen } =
     useMusicStore(
       useShallow((state) => ({
@@ -59,6 +67,9 @@ export function RootLayout() {
 
   // 点顶栏回到列表顶部（全屏播放器有自己的滚动区，那里不接管）
   useTapTopToScrollTop(!isFullScreenPlayer);
+
+  // 返回二级页时恢复上次的滚动位置（回收站 → 设置页等），前进/新开页面仍从顶部
+  useScrollRestoration(location.pathname, navigationType);
 
   // Back Button Logic
   const locationRef = useRef(location);
@@ -196,9 +207,10 @@ export function RootLayout() {
         hidePlayer={isFullScreenPlayer || !hasCurrentTrack}
         isTab={isTab}
         player={
+          // 播放条全站统一胶囊形态：非 tab 页（歌单/专辑/歌手等）不再放大成全宽底栏，
+          // 否则进二级页会突然变高变宽，位置也往下掉一截
           <MusicNowPlayingBar
             onOpenFullScreen={() => setStoreFullScreen(true)}
-            isTab={isTab}
           />
         }
         tabBar={<MusicTabBar />}
@@ -207,6 +219,9 @@ export function RootLayout() {
       </MusicLayout>
 
       <GlobalMusicPlayer />
+
+      {/* 全应用唯一的确认框宿主，替代系统原生 confirm */}
+      <ConfirmDialogHost />
 
       <Suspense fallback={null}>
         <FullScreenPlayer

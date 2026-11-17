@@ -4,6 +4,7 @@ import { createPortal } from "react-dom";
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { srgbToLab, type SodaColors } from "@/lib/utils/soda-color";
 import { Button } from "@/components/ui/button";
+import { confirmDialog } from "@/components/ui/confirm-dialog";
 import { cn } from "@/lib/utils";
 import { LyricsPanel } from "./LyricsPanel";
 import { MusicCover } from "./MusicCover";
@@ -53,10 +54,10 @@ import { useSystemBarsStyleOverride } from "@/hooks/useSystemBarsStyleOverride";
 import { LandscapePlayer } from "@/components/LandscapePlayer";
 
 /**
- * 播放页展开/收起动画时长，必须与容器上的 `duration-500` 保持一致。
+ * 播放页展开/收起动画时长，必须与容器上的 `duration-[420ms]` 保持一致。
  * 系统栏颜色延后这么久再切，等页面铺满再变。
  */
-const PLAYER_TRANSITION_MS = 500;
+const PLAYER_TRANSITION_MS = 420;
 
 /**
  * 主题色背景：canvas 逐像素绘制 + 像素级随机抖动（dither）。
@@ -457,8 +458,14 @@ export function FullScreenPlayer({
 
   const playTrack = (index: number) => setCurrentIndexAndPlay(index);
 
-  const handleClearQueue = () => {
-    if (confirm("确定要清空播放列表吗？")) {
+  const handleClearQueue = async () => {
+    if (
+      await confirmDialog({
+        title: "确定要清空播放列表吗？",
+        destructive: true,
+        confirmText: "清空",
+      })
+    ) {
       clearQueue();
       toast.success("播放列表已清空");
     }
@@ -479,6 +486,15 @@ export function FullScreenPlayer({
   }, [queue.length, currentIndex, setCurrentIndexAndPlay]);
 
   const gestureAreaRef = useRef<HTMLDivElement | null>(null);
+
+  /**
+   * 上一次「点在唱臂骨架上」的触摸轻点时间。
+   *
+   * 触摸的轻点在 touchend 里就切换了播放状态，随后浏览器还会补发一次 click；
+   * 骨架自己会 stopPropagation 兜住它，但如果时序错开、click 先到了外层容器，
+   * 就会变成「切了播放又切了歌词」。这里用时间戳让两条路径互斥。
+   */
+  const vinylTapAtRef = useRef(0);
 
   /**
    * 封面可用空间：跟着容器实际尺寸走。
@@ -549,8 +565,9 @@ export function FullScreenPlayer({
       // 刚关掉风格菜单的那次 tap 只用于关菜单，不要切页
       if (consumeMenuCloseClick()) return;
       if (isCoverPreviewOpen || isStyleMenuOpen) return;
-      // 点黑胶（含盘面空白沟槽）= 播放/暂停；点周围空白才是切歌词
-      if (target instanceof Element && target.closest("[data-vinyl-cover]")) {
+      // 只有唱臂骨架（基座/臂管/唱头）= 播放/暂停；点盘面与周围空白都是切歌词
+      if (target instanceof Element && target.closest("[data-vinyl-control]")) {
+        vinylTapAtRef.current = Date.now();
         togglePlay();
         return;
       }
@@ -564,9 +581,11 @@ export function FullScreenPlayer({
     swipe.isDragging || swipe.dragY > 0
       ? {
           transform: `translateY(${swipe.dragY}px)`,
+          // 回弹比关闭更慢一点、曲线更"黏"：手指离开后页面像被吸回去，
+          // linear / ease-in-out 都会显得生硬，easeOutQuint 收尾几乎无速度，观感最接近原生
           transition: swipe.isDragging
             ? "none"
-            : "transform 500ms cubic-bezier(0.32, 0.72, 0, 1)",
+            : "transform 360ms cubic-bezier(0.22, 1, 0.36, 1)",
         }
       : undefined;
 
@@ -584,7 +603,9 @@ export function FullScreenPlayer({
   return createPortal(
     <div
       className={cn(
-        "fixed inset-0 z-50 transition-transform duration-500 ease-in-out flex flex-col select-none",
+        // 420ms + easeOutQuint：展开/收起都走同一条曲线，起步快、末尾缓，
+        // 原 500ms ease-in-out 在 Android WebView 上收尾会"顿"一下再停住
+        "fixed inset-0 z-50 transition-transform duration-[420ms] ease-[cubic-bezier(0.22,1,0.36,1)] flex flex-col select-none will-change-transform",
         isFullScreen ? "translate-y-0" : "translate-y-full"
       )}
       // 整个播放页（含黑胶盘面空白区、歌词、歌名）长按都不弹 WebView 系统菜单/选中文字，
@@ -716,7 +737,7 @@ export function FullScreenPlayer({
           // Web 端鼠标点击没有 touchend 的 onTap，在这里走同一套分流
           if (
             e.target instanceof Element &&
-            e.target.closest("[data-vinyl-cover]")
+            e.target.closest("[data-vinyl-control]")
           ) {
             togglePlay();
             return;
@@ -759,6 +780,18 @@ export function FullScreenPlayer({
                 previewOpen={isCoverPreviewOpen}
                 onPreviewOpenChange={setIsCoverPreviewOpen}
                 discColor={vinylColor}
+                onControlActivate={() => {
+                  // 骨架自己吞掉了 click（不再冒泡到内容区的分流里），
+                  // 所以这边的守卫要跟内容区那套保持一致，否则长按弹风格菜单、
+                  // 刚关菜单这些「补发的 click」会顺带把播放状态切了。
+                  if (consumeLongPressClick()) return;
+                  if (consumeMenuCloseClick()) return;
+                  if (isCoverPreviewOpen || isStyleMenuOpen) return;
+                  if (swipe.shouldSuppressClick()) return;
+                  // 触摸轻点已经在 touchend 处理过，这里只兜住补发的 click
+                  if (Date.now() - vinylTapAtRef.current < 700) return;
+                  togglePlay();
+                }}
               />
             ) : (
               <MusicCover

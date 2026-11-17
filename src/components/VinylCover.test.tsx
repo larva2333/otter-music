@@ -79,7 +79,7 @@ describe("VinylCover", () => {
     expect(label.className).toContain("inset-[17%]"); // 直径 66%
   });
 
-  it("盘面用传入颜色，transparent 时透出背景；整块黑胶可被轻点识别", async () => {
+  it("盘面用传入颜色，transparent 时透出背景；只有唱臂骨架可被轻点识别", async () => {
     await render(false, "#3B82F6");
     const face = () =>
       document.body.querySelector(
@@ -87,7 +87,25 @@ describe("VinylCover", () => {
       ) as HTMLDivElement;
 
     expect(face().style.backgroundColor).toBe("rgb(59, 130, 246)");
-    expect(document.body.querySelector("[data-vinyl-cover]")).toBeTruthy();
+    // 盘面本身不参与点击判定，避免点唱片就播放/暂停
+    expect(face().closest("[data-vinyl-control]")).toBeNull();
+    expect(
+      document.body
+        .querySelector('[data-testid="vinyl-disc"]')
+        ?.closest("[data-vinyl-control]")
+    ).toBeNull();
+    // 命中区：基座、臂管热区、唱头盒体
+    expect(
+      document.body.querySelectorAll("[data-vinyl-control]").length
+    ).toBeGreaterThanOrEqual(3);
+    expect(
+      document.body.querySelector("[data-testid='vinyl-tonearm-hit']")
+    ).toBeTruthy();
+    expect(
+      document.body
+        .querySelector('[data-testid="vinyl-head-body"]')
+        ?.closest("[data-vinyl-control]")
+    ).toBeTruthy();
 
     await act(async () => {
       root?.render(

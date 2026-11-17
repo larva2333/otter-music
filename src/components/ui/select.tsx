@@ -129,11 +129,14 @@ function Select({
 function SelectValue({
   className,
   placeholder,
+  children,
   ...props
 }: React.ComponentProps<"span"> & { placeholder?: React.ReactNode }) {
   const { value, labels } = useSelectContext("SelectValue");
   const label = value !== undefined ? labels.get(String(value)) : undefined;
-  const content = label ?? value ?? placeholder;
+  // 显式传 children 时优先用它：收起态可以显示短文案（如「无损」），
+  // 展开列表里仍然是完整标签（「无损 (999kbps)」）
+  const content = children ?? label ?? value ?? placeholder;
 
   return (
     <span

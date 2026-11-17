@@ -7,7 +7,7 @@ import {
   sourceBadgeStyles,
   sourceLabels,
 } from "@/types/music";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { toastUtils } from "@/lib/utils/toast";
 import toast from "react-hot-toast";
 import { useShallow } from "zustand/react/shallow";
@@ -61,6 +61,8 @@ interface MusicTrackItemProps {
   isSelected?: boolean;
   onSelect?: () => void;
   showCheckbox?: boolean;
+  /** 长按整行：用于进入多选。未传则不启用长按。 */
+  onLongPress?: () => void;
   onPlay: () => void;
   onRemove?: () => void;
   removeLabel?: string;
@@ -83,6 +85,7 @@ export function MusicTrackItem({
   isSelected,
   onSelect,
   showCheckbox,
+  onLongPress,
   onPlay,
   onRemove,
   removeLabel,
@@ -115,11 +118,69 @@ export function MusicTrackItem({
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [isAddToPlaylistOpen, setIsAddToPlaylistOpen] = useState(false);
 
+  /**
+   * 长按进入多选。
+   *
+   * 用 touch 事件自己计时，不用 contextmenu：Android WebView 里长按会先弹
+   * 文字选择/系统菜单，时序不可控。450ms 是系统长按的常见阈值，
+   * 手指移动超过 8px 立即取消，避免和列表滚动打架。
+   */
+  const longPressTimerRef = useRef<number | null>(null);
+  const longPressFiredRef = useRef(false);
+  const longPressStartRef = useRef<{ x: number; y: number } | null>(null);
+
+  const cancelLongPress = () => {
+    if (longPressTimerRef.current !== null) {
+      window.clearTimeout(longPressTimerRef.current);
+      longPressTimerRef.current = null;
+    }
+    longPressStartRef.current = null;
+  };
+
+  const handleRowTouchStart = (e: React.TouchEvent) => {
+    // 多选态下也允许长按：随时可以按住某行继续滑动多选，不必先退出再长按
+    if (!onLongPress) return;
+    const touch = e.touches[0];
+    if (!touch) return;
+    longPressFiredRef.current = false;
+    longPressStartRef.current = { x: touch.clientX, y: touch.clientY };
+    longPressTimerRef.current = window.setTimeout(() => {
+      longPressTimerRef.current = null;
+      longPressFiredRef.current = true;
+      onLongPress();
+      // 兜底：万一抬手位置跑到元素外、浏览器没补发 click，标志不会一直挂着
+      // 把下一次正常点击吞掉。1s 远大于 touchend→click 的间隔。
+      window.setTimeout(() => {
+        longPressFiredRef.current = false;
+      }, 1000);
+    }, 450);
+  };
+
+  const handleRowTouchMove = (e: React.TouchEvent) => {
+    const start = longPressStartRef.current;
+    const touch = e.touches[0];
+    if (!start || !touch) return;
+    if (Math.hypot(touch.clientX - start.x, touch.clientY - start.y) > 8) {
+      cancelLongPress();
+    }
+  };
+
+  const handleRowClick = () => {
+    // 长按已经进入多选，抬手补发的这次 click 只吞掉，别再播放
+    if (longPressFiredRef.current) {
+      longPressFiredRef.current = false;
+      return;
+    }
+    if (showCheckbox) onSelect?.();
+    else onPlay();
+  };
+
   const variants = (track as MergedMusicTrack).variants || [];
   const badge = getPrivilegeBadge(track);
 
   return (
     <div
+      data-track-id={track.id}
       style={style}
       className={cn(
         "group grid gap-4 items-center px-4 py-2.5 transition-all text-sm cursor-pointer",
@@ -130,7 +191,13 @@ export function MusicTrackItem({
     >
       <div
         className="col-span-2 grid grid-cols-[1.75rem_1fr] gap-4 items-center"
-        onClick={showCheckbox ? onSelect : onPlay}
+        onClick={handleRowClick}
+        onTouchStart={handleRowTouchStart}
+        onTouchMove={handleRowTouchMove}
+        onTouchEnd={cancelLongPress}
+        onTouchCancel={cancelLongPress}
+        // 长按已经由上面的计时器接管，别再让 WebView 弹"选择文字/复制"菜单
+        onContextMenu={onLongPress ? (e) => e.preventDefault() : undefined}
       >
         <div className="flex justify-center shrink-0">
           {showCheckbox ? (

@@ -61,7 +61,7 @@ interface UsePlayerSwipeGesturesOptions {
    * 轻点回调。放在 touchend 里执行而不是等浏览器的 click：
    * 上滑/滚动之后的惯性期内，WebView 会把紧跟的 tap 用于「停止滚动」，
    * click 根本不会派发，只监听 click 就会表现为「点一下没反应」。
-   * 带上 target：区分点在黑胶上（播放/暂停）还是空白处（切歌词）。
+   * 带上 target：区分点在唱臂骨架（播放/暂停）还是盘面/空白（切歌词）。
    */
   onTap?: (target: EventTarget | null) => void;
   /** 手势区域容器：用于注册非 passive 的 touchmove 监听，阻止 WebView 滚动 */

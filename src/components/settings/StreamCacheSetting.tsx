@@ -1,4 +1,5 @@
 import { Button } from "@/components/ui/button";
+import { confirmDialog } from "@/components/ui/confirm-dialog";
 import { SettingItem } from "./SettingItem";
 import { HardDrive, Trash2 } from "lucide-react";
 import { useState, useEffect } from "react";
@@ -65,7 +66,12 @@ export function StreamCacheSetting() {
             onClick={async (e) => {
               e.stopPropagation();
               if (
-                window.confirm("确定要清空所有音频缓存吗？此操作不可恢复。")
+                await confirmDialog({
+                  title: "确定要清空所有音频缓存吗？",
+                  description: "此操作不可恢复。",
+                  destructive: true,
+                  confirmText: "清空",
+                })
               ) {
                 await clearAudioCache();
                 useOfflineStore.getState().clear();

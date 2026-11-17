@@ -273,6 +273,26 @@
     font-size: var(--text-sm);
   }
 
+  /*
+   * 全站禁止选中文字（长按/拖拽时不会选中歌名、按钮文案），
+   * 只放行真正需要编辑和复制的内容：输入框、多行文本域、可编辑区域。
+   * 桌面端仍可用 Ctrl+A 全选输入框里的内容。
+   */
+  html,
+  body {
+    -webkit-user-select: none;
+    user-select: none;
+  }
+
+  input,
+  textarea,
+  select,
+  [contenteditable="true"],
+  [contenteditable=""] {
+    -webkit-user-select: text;
+    user-select: text;
+  }
+
   .custom-scrollbar {
     scrollbar-width: thin;
   }

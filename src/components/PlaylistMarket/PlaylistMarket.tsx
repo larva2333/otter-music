@@ -436,10 +436,10 @@ export function PlaylistMarket() {
                   placeholder="歌单广场"
                   className={cn(
                     "h-8 px-0 bg-transparent! shadow-none rounded-none transition-all duration-300",
-                    "border-0 border-b border-dashed border-muted-foreground/20 focus-visible:border-solid",
+                    "border-0",
                     "text-base font-semibold text-foreground",
                     "placeholder:text-foreground placeholder:font-semibold placeholder:text-base",
-                    "focus-visible:ring-0 focus-visible:border-primary",
+                    "focus-visible:ring-0",
                     "focus-visible:placeholder:text-muted-foreground/40 focus-visible:placeholder:font-normal focus-visible:placeholder:text-xs"
                   )}
                 />

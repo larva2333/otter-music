@@ -1,4 +1,5 @@
 import { Button } from "@/components/ui/button";
+import { confirmDialog } from "@/components/ui/confirm-dialog";
 import { Play, Search } from "lucide-react";
 import { filterTracks } from "@/lib/utils/filter-tracks";
 import { MusicTrackList } from "./MusicTrackList";
@@ -273,8 +274,14 @@ export function MusicPlaylistView({
                 onExport={() => exportPlaylist(title, tracks)}
                 onDelete={
                   onDelete
-                    ? () => {
-                        if (confirm(`确定删除歌单「${title}」吗？`)) {
+                    ? async () => {
+                        if (
+                          await confirmDialog({
+                            title: `确定删除歌单「${title}」吗？`,
+                            destructive: true,
+                            confirmText: "删除",
+                          })
+                        ) {
                           onDelete(playlistId);
                         }
                       }

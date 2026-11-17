@@ -187,12 +187,29 @@ public class LocalMusicPlugin extends Plugin {
             .put("uri", treeUri.toString()));
     }
 
-    /** 选一张图片作为全屏播放器背景：走 SAF，不需要 READ_MEDIA_IMAGES 权限 */
+    /** 选一张图片作为全屏播放器背景：走系统相册（Android Photo Picker），不需要存储权限 */
     @PluginMethod
     public void pickBackgroundImage(PluginCall call) {
-        Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
-        intent.addCategory(Intent.CATEGORY_OPENABLE);
-        intent.setType("image/*");
+        boolean usePhotoPicker;
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            usePhotoPicker = true;
+        } else {
+            // Android 13 以下若 Play 服务补装了 Photo Picker 也能用，否则退回文档选择器
+            Intent probe = new Intent(MediaStore.ACTION_PICK_IMAGES);
+            probe.setType("image/*");
+            usePhotoPicker = getActivity().getPackageManager().resolveActivity(
+                probe, android.content.pm.PackageManager.MATCH_DEFAULT_ONLY) != null;
+        }
+
+        Intent intent;
+        if (usePhotoPicker) {
+            intent = new Intent(MediaStore.ACTION_PICK_IMAGES);
+            intent.setType("image/*");
+        } else {
+            intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+            intent.addCategory(Intent.CATEGORY_OPENABLE);
+            intent.setType("image/*");
+        }
         startActivityForResult(call, intent, "handlePickBackgroundImageResult");
     }
 

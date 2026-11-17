@@ -28,7 +28,6 @@ export function BackgroundImageCropper({
   const imgRef = useRef<HTMLImageElement | null>(null);
   const [ready, setReady] = useState(false);
   const [frame, setFrame] = useState({ w: 0, h: 0 });
-  const [imgSize, setImgSize] = useState({ w: 0, h: 0 });
   const [pos, setPos] = useState({ x: 0, y: 0 });
   const [scale, setScale] = useState(1);
 
@@ -110,7 +109,6 @@ export function BackgroundImageCropper({
     const img = imgRef.current;
     const f = frameRef.current;
     if (!img || !f) return;
-    setImgSize({ w: img.naturalWidth, h: img.naturalHeight });
     setReady(true);
     const cover = Math.max(
       f.clientWidth / img.naturalWidth,
@@ -188,26 +186,29 @@ export function BackgroundImageCropper({
     if (!img || !f) return;
     const fw = f.clientWidth;
     const fh = f.clientHeight;
+    if (fw <= 0 || fh <= 0) return;
     const v = view.current;
+    const s = v.s;
+    if (s <= 0) return;
     // 导出 1080 宽（横图反之以高为基准），框内所见即所得
     const outW = fw >= fh ? 1080 : Math.round((1080 * fw) / fh);
     const outH = fw >= fh ? Math.round((1080 * fh) / fw) : 1080;
-    const k = outW / fw;
     const canvas = document.createElement("canvas");
     canvas.width = outW;
     canvas.height = outH;
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
     ctx.imageSmoothingQuality = "high";
-    ctx.drawImage(
-      img,
-      v.x * k,
-      v.y * k,
-      imgSize.w * v.s * k,
-      imgSize.h * v.s * k
-    );
+    // 用 9 参数 drawImage 指定「源矩形 → 目标矩形」，源矩形取自原图（最大不过原图尺寸），
+    // 避免 5 参数版本把整张图绘制到「原图宽 * 缩放 * k」那么大的目标尺寸上——放大时目标
+    // 尺寸可达 5000+ px，WebView 要分配约 100MB 临时位图，容易 OOM 闪退。
+    const sx = -v.x / s;
+    const sy = -v.y / s;
+    const sw = fw / s;
+    const sh = fh / s;
+    ctx.drawImage(img, sx, sy, sw, sh, 0, 0, outW, outH);
     onConfirm(canvas.toDataURL("image/jpeg", 0.8));
-  }, [imgSize, onConfirm]);
+  }, [onConfirm]);
 
   if (typeof document === "undefined") return null;
 

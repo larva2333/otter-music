@@ -219,19 +219,26 @@ public class LocalMusicPlugin extends Plugin {
             call.resolve(new JSObject().put("success", false).put("error", "cancelled"));
             return;
         }
-        Uri uri = result.getData().getData();
+        final Uri uri = result.getData().getData();
         if (uri == null) {
             call.resolve(new JSObject().put("success", false).put("error", "No image selected"));
             return;
         }
-        try {
-            call.resolve(new JSObject()
-                .put("success", true)
-                .put("dataUrl", compressImageToDataUrl(uri)));
-        } catch (Exception e) {
-            Log.e("LocalMusicPlugin", "pickBackgroundImage failed", e);
-            call.resolve(new JSObject().put("success", false).put("error", e.getMessage()));
-        }
+        // 图片解码/缩放/压缩放到后台线程：主线程做大图解码会阻塞 UI 触发 ANR，
+        // 且 OOM 是 Error 不是 Exception，必须用 Throwable 兜住，否则直接闪退。
+        ioExecutor.execute(() -> {
+            try {
+                final String dataUrl = compressImageToDataUrl(uri);
+                mainHandler.post(() -> call.resolve(new JSObject()
+                    .put("success", true)
+                    .put("dataUrl", dataUrl)));
+            } catch (Throwable t) {
+                Log.e("LocalMusicPlugin", "pickBackgroundImage failed", t);
+                mainHandler.post(() -> call.resolve(new JSObject()
+                    .put("success", false)
+                    .put("error", t.getMessage() != null ? t.getMessage() : "图片处理失败")));
+            }
+        });
     }
 
     /** 先读边界算 inSampleSize 再解码，避免大图直接 decode 撑爆 WebView 进程；再缩到 1080/JPEG75 回传 */
@@ -252,6 +259,9 @@ public class LocalMusicPlugin extends Plugin {
 
         BitmapFactory.Options opts = new BitmapFactory.Options();
         opts.inSampleSize = sample;
+        // JPEG 背景不需要透明通道，RGB_565 比默认 ARGB_8888 省一半内存，
+        // 显著降低大图解码时的 OOM 风险。
+        opts.inPreferredConfig = Bitmap.Config.RGB_565;
         Bitmap bitmap;
         try (InputStream in = resolver.openInputStream(uri)) {
             bitmap = BitmapFactory.decodeStream(in, null, opts);

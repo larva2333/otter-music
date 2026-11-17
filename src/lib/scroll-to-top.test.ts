@@ -72,6 +72,66 @@ describe("scrollPageToTop", () => {
   });
 });
 
+describe("scrollPageToTop 取消滚动惯性", () => {
+  beforeEach(() => {
+    document.body.innerHTML = "";
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    document.body.innerHTML = "";
+  });
+
+  it("归零后临时锁住 overflowY，到点自动恢复", () => {
+    const a = makeScrollContainer(800);
+
+    scrollPageToTop("auto");
+    expect(a.el.style.overflowY).toBe("hidden");
+
+    vi.advanceTimersByTime(999);
+    expect(a.el.style.overflowY).toBe("hidden");
+
+    vi.advanceTimersByTime(1);
+    expect(a.el.style.overflowY).toBe("");
+  });
+
+  it("用户在容器上按下时立刻解锁，避免列表被锁住", () => {
+    const a = makeScrollContainer(800);
+
+    scrollPageToTop();
+    expect(a.el.style.overflowY).toBe("hidden");
+
+    a.el.dispatchEvent(new Event("pointerdown", { bubbles: true }));
+    expect(a.el.style.overflowY).toBe("");
+  });
+
+  it("锁定期内再次回顶只延长计时，不会污染原始 overflowY", () => {
+    const a = makeScrollContainer(800);
+    a.el.style.overflowY = "auto";
+
+    scrollPageToTop();
+    vi.advanceTimersByTime(600);
+    // 模拟惯性还没结束、位移又被推了回去
+    a.el.scrollTop = 300;
+    scrollPageToTop();
+
+    vi.advanceTimersByTime(999);
+    expect(a.el.style.overflowY).toBe("hidden");
+
+    vi.advanceTimersByTime(1);
+    expect(a.el.style.overflowY).toBe("auto");
+  });
+
+  it("smooth 滚动不锁 overflowY", () => {
+    const a = makeScrollContainer(800);
+
+    scrollPageToTop("smooth");
+    expect(a.el.scrollTo).toHaveBeenCalledWith({ top: 0, behavior: "smooth" });
+    expect(a.el.style.overflowY).toBe("");
+  });
+});
+
 describe("installSystemScrollToTopBridge", () => {
   const originalScrollTo = window.scrollTo;
 

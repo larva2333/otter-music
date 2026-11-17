@@ -26,6 +26,10 @@ const TAP_CLICK_WINDOW = 400;
 const MAX_DRAG = 160;
 /** 下拉跟手的阻尼系数，越拖越“重”，与原生下拉手感接近 */
 const DRAG_RESISTANCE = 0.9;
+/** 横滑跟手系数：横向翻页要跟得紧，太松会显得迟钝 */
+const HORIZONTAL_RESISTANCE = 0.95;
+/** 切歌入场动画的起始偏移，取屏宽的比例：整屏太重，太小又看不出是“滑进来”的 */
+const SLIDE_IN_RATIO = 0.5;
 
 type Axis = "none" | "horizontal" | "vertical" | "ignored";
 
@@ -78,9 +82,19 @@ interface UsePlayerSwipeGesturesResult {
   };
   /** 下拉跟手位移，0 表示没有拖拽 */
   dragY: number;
+  /** 横滑跟手位移，松手回弹或切歌后归零 */
+  dragX: number;
+  /** 是否正在横滑：为 true 时要关掉过渡，跟手才不拖影 */
+  isHorizDragging: boolean;
+  /**
+   * 切歌入场：新封面当前要偏移的像素（非 0 表示正在从侧边滑入）。
+   * 配合 {@link slideSnap} 使用：snap 为 true 的那一帧不要过渡，先瞬移到起点。
+   */
+  dragEntryX: number;
+  /** 入场动画的第一帧：瞬移到位，不能有过渡 */
+  slideSnap: boolean;
   /** 是否正在拖拽：为 true 时要关掉 transition，否则跟手会有一帧延迟 */
-  isDragging: boolean;
-  /** 消费一次 click 抑制标记；返回 true 表示这次 click 是滑动尾巴，应忽略 */
+  isDragging: boolean; /** 消费一次 click 抑制标记；返回 true 表示这次 click 是滑动尾巴，应忽略 */
   shouldSuppressClick: () => boolean;
 }
 
@@ -103,6 +117,11 @@ export function usePlayerSwipeGestures({
 }: UsePlayerSwipeGesturesOptions): UsePlayerSwipeGesturesResult {
   const [dragY, setDragY] = useState(0);
   const [isDragging, setIsDragging] = useState(false);
+  // 横滑：跟手位移 + 切歌入场偏移（新封面从侧边滑进来）
+  const [dragX, setDragX] = useState(0);
+  const [isHorizDragging, setIsHorizDragging] = useState(false);
+  const [dragEntryX, setDragEntryX] = useState(0);
+  const [slideSnap, setSlideSnap] = useState(false);
   const gestureRef = useRef<GestureState | null>(null);
   const suppressClickUntilRef = useRef(0);
   const tapHandledAtRef = useRef(0);
@@ -133,6 +152,8 @@ export function usePlayerSwipeGestures({
     gestureRef.current = null;
     setIsDragging(false);
     setDragY(0);
+    setIsHorizDragging(false);
+    setDragX(0);
   }, []);
 
   const handleTouchStart = useCallback(
@@ -154,6 +175,8 @@ export function usePlayerSwipeGestures({
         // 新一次触摸先复位，避免整页停在半空
         setDragY(0);
         setIsDragging(false);
+        setDragX(0);
+        setIsHorizDragging(false);
       }
 
       // 多指（缩放、双指下滑）不参与手势，避免识别成切歌
@@ -215,6 +238,10 @@ export function usePlayerSwipeGestures({
       if (gesture.axis === "vertical") {
         setIsDragging(true);
         setDragY(Math.min(dy * DRAG_RESISTANCE, MAX_DRAG));
+      } else if (gesture.axis === "horizontal") {
+        // 跟手：封面随手指横移，松手后才决定回弹还是切歌
+        setIsHorizDragging(true);
+        setDragX(dx * HORIZONTAL_RESISTANCE);
       }
     },
     [enabled]
@@ -277,12 +304,35 @@ export function usePlayerSwipeGestures({
         const shouldSwitch =
           Math.abs(dx) >= SWIPE_THRESHOLD ||
           (isFling && Math.abs(dx) >= FLING_DISTANCE);
-        if (shouldSwitch) {
-          markClickSuppression();
-          // 自然方向：左滑看到下一首，右滑回到上一首
-          if (dx < 0) onNext();
-          else onPrev();
+        setIsHorizDragging(false);
+        setDragX(0);
+
+        if (!shouldSwitch) {
+          // 距离不够：跟手位移归零，CSS 过渡会把封面吸回原位
+          return;
         }
+
+        markClickSuppression();
+        // 自然方向：左滑看到下一首，右滑回到上一首。
+        // 新封面从「滑走的那一侧的反方向」进场：左滑时从右侧进来，右滑时从左侧进来。
+        const direction = dx < 0 ? 1 : -1;
+        const entryOffset =
+          Math.round((window.innerWidth || 360) * SLIDE_IN_RATIO) * direction;
+
+        // 先把新封面瞬移到进场起点（这一帧不能有过渡），再下一帧归零，
+        // 由 CSS 过渡把它滑到位；两帧之间夹一个 rAF 让浏览器吃到起始位置。
+        setDragEntryX(entryOffset);
+        setSlideSnap(true);
+        if (dx < 0) onNext();
+        else onPrev();
+
+        requestAnimationFrame(() => {
+          requestAnimationFrame(() => {
+            setSlideSnap(false);
+            setDragEntryX(0);
+          });
+        });
+        return;
       }
 
       reset();
@@ -317,6 +367,10 @@ export function usePlayerSwipeGestures({
     // enabled 为 false（歌词页、封面预览、横屏）时不暴露任何位移，
     // 这样即使 state 里还留着上一次拖拽的值，界面也不会偏移
     dragY: enabled ? dragY : 0,
+    dragX: enabled ? dragX : 0,
+    isHorizDragging: enabled && isHorizDragging,
+    dragEntryX: enabled ? dragEntryX : 0,
+    slideSnap: enabled && slideSnap,
     isDragging: enabled && isDragging,
     shouldSuppressClick,
   };

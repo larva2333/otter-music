@@ -127,7 +127,10 @@ export function SettingItem({
           "grid transition-all duration-200 ease-in-out",
           isExpanded
             ? "grid-rows-[1fr] opacity-100 mt-3 pt-3 border-t border-border/50"
-            : "grid-rows-[0fr] opacity-0"
+            : // 收起时内层仍有 -my-2/py-2 的 16px 不可见高度，且它 stopPropagation，
+              // 会吃掉行底部（和下一行顶部）的点击。pointer-events-none 让这片区域
+              // 彻底不参与命中测试，整行任意位置都能触发展开。
+              "grid-rows-[0fr] opacity-0 pointer-events-none"
         )}
       >
         {/* 点里面的任何子选项都不收起父项（子项自己的 onClick 照常执行）。

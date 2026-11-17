@@ -120,8 +120,6 @@ export function VinylCover({
               onPreviewOpenChange={onPreviewOpenChange}
             />
           </div>
-          {/* 主轴 */}
-          <div className="absolute left-1/2 top-1/2 h-[2.6%] w-[2.6%] -translate-x-1/2 -translate-y-1/2 rounded-full bg-linear-to-br from-neutral-200 to-neutral-500 shadow-[0_0_0_2px_rgba(0,0,0,0.6)]" />
         </div>
 
         {/* 固定高光，不跟盘转 */}

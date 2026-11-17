@@ -62,19 +62,23 @@ export function MusicLayout({
           位置统一锚在二级页的 bottom，tab 页靠 translateY 上抬 68px。
           用 transform 而不是切 bottom：bottom 过渡走的是布局，WebView 上每帧重排，
           tab ↔ 二级页切换时会掉帧、看起来"跳"一下；transform 走合成层，稳得多。
-          叠加 --kb-lift：键盘弹出时窗口被 adjustResize 压缩，胶囊下移同样高度，
-          视觉上钉在屏幕原位（被键盘盖住），而不是跟着窗口底边被顶到键盘上方。 */}
+          叠加 --kb-lift：键盘弹出时壳层会被缩到键盘上方（Android 15+ 是脚本手动缩壳层，
+          低版本是 adjustResize 缩窗口），胶囊下移同样的高度，视觉上钉在屏幕原位
+          （被键盘盖住），而不是跟着壳层底边被顶到键盘上方。 */}
       {!hidePlayer && (
         <div
           className={cn(
             "flex-none z-50 absolute left-0 right-0 will-change-transform",
             "bottom-[calc(var(--safe-area-bottom)+8px)]",
-            "transition-transform duration-[320ms] ease-[cubic-bezier(0.32,0.72,0,1)]",
+            "transition-transform ease-[cubic-bezier(0.32,0.72,0,1)]",
             // 68px = 原 tab 页位置(72+安全区+4) 减去 二级页位置(安全区+8)
             isTab
               ? "translate-y-[calc(var(--kb-lift,0px)-68px)]"
               : "translate-y-[var(--kb-lift,0px)]"
           )}
+          // 键盘开合那一刻（--kb-anim 为 0ms）不能走过渡，否则胶囊会先弹到键盘上沿
+          // 再滑回去；平时保持 320ms，tab ↔ 二级页的 68px 位移才平滑
+          style={{ transitionDuration: "var(--kb-anim, 320ms)" }}
         >
           {player}
         </div>
@@ -93,7 +97,10 @@ export function MusicLayout({
           不画成一条硬线。底板本身保持不透明（半透明底会让滑动时忽明忽暗），
           羽化只发生在最上面那 48px，是纯透明→实色的遮罩，不做内容模糊。 */}
       {isTab && (
-        <div className="relative flex-none z-40 translate-y-[var(--kb-lift,0px)] transition-transform duration-300">
+        <div
+          className="relative flex-none z-40 translate-y-[var(--kb-lift,0px)] transition-transform"
+          style={{ transitionDuration: "var(--kb-anim, 300ms)" }}
+        >
           <div
             aria-hidden
             className={cn(

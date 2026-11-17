@@ -589,6 +589,20 @@ export function FullScreenPlayer({
         }
       : undefined;
 
+  /**
+   * 横向切歌：跟手时封面随手指平移，松手切歌后新封面从侧边滑入。
+   * 用独立的 `translate` 属性而不是改 transform —— 播放/暂停的 scale 走的是
+   * Tailwind 的 `scale` 属性，两者互不覆盖，位移和缩放能同时生效。
+   */
+  const coverOffsetX = swipe.isHorizDragging ? swipe.dragX : swipe.dragEntryX;
+  const coverSlideStyle: React.CSSProperties = {
+    translate: coverOffsetX ? `${coverOffsetX}px` : undefined,
+    transition:
+      swipe.isHorizDragging || swipe.slideSnap
+        ? "none"
+        : "translate 320ms cubic-bezier(0.22, 1, 0.36, 1), scale 500ms",
+  };
+
   if (!isMounted) return null;
 
   // 循环切换播放模式：none → repeat → shuffle → none
@@ -763,6 +777,7 @@ export function FullScreenPlayer({
                 ? `${coverPx}px`
                 : `min(${coverSize}px, calc(100vw - 16px), 70svh)`,
               borderRadius: coverStyle === "vinyl" ? 0 : coverRadius,
+              ...coverSlideStyle,
             }}
           >
             {/* 1.02 的底噪裁边 + 检测到的白边裁切：部分平台封面原图自带纯白

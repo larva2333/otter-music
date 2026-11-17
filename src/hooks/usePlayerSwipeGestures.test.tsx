@@ -268,4 +268,59 @@ describe("usePlayerSwipeGestures 播放页手势", () => {
     expect(h.onNext).not.toHaveBeenCalled();
     h.cleanup();
   });
+
+  it("横滑跟手位移随手指方向变化，松手归零", () => {
+    const h = renderGestures();
+
+    act(() => {
+      h.getLatest().handlers.onTouchStart(touch(300, 300));
+      h.getLatest().handlers.onTouchMove(touch(200, 305));
+    });
+
+    expect(h.getLatest().isHorizDragging).toBe(true);
+    expect(h.getLatest().dragX).toBeLessThan(0);
+
+    act(() => {
+      h.getLatest().handlers.onTouchEnd();
+    });
+
+    expect(h.getLatest().dragX).toBe(0);
+    expect(h.getLatest().isHorizDragging).toBe(false);
+    h.cleanup();
+  });
+
+  it("左滑切歌后新封面从右侧滑入", () => {
+    const h = renderGestures();
+    h.gesture(300, 300, 200, 305);
+
+    // 松手瞬间：先瞬移到进场起点（右正方向），此时不能有过渡
+    expect(h.getLatest().dragEntryX).toBeGreaterThan(0);
+    expect(h.getLatest().slideSnap).toBe(true);
+
+    act(() => {
+      vi.advanceTimersByTime(64);
+    });
+
+    // 下一帧归零，交给 CSS 过渡滑到位
+    expect(h.getLatest().dragEntryX).toBe(0);
+    expect(h.getLatest().slideSnap).toBe(false);
+    h.cleanup();
+  });
+
+  it("右滑切歌后新封面从左侧滑入", () => {
+    const h = renderGestures();
+    h.gesture(200, 300, 300, 295);
+
+    expect(h.getLatest().dragEntryX).toBeLessThan(0);
+    h.cleanup();
+  });
+
+  it("横滑距离不足时只有回弹，没有入场动画", () => {
+    const h = renderGestures();
+    h.gesture(300, 300, 280, 306);
+
+    expect(h.getLatest().dragEntryX).toBe(0);
+    expect(h.getLatest().slideSnap).toBe(false);
+    h.cleanup();
+  });
 });

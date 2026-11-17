@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { keyboardViewportPatch } from "./keyboard-viewport";
+import { keyboardLift, keyboardViewportPatch } from "./keyboard-viewport";
 
 describe("keyboardViewportPatch", () => {
   it("does nothing when the keyboard is closed", () => {
@@ -22,5 +22,25 @@ describe("keyboardViewportPatch", () => {
       height: 420,
       translateY: 96,
     });
+  });
+});
+
+describe("keyboardLift", () => {
+  it("does not move anything when the keyboard is closed", () => {
+    expect(keyboardLift(800, null, 800)).toBe(0);
+  });
+
+  it("lifts by the shell shrink when the window was not resized (edge-to-edge)", () => {
+    // Android 15+：innerHeight 仍是全屏 800，壳层被缩到 420
+    expect(keyboardLift(800, { height: 420, translateY: 0 }, 800)).toBe(380);
+  });
+
+  it("lifts by the window compression when adjustResize shrank the window", () => {
+    // Android 14 及以下：窗口本身缩到 420，壳层没被 patch
+    expect(keyboardLift(800, null, 420)).toBe(380);
+  });
+
+  it("counts the pan offset so the bar still lands on the screen bottom", () => {
+    expect(keyboardLift(800, { height: 420, translateY: 96 }, 800)).toBe(284);
   });
 });

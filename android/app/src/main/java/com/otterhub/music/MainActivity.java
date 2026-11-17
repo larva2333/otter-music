@@ -8,11 +8,8 @@ import android.graphics.drawable.ColorDrawable;
 import android.os.Build;
 import android.os.Bundle;
 import android.view.View;
-import android.view.ViewGroup;
 import androidx.core.content.ContextCompat;
-import androidx.core.view.ViewCompat;
 import androidx.core.view.WindowCompat;
-import androidx.core.view.WindowInsetsCompat;
 import androidx.core.view.WindowInsetsControllerCompat;
 import com.getcapacitor.BridgeActivity;
 import com.getcapacitor.PluginHandle;
@@ -41,38 +38,6 @@ public class MainActivity extends BridgeActivity {
         super.onCreate(savedInstanceState);
         useTransientSystemBars();
         applyWebViewBackground();
-        padWebViewForIme();
-    }
-
-    /**
-     * Android 15 起 edge-to-edge 强制生效，`adjustResize` 不再缩小窗口，键盘会直接盖住页面。
-     *
-     * 注意不能用 `webView.setPadding(...)`：WebView 的 padding 不参与 CSS 视口的计算，
-     * 网页里的 `100vh` / `position: fixed; bottom: 0`（底部抽屉、输入框）依然按整屏高度算，
-     * 结果就是「新建/导入」抽屉被键盘整个盖住、搜出来的历史面板被顶出屏幕。
-     *
-     * 这里改成给 WebView 加**底部外边距**（layout margin）：父容器会把 WebView 重新布局成
-     * 更矮的一块，CSS 视口跟着变矮，`fixed` 元素自然落在键盘上方，和旧版本 adjustResize 一致。
-     */
-    private void padWebViewForIme() {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.VANILLA_ICE_CREAM) return;
-        if (getBridge() == null || getBridge().getWebView() == null) return;
-        View webView = getBridge().getWebView();
-        if (!(webView.getLayoutParams() instanceof ViewGroup.MarginLayoutParams)) return;
-
-        ViewCompat.setOnApplyWindowInsetsListener(webView, (v, insets) -> {
-            int imeBottom = insets.getInsets(WindowInsetsCompat.Type.ime()).bottom;
-            ViewGroup.LayoutParams raw = v.getLayoutParams();
-            if (raw instanceof ViewGroup.MarginLayoutParams) {
-                ViewGroup.MarginLayoutParams lp = (ViewGroup.MarginLayoutParams) raw;
-                if (lp.bottomMargin != imeBottom) {
-                    lp.bottomMargin = imeBottom;
-                    v.setLayoutParams(lp);
-                }
-            }
-            return insets;
-        });
-        ViewCompat.requestApplyInsets(webView);
     }
 
     /**
@@ -83,10 +48,18 @@ public class MainActivity extends BridgeActivity {
      * （见 index.html），首帧之前透出的就是这层颜色，冷启动全程只有一个底色。
      * 注意：WebView 的 prefers-color-scheme 与原生 Configuration 可能不一致
      * （实测系统浅色时 WebView 仍报 dark），所以这里不能按媒体查询取值。
+     *
+     * 同时给 WebView 的**父容器**刷同色：Android 15 edge-to-edge 下内容延伸到系统栏后面，
+     * 导航栏周边的原生层需要和主题色一致，避免露底。
      */
     private void applyWebViewBackground() {
         if (getBridge() == null || getBridge().getWebView() == null) return;
-        getBridge().getWebView().setBackgroundColor(resolveWindowBackgroundColor());
+        View webView = getBridge().getWebView();
+        int color = resolveWindowBackgroundColor();
+        webView.setBackgroundColor(color);
+        if (webView.getParent() instanceof View) {
+            ((View) webView.getParent()).setBackgroundColor(color);
+        }
     }
 
     private void applyWindowBackground() {

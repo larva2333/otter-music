@@ -214,7 +214,7 @@ index 6f54b7f..59ac0e8 100644
          if (service != null) { service.updatePossibleActions(); };
      }
 diff --git a/node_modules/@jofr/capacitor-media-session/android/src/main/java/io/github/jofr/capacitor/mediasessionplugin/MediaSessionService.java b/node_modules/@jofr/capacitor-media-session/android/src/main/java/io/github/jofr/capacitor/mediasessionplugin/MediaSessionService.java
-index cb0417f..70985de 100644
+index cb0417f..c63c323 100644
 --- a/node_modules/@jofr/capacitor-media-session/android/src/main/java/io/github/jofr/capacitor/mediasessionplugin/MediaSessionService.java
 +++ b/node_modules/@jofr/capacitor-media-session/android/src/main/java/io/github/jofr/capacitor/mediasessionplugin/MediaSessionService.java
 @@ -8,6 +8,8 @@ import android.app.Service;
@@ -291,7 +291,29 @@ index cb0417f..70985de 100644
      private boolean possibleActionsUpdate = true;
      private boolean playbackStateUpdate = false;
      private boolean mediaMetadataUpdate = false;
-@@ -82,8 +117,26 @@ public class MediaSessionService extends Service {
+@@ -59,6 +94,21 @@ public class MediaSessionService extends Service {
+     private MediaSessionPlugin plugin;
+     private MediaSessionCallback callback;
+ 
++    /**
++     * connectAndInitialize 是否已完整跑完。
++     *
++     * <p>绑定回调把 service 交给插件（MediaSessionPlugin#onServiceConnected 里
++     * {@code service = binder.getService()}）之后才调用 connectAndInitialize，
++     * 而后者是逐行构造的：mediaSession 在第 126 行赋值，notificationBuilder 要到
++     * 第 160 行。这中间的窗口里，Capacitor 桥线程可以并行调 setActionHandler /
++     * setPlaybackState，于是 update() 会看到一个 mediaSession 非空、但
++     * notificationBuilder 为 null 的半成品实例，addAction 直接 NPE 崩掉整个进程
++     * （Android 13+ 表现为无提示闪退）。
++     *
++     * <p>volatile：写入在主线程，读取在桥线程。
++     */
++    private volatile boolean initialized = false;
++
+     private final IBinder binder = new LocalBinder();
+ 
+     public final class LocalBinder extends Binder {
+@@ -82,8 +132,26 @@ public class MediaSessionService extends Service {
      public void connectAndInitialize(MediaSessionPlugin plugin, Intent intent) {
          this.plugin = plugin;
  
@@ -318,7 +340,7 @@ index cb0417f..70985de 100644
          mediaSession.setActive(true);
  
          playbackStateBuilder = new PlaybackStateCompat.Builder()
-@@ -92,7 +145,9 @@ public class MediaSessionService extends Service {
+@@ -92,7 +160,9 @@ public class MediaSessionService extends Service {
          mediaSession.setPlaybackState(playbackStateBuilder.build());
  
          mediaMetadataBuilder = new MediaMetadataCompat.Builder()
@@ -329,7 +351,7 @@ index cb0417f..70985de 100644
          mediaSession.setMetadata(mediaMetadataBuilder.build());
  
          notificationManager = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
-@@ -104,8 +159,11 @@ public class MediaSessionService extends Service {
+@@ -104,8 +174,11 @@ public class MediaSessionService extends Service {
          notificationStyle = new MediaStyle().setMediaSession(mediaSession.getSessionToken());
          notificationBuilder = new NotificationCompat.Builder(this, "playback")
                  .setStyle(notificationStyle)
@@ -343,8 +365,18 @@ index cb0417f..70985de 100644
                  .setVisibility(NotificationCompat.VISIBILITY_PUBLIC);
  
          if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-@@ -149,14 +207,90 @@ public class MediaSessionService extends Service {
+@@ -144,19 +217,100 @@ public class MediaSessionService extends Service {
+         playbackStateActions.put("nexttrack", PlaybackStateCompat.ACTION_SKIP_TO_NEXT);
+         playbackStateActions.put("seekto", PlaybackStateCompat.ACTION_SEEK_TO);
+         playbackStateActions.put("stop", PlaybackStateCompat.ACTION_STOP);
++
++        // 最后一步再开放 update()：上面任何一行都可能在构造中，此时放进来就是 NPE
++        initialized = true;
+     }
+ 
      public void destroy() {
++        // 先关闸，避免解绑后 bridge 线程再进来操作已释放的 builder
++        initialized = false;
          stopForeground(true);
          stopSelf();
 +        // 断开与插件的强引用：Service 实例若被系统保留，
@@ -434,7 +466,7 @@ index cb0417f..70985de 100644
      public void setPlaybackState(int playbackState) {
          if (this.playbackState != playbackState) {
              this.playbackState = playbackState;
-@@ -173,6 +307,60 @@ public class MediaSessionService extends Service {
+@@ -173,6 +327,60 @@ public class MediaSessionService extends Service {
          }
      }
  
@@ -495,7 +527,7 @@ index cb0417f..70985de 100644
      public void setArtist(String artist) {
          if (!this.artist.equals(artist)) {
              this.artist = artist;
-@@ -195,6 +383,46 @@ public class MediaSessionService extends Service {
+@@ -195,6 +403,46 @@ public class MediaSessionService extends Service {
          notificationUpdate = true;
      }
  
@@ -542,14 +574,16 @@ index cb0417f..70985de 100644
      public void setDuration(long duration) {
          if (this.duration != duration) {
              this.duration = duration;
-@@ -219,18 +447,26 @@ public class MediaSessionService extends Service {
+@@ -219,18 +467,28 @@ public class MediaSessionService extends Service {
  
      @SuppressLint("RestrictedApi")
      public void update() {
 +        // Service 刚绑定尚未 connectAndInitialize（或已解绑）时 mediaSession 为 null。
 +        // 桥线程（HandlerThread）与主线程的绑定回调存在竞态，此处必须兜底；
 +        // 挂起的更新标志保留，初始化完成后的首次 update() 会一并生效。
-+        if (mediaSession == null) return;
++        // initialized 为 false 说明构造还没走完（notificationBuilder 还没建），
++        // 此时放行同样会 NPE，所以两个条件都要挡。
++        if (mediaSession == null || !initialized) return;
 +
          if (possibleActionsUpdate) {
            if (notificationBuilder != null) {
@@ -571,7 +605,7 @@ index cb0417f..70985de 100644
                      if (actionName.equals("play") && playbackState != PlaybackStateCompat.STATE_PAUSED) {
                          continue;
                      }
-@@ -238,13 +474,26 @@ public class MediaSessionService extends Service {
+@@ -238,13 +496,30 @@ public class MediaSessionService extends Service {
                          continue;
                      }
  
@@ -579,7 +613,9 @@ index cb0417f..70985de 100644
 +                        final int icon = resolveCustomActionIcon(actionName);
 +                        final String label = resolveCustomActionLabel(actionName);
 +                        customActions.add(new PlaybackStateCompat.CustomAction.Builder(actionName, label, icon).build());
-+                        notificationBuilder.addAction(icon, label, buildCustomActionIntent(actionName));
++                        if (notificationBuilder != null) {
++                            notificationBuilder.addAction(icon, label, buildCustomActionIntent(actionName));
++                        }
 +                        if (compactNotificationActionIndicesIndex < MAX_COMPACT_ACTIONS) {
 +                            activeCompactViewActionIndices[compactNotificationActionIndicesIndex] = notificationActionIndex;
 +                            compactNotificationActionIndicesIndex++;
@@ -593,13 +629,16 @@ index cb0417f..70985de 100644
                      }
  
                      if (notificationActions.containsKey(actionName)) {
-                         notificationBuilder.addAction(notificationActions.get(actionName));
+-                        notificationBuilder.addAction(notificationActions.get(actionName));
 -                        if (possibleCompactViewActions.contains(actionName) && compactNotificationActionIndicesIndex < 3) {
++                        if (notificationBuilder != null) {
++                            notificationBuilder.addAction(notificationActions.get(actionName));
++                        }
 +                        if (possibleCompactViewActions.contains(actionName) && compactNotificationActionIndicesIndex < MAX_COMPACT_ACTIONS) {
                              activeCompactViewActionIndices[compactNotificationActionIndicesIndex] = notificationActionIndex;
                              compactNotificationActionIndicesIndex++;
                          }
-@@ -253,8 +502,10 @@ public class MediaSessionService extends Service {
+@@ -253,8 +528,10 @@ public class MediaSessionService extends Service {
                  }
              }
  
@@ -612,7 +651,7 @@ index cb0417f..70985de 100644
              }
              if (notificationStyle != null) {
                if (compactNotificationActionIndicesIndex > 0) {
-@@ -276,11 +527,31 @@ public class MediaSessionService extends Service {
+@@ -276,11 +553,31 @@ public class MediaSessionService extends Service {
          }
  
          if (mediaMetadataUpdate && mediaMetadataBuilder != null) {
@@ -646,17 +685,21 @@ index cb0417f..70985de 100644
                      .putLong(MediaMetadataCompat.METADATA_KEY_DURATION, duration);
              mediaSession.setMetadata(mediaMetadataBuilder.build());
              mediaMetadataUpdate = false;
-@@ -289,8 +560,8 @@ public class MediaSessionService extends Service {
+@@ -289,9 +586,11 @@ public class MediaSessionService extends Service {
          if (notificationUpdate && notificationBuilder != null) {
              notificationBuilder
                      .setContentTitle(title)
 -                    .setContentText(artist + " - " + album)
 -                    .setLargeIcon(artwork);
+-            notificationManager.notify(NOTIFICATION_ID, notificationBuilder.build());
 +                    .setContentText(buildNotificationSubtitle())
 +                    .setLargeIcon(resolveArtwork());
-             notificationManager.notify(NOTIFICATION_ID, notificationBuilder.build());
++            if (notificationManager != null) {
++                notificationManager.notify(NOTIFICATION_ID, notificationBuilder.build());
++            }
              notificationUpdate = false;
          }
+     }
 diff --git a/node_modules/@jofr/capacitor-media-session/android/src/main/res/drawable/ic_baseline_favorite_24.xml b/node_modules/@jofr/capacitor-media-session/android/src/main/res/drawable/ic_baseline_favorite_24.xml
 new file mode 100644
 index 0000000..7f7d98f

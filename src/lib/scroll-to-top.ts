@@ -13,6 +13,69 @@
 /** 主滚动容器标记属性名 */
 export const PAGE_SCROLL_SELECTOR = "[data-page-scroll]";
 
+/** 取消惯性后锁住滚动的时间（ms），到点或用户按下时恢复 */
+const FLING_LOCK_MS = 1000;
+
+interface FlingLock {
+  restore: () => void;
+  timer: number;
+}
+
+const flingLocks = new WeakMap<HTMLElement, FlingLock>();
+
+function releaseFlingLock(el: HTMLElement): void {
+  const lock = flingLocks.get(el);
+  if (!lock) return;
+  window.clearTimeout(lock.timer);
+  lock.restore();
+  flingLocks.delete(el);
+}
+
+/**
+ * 取消滚动惯性（fling）。
+ *
+ * WebView 的惯性滑动跑在合成线程上：手势已经结束，它仍在推进 `scrollTop`。
+ * 主线程把 `scrollTop` 写成 0 根本不会被理会，下一帧又被惯性推走——这就是
+ * 「点回顶后列表抽搐/抖动」的来源（实测写入 0 之后位移仍按 0→25→51→76… 递增）。
+ *
+ * 唯一可靠的办法是让滚动节点重建：临时把 `overflow-y` 改成 `hidden` 并强制提交
+ * 一次样式，容器被销毁重建，挂在旧节点上的惯性随之消失。锁定只是暂时的，
+ * 到点或用户一碰容器就恢复，避免列表被锁住。
+ */
+function cancelFling(el: HTMLElement): void {
+  const existing = flingLocks.get(el);
+  if (existing) {
+    // 已在锁定中：只延长计时，不要重复记录 overflowY（否则原值会变成 hidden）
+    window.clearTimeout(existing.timer);
+    existing.timer = window.setTimeout(
+      () => releaseFlingLock(el),
+      FLING_LOCK_MS
+    );
+    el.scrollTop = 0;
+    return;
+  }
+
+  const previousOverflowY = el.style.overflowY;
+  el.style.overflowY = "hidden";
+  // 不读一次布局的话，hidden 会和后面的恢复合并掉，节点根本不会重建
+  void el.offsetHeight;
+  el.scrollTop = 0;
+
+  const onPointerDown = (event: Event) => {
+    if (el.contains(event.target as Node)) releaseFlingLock(el);
+  };
+  // 捕获阶段监听：用户一碰列表就立刻解锁
+  window.addEventListener("pointerdown", onPointerDown, true);
+
+  const restore = () => {
+    window.removeEventListener("pointerdown", onPointerDown, true);
+    el.style.overflowY = previousOverflowY;
+  };
+
+  const timer = window.setTimeout(() => releaseFlingLock(el), FLING_LOCK_MS);
+  flingLocks.set(el, { restore, timer });
+}
+
 /**
  * 把当前页面所有主滚动容器滚回顶部。
  *
@@ -44,38 +107,13 @@ export function scrollPageToTop(behavior: ScrollBehavior = "auto"): boolean {
 
   /**
    * 惯性滑动的页面点「回顶」时会失效：手势虽然结束了，滚动还在按惯性继续推进，
-   * 我们这一帧设成 0 之后，下一帧又被 fling 顶回去，看起来就是「点了没反应」。
+   * 我们这一帧设成 0 之后，下一帧又被 fling 顶回去，看起来就是「点了没反应」，
+   * 或者到了顶部还在原地来回抖。
    *
-   * 一次 fling 在 WebView 里能滑 1s 以上，按固定帧数按住 0 根本压不住（8 帧只有
-   * ~130ms，剩下的惯性照样把列表带下去）。这里改成「陪跑」：每帧都按回 0，
-   * 直到连续若干帧都没再被顶走（惯性耗尽）才收手，另有 1.2s 的兜底上限。
-   *
-   * 平滑滚动时不这么做，会和动画抢位置。
+   * 这里直接取消惯性（见 cancelFling）；平滑滚动时不这么做，会和动画抢位置。
    */
-  if (behavior !== "smooth" && targets.length > 0) {
-    let frames = 0;
-    let idleFrames = 0;
-    const MAX_FRAMES = 72; // ≈1.2s，正常 fling 早就结束了
-    const IDLE_FRAMES = 8; // 连续静止 ~130ms 视为惯性已停
-
-    const hold = () => {
-      let moved = false;
-      targets.forEach((el) => {
-        if (el.scrollTop !== 0) {
-          el.scrollTop = 0;
-          moved = true;
-        }
-      });
-
-      idleFrames = moved ? 0 : idleFrames + 1;
-      frames += 1;
-
-      if (idleFrames < IDLE_FRAMES && frames < MAX_FRAMES) {
-        requestAnimationFrame(hold);
-      }
-    };
-
-    requestAnimationFrame(hold);
+  if (behavior !== "smooth") {
+    targets.forEach(cancelFling);
   }
 
   return true;

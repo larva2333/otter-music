@@ -41,11 +41,12 @@ describe("useSwipeCategories 首页分类左右滑动", () => {
   const mountSurface = (
     ids: string[],
     activeId: string,
-    onChange: (id: string) => void
+    onChange: (id: string) => void,
+    onEdge?: (dir: "next" | "prev") => void
   ) => {
     function Harness() {
       const ref = useRef<HTMLDivElement>(null);
-      useSwipeCategories(ref, { ids, activeId, onChange });
+      useSwipeCategories(ref, { ids, activeId, onChange, onEdge });
       return <div ref={ref} data-testid="surface" />;
     }
 
@@ -131,6 +132,39 @@ describe("useSwipeCategories 首页分类左右滑动", () => {
     swipe(surface, [300, 200], [140, 200]);
 
     expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it("最后一个分类左滑触发 onEdge(next)", () => {
+    const onChange = vi.fn();
+    const onEdge = vi.fn();
+    const surface = mountSurface(ids, "欧美", onChange, onEdge);
+
+    swipe(surface, [300, 200], [140, 200]);
+
+    expect(onChange).not.toHaveBeenCalled();
+    expect(onEdge).toHaveBeenCalledWith("next");
+  });
+
+  it("第一个分类右滑触发 onEdge(prev)", () => {
+    const onChange = vi.fn();
+    const onEdge = vi.fn();
+    const surface = mountSurface(ids, "全部", onChange, onEdge);
+
+    swipe(surface, [120, 200], [280, 200]);
+
+    expect(onChange).not.toHaveBeenCalled();
+    expect(onEdge).toHaveBeenCalledWith("prev");
+  });
+
+  it("未到边界的切换不触发 onEdge", () => {
+    const onChange = vi.fn();
+    const onEdge = vi.fn();
+    const surface = mountSurface(ids, "精选", onChange, onEdge);
+
+    swipe(surface, [300, 200], [160, 205]);
+
+    expect(onChange).toHaveBeenCalledWith("华语");
+    expect(onEdge).not.toHaveBeenCalled();
   });
 
   it("内部横向滚动区域上的横滑交给该元素处理", () => {

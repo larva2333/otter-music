@@ -10,6 +10,7 @@
       主题偏好告诉系统，系统据此选日夜资源，连启动画面都跟着对。
       _light / _dark 是给运行时兜底用的（API 30 及以下只能自己刷窗口底色）。
     -->
+    <color name="ic_launcher_background">#0CC26D</color>
     <color name="app_window_background">#FAFCFF</color>
     <color name="app_window_background_light">#FAFCFF</color>
     <color name="app_window_background_dark">#0F151F</color>

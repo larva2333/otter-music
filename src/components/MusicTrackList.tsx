@@ -215,8 +215,9 @@ export function MusicTrackList({
 
   /* ---------------- 长按后滑动多选 ----------------
    *
-   * 手指按住某行 450ms 进入多选后，只要不抬手，上下滑动划过哪些行就选中哪些行；
-   * 划过已经选中的行则取消（每进入一行切换一次，靠 lastDragIdRef 去重复）。
+   * 手指按住某行 450ms 进入多选，这一行就是"笔刷起点"：
+   * 起点被选中 → 不抬手划过的行全部选中；起点被取消 → 划过的行全部取消。
+   * 整段手势是同一种状态，不再逐行 toggle（靠 lastDragIdRef 去掉同一行的重复处理）。
    *
    * 监听挂在 document 上而不是行元素上：长按瞬间列表会切到多选形态（出现勾选框、
    * 排序页还会多包一层拖拽容器），行元素有机会被重建，挂在行上的 touch 序列会断掉。
@@ -224,44 +225,50 @@ export function MusicTrackList({
   const lastDragIdRef = useRef<string | null>(null);
   const stopDragSelectRef = useRef<(() => void) | null>(null);
 
-  const startDragSelect = useCallback((anchorId: string) => {
-    lastDragIdRef.current = anchorId;
-    if (stopDragSelectRef.current) return; // 上一次还没结束（理论上不会），别叠监听
+  const startDragSelect = useCallback(
+    (anchorId: string, paintSelected: boolean) => {
+      lastDragIdRef.current = anchorId;
+      if (stopDragSelectRef.current) return; // 上一次还没结束（理论上不会），别叠监听
 
-    const applyAt = (x: number, y: number) => {
-      const el = document.elementFromPoint(x, y);
-      const row = el instanceof Element ? el.closest("[data-track-id]") : null;
-      const id = row?.getAttribute("data-track-id");
-      if (!id || id === lastDragIdRef.current) return;
-      lastDragIdRef.current = id;
-      setSelectedIds((prev) => {
-        const next = new Set(prev);
-        next.has(id) ? next.delete(id) : next.add(id);
-        return next;
-      });
-    };
+      const applyAt = (x: number, y: number) => {
+        const el = document.elementFromPoint(x, y);
+        const row =
+          el instanceof Element ? el.closest("[data-track-id]") : null;
+        const id = row?.getAttribute("data-track-id");
+        if (!id || id === lastDragIdRef.current) return;
+        lastDragIdRef.current = id;
+        setSelectedIds((prev) => {
+          if (prev.has(id) === paintSelected) return prev;
+          const next = new Set(prev);
+          if (paintSelected) next.add(id);
+          else next.delete(id);
+          return next;
+        });
+      };
 
-    const onMove = (e: TouchEvent) => {
-      const touch = e.touches[0];
-      if (!touch) return;
-      // 滑动多选期间不能让它滚起来，否则行会从指下跑掉
-      if (e.cancelable) e.preventDefault();
-      applyAt(touch.clientX, touch.clientY);
-    };
+      const onMove = (e: TouchEvent) => {
+        const touch = e.touches[0];
+        if (!touch) return;
+        // 滑动多选期间不能让它滚起来，否则行会从指下跑掉
+        if (e.cancelable) e.preventDefault();
+        applyAt(touch.clientX, touch.clientY);
+      };
 
-    const finish = () => {
-      document.removeEventListener("touchmove", onMove);
-      document.removeEventListener("touchend", finish);
-      document.removeEventListener("touchcancel", finish);
-      stopDragSelectRef.current = null;
-      lastDragIdRef.current = null;
-    };
+      const finish = () => {
+        document.removeEventListener("touchmove", onMove);
+        document.removeEventListener("touchend", finish);
+        document.removeEventListener("touchcancel", finish);
+        stopDragSelectRef.current = null;
+        lastDragIdRef.current = null;
+      };
 
-    document.addEventListener("touchmove", onMove, { passive: false });
-    document.addEventListener("touchend", finish);
-    document.addEventListener("touchcancel", finish);
-    stopDragSelectRef.current = finish;
-  }, []);
+      document.addEventListener("touchmove", onMove, { passive: false });
+      document.addEventListener("touchend", finish);
+      document.addEventListener("touchcancel", finish);
+      stopDragSelectRef.current = finish;
+    },
+    []
+  );
 
   // 列表在长按中途被卸载时，document 上的监听必须收回
   useEffect(() => {
@@ -566,15 +573,19 @@ export function MusicTrackList({
                   showCheckbox={isSelectionMode}
                   isSelected={selectedIds.has(track.id)}
                   onSelect={() => toggleSelect(track.id)}
-                  // 长按任意一行直接进多选，并把这行带上；之后不抬手继续上下滑，
-                  // 划过哪行选哪行（已选的划过去就是取消）
+                  // 长按任意一行切换这行的选中状态，并以该状态作为整段滑动的笔刷：
+                  // 起点选中 → 后续划过的行全选中；起点取消 → 后续全取消
                   onLongPress={() => {
+                    const paintSelected = !selectedIds.has(track.id);
                     setIsSelectionMode(true);
                     onSelectionModeChange?.(true);
-                    setSelectedIds((prev) =>
-                      prev.has(track.id) ? prev : new Set(prev).add(track.id)
-                    );
-                    startDragSelect(track.id);
+                    setSelectedIds((prev) => {
+                      const next = new Set(prev);
+                      if (paintSelected) next.add(track.id);
+                      else next.delete(track.id);
+                      return next;
+                    });
+                    startDragSelect(track.id, paintSelected);
                   }}
                   onRemove={
                     !isSelectionMode && onRemove && showItemRemove

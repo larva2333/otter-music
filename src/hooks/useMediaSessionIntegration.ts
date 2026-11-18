@@ -196,6 +196,63 @@ export function useMediaSessionIntegration(
     };
   }, [audioRef, isPlaying, currentTrack?.id]);
 
+  // 播放进度同步：通知栏/锁屏/背屏（小米 17 Pro 等双屏机）卡片的进度条
+  // 依赖 positionState（秒）。系统按 playbackRate 自行推算位置，
+  // 无需高频过桥，timeupdate 节流到 1 秒即可；seek/换曲/倍速变化立即刷新。
+  useEffect(() => {
+    const audio = audioRef.current;
+    if (!audio) return;
+
+    const updatePositionState = () => {
+      const duration = audio.duration;
+      // 无限时长（直播流）或尚未加载完成时不该上报
+      if (!Number.isFinite(duration) || duration <= 0) return;
+      try {
+        void MediaSession.setPositionState({
+          duration,
+          position: Math.min(audio.currentTime, duration),
+          playbackRate: audio.playbackRate || 1,
+        });
+      } catch (e) {
+        logger.error("MediaSession", "MediaSession position error:", e);
+      }
+    };
+
+    let lastSync = 0;
+    const throttledSync = () => {
+      const now = Date.now();
+      if (now - lastSync >= 1000) {
+        lastSync = now;
+        updatePositionState();
+      }
+    };
+
+    updatePositionState();
+
+    const events: Array<keyof HTMLMediaElementEventMap> = [
+      "timeupdate",
+      "seeked",
+      "loadedmetadata",
+      "ratechange",
+      "play",
+    ];
+    events.forEach((event) => {
+      audio.addEventListener(
+        event,
+        event === "timeupdate" ? throttledSync : updatePositionState
+      );
+    });
+
+    return () => {
+      events.forEach((event) => {
+        audio.removeEventListener(
+          event,
+          event === "timeupdate" ? throttledSync : updatePositionState
+        );
+      });
+    };
+  }, [audioRef, currentTrack?.id]);
+
   useEffect(() => {
     const actionHandlers: [
       string,

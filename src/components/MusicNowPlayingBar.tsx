@@ -1,8 +1,10 @@
 "use client";
 
-import { ListVideo, Pause, Play } from "lucide-react";
+import { ListVideo, Pause, Play, SkipBack, SkipForward } from "lucide-react";
 import { useMusicStore } from "@/store/music-store";
 import { useShallow } from "zustand/react/shallow";
+import { useCoverColors } from "@/hooks/useCoverColors";
+import { cn } from "@/lib/utils";
 import { PlayerQueueDrawer } from "./PlayerQueueDrawer";
 import { confirmDialog } from "./ui/confirm-dialog";
 import { MusicCover } from "./MusicCover";
@@ -35,6 +37,8 @@ export function MusicNowPlayingBar({
     coverUrl,
     togglePlay,
     setCurrentIndexAndPlay,
+    skipToNext,
+    skipToPrevious,
     clearQueue,
     reshuffle,
     removeFromQueue,
@@ -52,6 +56,8 @@ export function MusicNowPlayingBar({
       coverUrl: state.coverUrl,
       togglePlay: state.togglePlay,
       setCurrentIndexAndPlay: state.setCurrentIndexAndPlay,
+      skipToNext: state.skipToNext,
+      skipToPrevious: state.skipToPrevious,
       clearQueue: state.clearQueue,
       reshuffle: state.reshuffle,
       removeFromQueue: state.removeFromQueue,
@@ -62,6 +68,18 @@ export function MusicNowPlayingBar({
   );
 
   const currentTrack = queue[currentIndex] || null;
+
+  // 胶囊背景取封面主色：top→bottom 是汽水算法在 Lab 空间压过亮度的主色变体，
+  // 既保留封面色相又足够深，白字在两种主题下都能读。取色失败时回退原卡片色。
+  const { colors } = useCoverColors(coverUrl);
+  const tinted = !!colors;
+  const [r1, g1, b1] = colors?.top ?? [0, 0, 0];
+  const [r2, g2, b2] = colors?.bottom ?? [0, 0, 0];
+  const barStyle = tinted
+    ? {
+        backgroundImage: `linear-gradient(to right, rgb(${r1}, ${g1}, ${b1}) 0%, rgb(${r2}, ${g2}, ${b2}) 100%)`,
+      }
+    : undefined;
 
   const playTrack = useCallback(
     (index: number) => {
@@ -105,7 +123,11 @@ export function MusicNowPlayingBar({
     <div className="px-3">
       <div
         // 胶囊必须是实色：半透明 / 磨砂会让滚动内容透上来，滑动时忽明忽暗
-        className="flex items-center transition-all duration-300 gap-2 px-2 py-1.5 rounded-full border border-transparent dark:border-white/10 bg-card shadow-[0_2px_10px_rgba(15,46,66,0.10)]"
+        className={cn(
+          "flex items-center transition-all duration-300 gap-2 px-2 py-1.5 rounded-full border border-transparent shadow-[0_2px_10px_rgba(15,46,66,0.10)]",
+          tinted ? "border-white/10" : "bg-card dark:border-white/10"
+        )}
+        style={barStyle}
       >
         {/* 不含列表按钮，避免遮罩层关闭时 ghost click 误触发全屏 */}
         <div
@@ -140,16 +162,46 @@ export function MusicNowPlayingBar({
 
           {/* 歌曲信息 - 单行 */}
           <p className="flex-1 min-w-0 truncate flex items-baseline gap-1.5 ml-2">
-            <span className="font-medium text-foreground transition-all duration-300 text-sm">
+            <span
+              className={cn(
+                "font-medium transition-all duration-300 text-sm",
+                tinted ? "text-white" : "text-foreground"
+              )}
+            >
               {currentTrack.name}
             </span>
-            <span className="text-muted-foreground truncate transition-all duration-300 text-xs">
+            <span
+              className={cn(
+                "truncate transition-all duration-300 text-xs",
+                tinted ? "text-white/70" : "text-muted-foreground"
+              )}
+            >
               - {currentTrack.artist?.join(", ")}
             </span>
           </p>
+        </div>
+
+        {/* 播放控制：上一首 / 播放 / 下一首。整组放在点击区外面，
+            点击这些按钮不会冒泡去打开全屏播放 */}
+        <div className="flex shrink-0 items-center gap-2">
+          <button
+            className={cn(
+              "p-1 transition-colors focus:outline-none",
+              tinted
+                ? "text-white/70 hover:text-white"
+                : "text-muted-foreground hover:text-foreground"
+            )}
+            onClick={skipToPrevious}
+            aria-label="上一首"
+          >
+            <SkipBack
+              className="h-3.5 w-3.5 transition-all duration-300"
+              fill="currentColor"
+            />
+          </button>
 
           {/* 圆环播放按钮 - 参照网易云：视觉体量贴近纯图标，不宜过大 */}
-          <div className="relative shrink-0 transition-all duration-300 ml-2 w-4 h-4">
+          <div className="relative shrink-0 transition-all duration-300 w-4 h-4">
             {/* SVG 圆环进度 (利用 viewBox 自动等比缩放) */}
             <svg className="absolute inset-0 w-full h-full" viewBox="0 0 40 40">
               {/* 背景圆环 */}
@@ -160,7 +212,12 @@ export function MusicNowPlayingBar({
                 fill="none"
                 stroke="currentColor"
                 strokeWidth="2.4"
-                className="text-foreground/20 dark:text-foreground/28 transition-all duration-300"
+                className={cn(
+                  "transition-all duration-300",
+                  tinted
+                    ? "text-white/25"
+                    : "text-foreground/20 dark:text-foreground/28"
+                )}
               />
               {/* 进度圆环 - 从上方开始 */}
               <circle
@@ -171,7 +228,10 @@ export function MusicNowPlayingBar({
                 stroke="currentColor"
                 strokeWidth="3.6"
                 strokeLinecap="round"
-                className="text-primary transition-[stroke-dashoffset] duration-300"
+                className={cn(
+                  "transition-[stroke-dashoffset] duration-300",
+                  tinted ? "text-white" : "text-primary"
+                )}
                 strokeDasharray={circumference}
                 strokeDashoffset={strokeDashoffset}
                 transform="rotate(-90 20 20)"
@@ -180,7 +240,12 @@ export function MusicNowPlayingBar({
 
             {/* 播放按钮 */}
             <button
-              className="absolute inset-0 flex items-center justify-center text-primary hover:text-primary/80 transition-colors focus:outline-none"
+              className={cn(
+                "absolute inset-0 flex items-center justify-center transition-colors focus:outline-none",
+                tinted
+                  ? "text-white hover:text-white/80"
+                  : "text-primary hover:text-primary/80"
+              )}
               onClick={(e) => {
                 e.stopPropagation();
                 togglePlay();
@@ -190,13 +255,27 @@ export function MusicNowPlayingBar({
               {isPlaying ? (
                 <Pause className="fill-current transition-all duration-300 h-2.5 w-2.5" />
               ) : (
-                <Play className="fill-current ml-0.5 transition-all duration-300 h-2.5 w-2.5" />
+                <Play className="fill-current transition-all duration-300 h-2.5 w-2.5" />
               )}
             </button>
           </div>
-        </div>
 
-        {/* 与可点击区域为兄弟节点，ghost click 不会冒泡 */}
+          <button
+            className={cn(
+              "p-1 transition-colors focus:outline-none",
+              tinted
+                ? "text-white/70 hover:text-white"
+                : "text-muted-foreground hover:text-foreground"
+            )}
+            onClick={skipToNext}
+            aria-label="下一首"
+          >
+            <SkipForward
+              className="h-3.5 w-3.5 transition-all duration-300"
+              fill="currentColor"
+            />
+          </button>
+        </div>
         <PlayerQueueDrawer
           queue={queue}
           currentIndex={currentIndex}
@@ -209,7 +288,12 @@ export function MusicNowPlayingBar({
           onPlayTrack={playTrackAsNext}
           trigger={
             <button
-              className="text-muted-foreground hover:text-foreground transition-all shrink-0 focus:outline-none p-1.5"
+              className={cn(
+                "transition-all shrink-0 focus:outline-none p-1.5",
+                tinted
+                  ? "text-white/70 hover:text-white"
+                  : "text-muted-foreground hover:text-foreground"
+              )}
               aria-label="播放列表"
             >
               <ListVideo className="transition-all duration-300 h-4 w-4" />

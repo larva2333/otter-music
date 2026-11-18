@@ -1,11 +1,11 @@
 import { useState, useEffect, useRef } from "react";
 import {
-  Drawer,
-  DrawerContent,
-  DrawerHeader,
-  DrawerTitle,
-  DrawerFooter,
-} from "@/components/ui/drawer";
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
+} from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
@@ -349,17 +349,17 @@ export function PlaylistImportDrawer({
   };
 
   return (
-    <Drawer open={open} onOpenChange={(isOpen) => !isOpen && handleClose()}>
-      <DrawerContent className="max-h-[92vh] outline-none overflow-hidden flex flex-col">
-        <DrawerHeader className="pb-2">
-          <DrawerTitle className="text-center text-lg font-bold">
+    <Dialog open={open} onOpenChange={(isOpen) => !isOpen && handleClose()}>
+      <DialogContent className="max-h-[85vh] max-w-md flex flex-col overflow-hidden">
+        <DialogHeader className="pb-1">
+          <DialogTitle className="text-center text-lg font-bold">
             导入歌单
-          </DrawerTitle>
-        </DrawerHeader>
+          </DialogTitle>
+        </DialogHeader>
 
         <Tabs
           defaultValue="link"
-          className="px-5 flex-1 min-h-0 flex flex-col overflow-hidden"
+          className="flex-1 min-h-0 flex flex-col overflow-hidden"
           onValueChange={(v) => setActiveTab(v as "link" | "file" | "text")}
         >
           <TabsList className="w-full">
@@ -528,7 +528,7 @@ export function PlaylistImportDrawer({
           </TabsContent>
         </Tabs>
 
-        <DrawerFooter className="px-5 pt-2 pb-8">
+        <DialogFooter className="px-0 pt-1 pb-0">
           {activeTab === "link" && (
             <div className="mt-2 w-full space-y-2">
               {phase === "error" && (
@@ -626,8 +626,8 @@ export function PlaylistImportDrawer({
               )}
             </div>
           )}
-        </DrawerFooter>
-      </DrawerContent>
-    </Drawer>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }

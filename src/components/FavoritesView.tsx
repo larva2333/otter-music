@@ -3,7 +3,7 @@ import { Play, Search, Heart } from "lucide-react";
 import { filterTracks } from "@/lib/utils/filter-tracks";
 import { MusicTrackList } from "./MusicTrackList";
 import { Input } from "@/components/ui/input";
-import { useState, useMemo } from "react";
+import { useState, useMemo, useRef } from "react";
 import { cn } from "@/lib/utils";
 import { PlaylistOperations } from "./PlaylistOperations";
 import { MusicTrack } from "@/types/music";
@@ -16,6 +16,9 @@ import { sortTracks, TrackSortKey } from "@/lib/utils/sort-tracks";
 import { toastUtils } from "@/lib/utils/toast";
 import { exportPlaylist } from "@/lib/utils/playlist-backup";
 import { AddByUrlDrawer } from "./AddByUrlDrawer";
+import { useSwipeCategories } from "@/hooks/use-swipe-categories";
+import { useRootTabSwipe } from "@/hooks/use-root-tab-swipe";
+import { useTabReclick } from "@/hooks/use-tab-reclick";
 
 interface FavoritesViewProps {
   tracks: MusicTrack[];
@@ -37,6 +40,21 @@ export function FavoritesView({
   const [dedupeSelectedIds, setDedupeSelectedIds] = useState<
     Set<string> | undefined
   >();
+  const rootRef = useRef<HTMLDivElement>(null);
+
+  // 喜欢页没有子类别：任意横滑都走链边界，由 useRootTabSwipe 决定落点
+  // （右滑 → 发现最后一个分类，左滑 → 歌单第一个 type）
+  useSwipeCategories(rootRef, {
+    ids: ["favorites"],
+    activeId: "favorites",
+    onChange: () => {},
+    onEdge: useRootTabSwipe("favorites"),
+  });
+
+  // 再次点击底部「喜欢」tab：回到顶部
+  useTabReclick("favorites", () =>
+    rootRef.current?.scrollTo({ top: 0, behavior: "smooth" })
+  );
 
   const filteredTracks = useMemo(
     () => filterTracks(tracks, searchQuery),
@@ -87,7 +105,7 @@ export function FavoritesView({
   };
 
   return (
-    <div className="flex flex-col h-full">
+    <div ref={rootRef} className="flex flex-col h-full">
       {/* Header */}
       <div
         className={cn("p-4 border-b flex items-end gap-4 bg-muted/10 relative")}

@@ -29,6 +29,10 @@ import { useMusicStore } from "@/store/music-store";
 import { useScrollSave } from "@/hooks/use-scroll-save";
 import { usePagination } from "@/hooks/use-pagination";
 import { useSwipeCategories } from "@/hooks/use-swipe-categories";
+import { useRootTabSwipe } from "@/hooks/use-root-tab-swipe";
+import { usePullToRefresh } from "@/hooks/use-pull-to-refresh";
+import { useTabReclick } from "@/hooks/use-tab-reclick";
+import { PullRefreshIndicator } from "@/components/PullRefreshIndicator";
 import { useMarketSession } from "@/store/session/market-session";
 import { PlaylistGrid, PlaylistGridSkeleton } from "./PlaylistGrid";
 import { PodcastSection } from "./PodcastSection";
@@ -90,6 +94,11 @@ export function PlaylistMarket() {
 
   const searchKeywordRef = useRef<string>("");
 
+  const [indicator, setIndicator] = useState<{
+    left: number;
+    width: number;
+  } | null>(null);
+
   const snapshotKey = useMemo(
     () => getSnapshotKey(activeCategory, featuredTab),
     [activeCategory, featuredTab]
@@ -105,6 +114,9 @@ export function PlaylistMarket() {
   // 此时禁用分页观察器，避免拿新分类的 adapter 去请求旧分类的 offset。
   const listKeyRef = useRef(snapshotKey);
   const isKeySwitching = listKeyRef.current !== snapshotKey;
+
+  // 下拉刷新时让 browseAdapter 的首次请求绕过磁盘缓存；仅影响当前这一次 fetch(0)
+  const forceRefreshRef = useRef(false);
 
   // 访问过的分类网格保留在 DOM 里（最多 4 个），切换时只切显示状态。
   // 这样切回去时 <img> 节点不会重新挂载，也就不会重新解码、不会再闪。
@@ -135,13 +147,15 @@ export function PlaylistMarket() {
         const isToplist = category === "toplist";
         const cacheKey = `market-playlist:v2:${category || "all"}:${isToplist ? 0 : offset}`;
 
+        const force = forceRefreshRef.current && offset === 0;
         const res = await cachedFetch<MarketPlaylist[]>(
           cacheKey,
           () =>
             isToplist
               ? getToplist("")
               : getPlaylists(category || "全部", "hot", PAGE_SIZE, offset, ""),
-          1 * 24 * 60 * 60 * 1000
+          1 * 24 * 60 * 60 * 1000,
+          force
         );
 
         if (!res) return null;
@@ -302,11 +316,59 @@ export function PlaylistMarket() {
   }, [activeCategory, playlistCategoryOrder]);
 
   // 内容区左右滑动切换分类（顺序与顶部常驻栏一致）
+  // 滑到最后一个分类再左滑 → 落到「喜欢」tab；第一个分类右滑不动（链头）
+  const onRootEdge = useRootTabSwipe("search");
   useSwipeCategories(scrollRef, {
     ids: displayFilters.map((f) => f.id),
     activeId: activeCategory,
     onChange: setActiveCategory,
+    onEdge: onRootEdge,
   });
+
+  const isSearchActive = activeCategory === "全部" && !!searchQuery;
+  const ActiveSection = MARKET_SECTIONS[activeCategory];
+
+  // 再次点击底部「发现」tab：在当前页内循环切换分类（不跳去下一个菜单）
+  useTabReclick("search", () => {
+    clearSearch();
+    const ids = displayFilters.map((f) => f.id);
+    const index = ids.indexOf(activeCategory);
+    const nextId = ids[(index + 1) % ids.length];
+    if (nextId && nextId !== activeCategory) setActiveCategory(nextId);
+    scrollRef.current?.scrollTo({ top: 0, behavior: "smooth" });
+  });
+
+  // 下拉刷新：回到第一页重新加载，并绕过磁盘缓存拿最新数据
+  const { status: pullStatus, indicatorRef } = usePullToRefresh(scrollRef, {
+    onRefresh: async () => {
+      forceRefreshRef.current = true;
+      try {
+        if (isSearchActive) await search.reset();
+        else if (isBrowseEnabled) await browse.reset();
+      } finally {
+        forceRefreshRef.current = false;
+      }
+    },
+    enabled:
+      (isBrowseEnabled || isSearchActive) && !isKeySwitching && !ActiveSection,
+  });
+
+  // 选中滑块位置：跟随当前分类平移（滑块放在滚动容器里，随横向滚动自然移动；
+  // rAF 里测量，避免同步 setState 级联渲染）
+  useEffect(() => {
+    const raf = requestAnimationFrame(() => {
+      const bar = scrollContainerRef.current;
+      const btn = bar?.querySelector<HTMLElement>(
+        `[data-category-id="${activeCategory}"]`
+      );
+      if (!bar || !btn) {
+        setIndicator(null);
+        return;
+      }
+      setIndicator({ left: btn.offsetLeft, width: btn.offsetWidth });
+    });
+    return () => cancelAnimationFrame(raf);
+  }, [activeCategory, displayFilters]);
 
   // Scroll active category into view
   useEffect(() => {
@@ -322,9 +384,7 @@ export function PlaylistMarket() {
     }
   }, [activeCategory]);
 
-  const isSearchActive = activeCategory === "全部" && !!searchQuery;
   const active = isSearchActive ? search : browse;
-  const ActiveSection = MARKET_SECTIONS[activeCategory];
 
   // 每个保留在 DOM 里的网格对应哪份数据：
   // 当前分类用分页状态（切 key 的那一帧还没 restore，就先看快照，保证 key 不变、DOM 不重建），
@@ -368,8 +428,19 @@ export function PlaylistMarket() {
           <div className="flex-1 overflow-hidden relative">
             <div
               ref={scrollContainerRef}
-              className="flex items-center gap-1.5 overflow-x-auto no-scrollbar mask-[linear-gradient(to_right,black_calc(100%-32px),transparent_100%)]"
+              className="relative flex items-center gap-1.5 overflow-x-auto no-scrollbar mask-[linear-gradient(to_right,black_calc(100%-32px),transparent_100%)]"
             >
+              {indicator && (
+                <div
+                  aria-hidden
+                  className="absolute left-0 top-0 h-8 rounded-full bg-primary pointer-events-none"
+                  style={{
+                    transform: `translateX(${indicator.left}px)`,
+                    width: indicator.width,
+                    transition: "transform 250ms ease, width 250ms ease",
+                  }}
+                />
+              )}
               {displayFilters.map((f) => (
                 <Button
                   key={f.id}
@@ -378,9 +449,9 @@ export function PlaylistMarket() {
                   size="sm"
                   onClick={() => setActiveCategory(f.id)}
                   className={cn(
-                    "h-8 px-3 rounded-full transition-all text-sm font-medium whitespace-nowrap shrink-0",
+                    "relative h-8 px-3 rounded-full transition-colors text-sm font-medium whitespace-nowrap shrink-0",
                     activeCategory === f.id
-                      ? "bg-primary text-primary-foreground hover:bg-primary/90 shadow-sm"
+                      ? "text-primary-foreground hover:bg-transparent hover:text-primary-foreground"
                       : "text-muted-foreground hover:text-foreground bg-secondary/30"
                   )}
                 >
@@ -411,6 +482,7 @@ export function PlaylistMarket() {
         data-page-scroll=""
         className="flex-1 overflow-y-auto custom-scrollbar"
       >
+        <PullRefreshIndicator indicatorRef={indicatorRef} status={pullStatus} />
         {/* 播客 / Billboard / Alist 这类独立区块与歌单网格同时挂载：
             以前是二选一，去一趟播客再回来，所有已加载的分类网格都会被卸载，
             封面 <img> 全部重建 → 又「重新加载」一遍。现在只切显示状态。 */}

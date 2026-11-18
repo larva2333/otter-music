@@ -75,6 +75,8 @@ interface LocalMusicPageProps {
   onPlay: (track: MusicTrack, list: MusicTrack[], contextId?: string) => void;
   currentTrackId?: string;
   isPlaying: boolean;
+  /** embedded：嵌在「歌单」页的 type 里，不带 PageLayout 头部 */
+  embedded?: boolean;
 }
 
 export function LocalMusicPage({
@@ -82,6 +84,7 @@ export function LocalMusicPage({
   onPlay,
   currentTrackId,
   isPlaying,
+  embedded,
 }: LocalMusicPageProps) {
   /* --- 状态 --- */
   const [isLoading, setIsLoading] = useState(false);
@@ -384,24 +387,22 @@ export function LocalMusicPage({
   /* --- 渲染部分 --- */
   const isEmpty = files.length === 0;
 
-  return (
-    <PageLayout
-      title="本地音乐"
-      onBack={onBack}
-      action={
-        <button
-          onClick={() => setScanDrawerOpen(true)}
-          disabled={isLoading}
-          className={cn(
-            "flex items-center gap-2 px-3 py-1.5 text-xs rounded-lg",
-            isLoading && "opacity-50 cursor-not-allowed"
-          )}
-        >
-          <HardDrive className="h-3.5 w-3.5" />
-          全盘扫描
-        </button>
-      }
+  const fullScanButton = (
+    <button
+      onClick={() => setScanDrawerOpen(true)}
+      disabled={isLoading}
+      className={cn(
+        "flex items-center gap-1.5 px-3 h-8 rounded-full text-xs text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors",
+        isLoading && "opacity-50 cursor-not-allowed"
+      )}
     >
+      <HardDrive className="h-3.5 w-3.5 shrink-0" />
+      全盘扫描
+    </button>
+  );
+
+  const body = (
+    <>
       {/* 状态视图与内容视图 */}
       {isLoading && isEmpty ? (
         <div className="flex-1 flex flex-col items-center justify-center gap-4">
@@ -435,12 +436,24 @@ export function LocalMusicPage({
           removeLabel="删除"
           confirmRemove={false}
           action={
-            <button
-              onClick={() => navigate("/playlist/__offline__")}
-              className="flex items-center gap-1.5 px-3 h-8 rounded-full text-xs text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors"
-            >
-              <WifiOff size={14} className="shrink-0" />
-            </button>
+            embedded ? (
+              <>
+                {fullScanButton}
+                <button
+                  onClick={() => navigate("/playlist/__offline__")}
+                  className="flex items-center gap-1.5 px-3 h-8 rounded-full text-xs text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors"
+                >
+                  <WifiOff size={14} className="shrink-0" />
+                </button>
+              </>
+            ) : (
+              <button
+                onClick={() => navigate("/playlist/__offline__")}
+                className="flex items-center gap-1.5 px-3 h-8 rounded-full text-xs text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors"
+              >
+                <WifiOff size={14} className="shrink-0" />
+              </button>
+            )
           }
         />
       )}
@@ -606,6 +619,14 @@ export function LocalMusicPage({
           </p>
         </div>
       )}
+    </>
+  );
+
+  if (embedded) return body;
+
+  return (
+    <PageLayout title="本地音乐" onBack={onBack} action={fullScanButton}>
+      {body}
     </PageLayout>
   );
 }

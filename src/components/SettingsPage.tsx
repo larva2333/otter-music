@@ -23,7 +23,9 @@ import {
   Shield,
   Bell,
   Music4,
+  ChevronDown,
 } from "lucide-react";
+import { cn } from "@/lib/utils";
 import { Switch } from "./ui/switch";
 import { useAppStore } from "@/store/app-store";
 import { DownloadSetting } from "./settings/DownloadSetting";
@@ -42,8 +44,11 @@ import { LyricStyleSetting } from "./settings/LyricStyleSetting";
 import { CarLyricSetting } from "./settings/CarLyricSetting";
 import { DesktopLyricSetting } from "./settings/DesktopLyricSetting";
 import { FontSizeSetting } from "./settings/FontSizeSetting";
-import { useState } from "react";
+import { useState, useRef } from "react";
 import { IS_NATIVE } from "@/lib/api/config";
+import { useSwipeCategories } from "@/hooks/use-swipe-categories";
+import { useRootTabSwipe } from "@/hooks/use-root-tab-swipe";
+import { useTabReclick } from "@/hooks/use-tab-reclick";
 
 interface SettingsPageProps {
   onBack?: () => void;
@@ -52,18 +57,34 @@ interface SettingsPageProps {
 function SettingsSection({
   title,
   children,
+  defaultOpen = true,
 }: {
   title: string;
   children: React.ReactNode;
+  defaultOpen?: boolean;
 }) {
+  const [open, setOpen] = useState(defaultOpen);
   return (
     <div className="mb-5">
-      <h3 className="text-xs font-medium text-muted-foreground mb-1.5 px-1">
-        {title}
-      </h3>
-      <div className="rounded-xl bg-card/50 border border-border/50 divide-y divide-border/50 overflow-hidden">
-        {children}
-      </div>
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+        className="flex items-center gap-1 text-[13px] font-bold text-muted-foreground mb-1.5 px-1 py-0.5"
+      >
+        <span>{title}</span>
+        <ChevronDown
+          className={cn(
+            "h-3.5 w-3.5 transition-transform duration-200",
+            open ? "rotate-0" : "-rotate-90"
+          )}
+        />
+      </button>
+      {open && (
+        <div className="rounded-xl bg-card/50 border border-border/50 divide-y divide-border/50 overflow-hidden">
+          {children}
+        </div>
+      )}
     </div>
   );
 }
@@ -71,6 +92,20 @@ function SettingsSection({
 export function SettingsPage({ onBack }: SettingsPageProps) {
   const navigate = useNavigate();
   const [dataBackupOpen, setDataBackupOpen] = useState(false);
+  const scrollRef = useRef<HTMLDivElement>(null);
+
+  // 设置是链尾：右滑回歌单最后一个 type，左滑无下一页
+  useSwipeCategories(scrollRef, {
+    ids: ["settings"],
+    activeId: "settings",
+    onChange: () => {},
+    onEdge: useRootTabSwipe("settings"),
+  });
+
+  // 再次点击底部「设置」tab：回到顶部
+  useTabReclick("settings", () =>
+    scrollRef.current?.scrollTo({ top: 0, behavior: "smooth" })
+  );
   const {
     enableUpdateNotify,
     setEnableUpdateNotify,
@@ -102,8 +137,9 @@ export function SettingsPage({ onBack }: SettingsPageProps) {
   );
 
   return (
-    <PageLayout title="系统设置" onBack={onBack}>
+    <PageLayout title="系统设置" onBack={onBack} showBack={false}>
       <div
+        ref={scrollRef}
         data-page-scroll=""
         className="flex-1 p-4 pb-bottom-stack overflow-y-auto"
       >

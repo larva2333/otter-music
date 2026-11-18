@@ -24,6 +24,11 @@ interface UseSwipeCategoriesOptions {
   enabled?: boolean;
   /** 自定义触发阈值（px） */
   threshold?: number;
+  /**
+   * 滑到边界外时触发（第一个再右滑 → prev / 最后一个再左滑 → next）。
+   * 用于把内部分类滑动「落到」底部导航 tab 级的切换。
+   */
+  onEdge?: (dir: "next" | "prev") => void;
 }
 
 /**
@@ -154,7 +159,10 @@ export function useSwipeCategories(
 
       // 左滑（dx < 0）→ 下一个分类；右滑 → 上一个
       const nextIndex = dx < 0 ? index + 1 : index - 1;
-      if (nextIndex < 0 || nextIndex >= ids.length) return;
+      if (nextIndex < 0 || nextIndex >= ids.length) {
+        latest.current.onEdge?.(dx < 0 ? "next" : "prev");
+        return;
+      }
       onChange(ids[nextIndex]);
     };
 

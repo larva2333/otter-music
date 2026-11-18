@@ -10,6 +10,7 @@ import { MusicTabBar } from "@/components/MusicTabBar";
 import { GlobalMusicPlayer } from "@/components/GlobalMusicPlayer";
 import { ConfirmDialogHost } from "@/components/ui/confirm-dialog";
 import { useMusicStore } from "@/store/music-store";
+import { cn } from "@/lib/utils";
 import { useShallow } from "zustand/react/shallow";
 import { useExitLayer } from "@/hooks/useExitLayer";
 import { useTapTopToScrollTop } from "@/hooks/useTapTopToScrollTop";
@@ -201,6 +202,16 @@ export function RootLayout() {
 
   const isTab = isRootTabPath(location.pathname);
 
+  // 根 tab 间切换的进入动画：方向由导航方随 location.state 带来
+  //（底部 tab 点击 / 跨 tab 滑动都会带 pageDir），二级页与同路由内的类别切换不带，不播放。
+  const pageDir = (location.state as { pageDir?: string } | null)?.pageDir;
+  const pageAnimClass =
+    pageDir === "forward"
+      ? "page-enter-forward"
+      : pageDir === "back"
+        ? "page-enter-back"
+        : "";
+
   return (
     <>
       <MusicLayout
@@ -215,7 +226,9 @@ export function RootLayout() {
         }
         tabBar={<MusicTabBar />}
       >
-        <Outlet />
+        <div key={location.pathname} className={cn("h-full", pageAnimClass)}>
+          <Outlet />
+        </div>
       </MusicLayout>
 
       <GlobalMusicPlayer />

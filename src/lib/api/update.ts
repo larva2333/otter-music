@@ -23,11 +23,27 @@ const updateUrl = () => `${getApiUrl()}/update`;
 export interface UpdateInfo {
   latestVersion: string;
   changelog: string;
+  /** 首选国内加速地址（保留字段，等价于 mirrorUrls[0]） */
   downloadUrl: string;
+  /** 国内加速镜像列表，按顺序尝试，首个成功即用 */
+  mirrorUrls: string[];
   directUrl: string;
   publishDate: string;
   size: number;
 }
+
+/**
+ * 国内加速镜像。均支持把 GitHub 原始下载链接直接拼在域名后。
+ * 主站 gh-proxy.org 无缓存、不限速（2025-11 起业务域名）；其余为备用，
+ * 任一节点失效时按列表顺序轮换。自建后端放最后兜底。
+ * 实测参考：ghproxy.net / gh-proxy.com / gh.ddlc.top 约 1~2s 首包。
+ */
+const GH_PROXY_MIRRORS = [
+  "https://gh-proxy.org/",
+  "https://ghproxy.net/",
+  "https://gh.ddlc.top/",
+  "https://ghfast.top/",
+];
 
 interface GitHubRelease {
   tag_name: string;
@@ -40,11 +56,21 @@ interface GitHubRelease {
   }[];
 }
 
-/** 经后端转发的下载地址（宿主只校验域名，可代理任意 GitHub release 资产） */
-function buildProxyUrl(asset: GitHubRelease["assets"][number]) {
+/** 经后端转发的下载地址（最后的兜底线路） */
+function buildBackendProxyUrl(asset: GitHubRelease["assets"][number]) {
   return `${updateUrl()}/download?url=${encodeURIComponent(
     asset.browser_download_url
   )}&filename=${encodeURIComponent(asset.name)}`;
+}
+
+/** 国内加速镜像列表：公共镜像优先，自建后端兜底 */
+function buildMirrorUrls(asset: GitHubRelease["assets"][number]): string[] {
+  return [
+    ...GH_PROXY_MIRRORS.map(
+      (prefix) => `${prefix}${asset.browser_download_url}`
+    ),
+    buildBackendProxyUrl(asset),
+  ];
 }
 
 function toUpdateInfo(release: GitHubRelease): UpdateInfo {
@@ -52,10 +78,12 @@ function toUpdateInfo(release: GitHubRelease): UpdateInfo {
 
   if (!apk) throw new ApiError("最新 Release 中没有 APK 资产", 404);
 
+  const mirrorUrls = buildMirrorUrls(apk);
   return {
     latestVersion: release.tag_name,
     changelog: release.body ?? "",
-    downloadUrl: buildProxyUrl(apk),
+    downloadUrl: mirrorUrls[0],
+    mirrorUrls,
     directUrl: apk.browser_download_url,
     publishDate: release.published_at,
     size: apk.size,

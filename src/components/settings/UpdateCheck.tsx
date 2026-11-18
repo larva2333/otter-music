@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import { SettingItem } from "./SettingItem";
 import {
   Download,
@@ -71,46 +71,9 @@ export function UpdateDialog({ open, onOpenChange }: UpdateDialogProps) {
     latestVersionInfo,
     hasUpdate,
     isChecking,
+    lastCheckTime,
     checkUpdate,
   } = useAppStore();
-
-  /**
-   * 本次打开弹窗后是否已经真的检查完一轮。
-   *
-   * 之前一打开就显示上一次的结果（"已是最新版本"），可用户还没点检查，
-   * 看到的就是个陈旧结论。现在打开即发起检查：先显示"检查更新"，
-   * 检查中显示"检查中…"，拿到结果再显示"新版本 x"/"已是最新版本"。
-   */
-  const [checkedThisOpen, setCheckedThisOpen] = useState(false);
-  const [wasOpen, setWasOpen] = useState(open);
-  const wasCheckingRef = useRef(false);
-
-  // 打开的那一帧就复位（渲染期改状态，不会先闪一帧旧结论）
-  if (open !== wasOpen) {
-    setWasOpen(open);
-    if (open) setCheckedThisOpen(false);
-  }
-
-  useEffect(() => {
-    if (!open) {
-      wasCheckingRef.current = false;
-      return;
-    }
-    void checkUpdate(false);
-  }, [open, checkUpdate]);
-
-  useEffect(() => {
-    if (!open) return;
-    if (isChecking) {
-      wasCheckingRef.current = true;
-      return;
-    }
-    // 只有真的看到「检查中 → 结束」才认这次结果
-    if (wasCheckingRef.current) {
-      wasCheckingRef.current = false;
-      setCheckedThisOpen(true);
-    }
-  }, [isChecking, open]);
 
   // 正在下载的源与进度；同时只允许一个下载任务
   const [downloading, setDownloading] = useState<{
@@ -125,28 +88,60 @@ export function UpdateDialog({ open, onOpenChange }: UpdateDialogProps) {
     // 与「是否有新版本」是两件事
     if (!latestVersionInfo || !hasUpdate || downloading) return;
 
-    const url =
+    // 国内加速按顺序轮换镜像（兼容老后端未返回 mirrorUrls 的情况）；
+    // GitHub 直连只有一个地址。
+    const urls =
       source === "proxy"
-        ? latestVersionInfo.downloadUrl
-        : latestVersionInfo.directUrl;
+        ? latestVersionInfo.mirrorUrls?.length
+          ? latestVersionInfo.mirrorUrls
+          : [latestVersionInfo.downloadUrl]
+        : [latestVersionInfo.directUrl];
 
     setFailedSource(null);
     setDownloading({ source, percent: 0 });
 
-    try {
-      await downloadAndInstallApk({
-        url,
-        expectedSize: latestVersionInfo.size,
-        onProgress: (percent) => setDownloading({ source, percent }),
-      });
-    } catch (err) {
-      logger.error("update", "应用内下载更新包失败", err as Error, { source });
-      setFailedSource(source);
-      const message = err instanceof Error ? err.message : String(err);
-      toast.error(`下载失败：${message}`);
-    } finally {
-      setDownloading(null);
+    let lastError: unknown;
+    for (const url of urls) {
+      try {
+        await downloadAndInstallApk({
+          url,
+          expectedSize: latestVersionInfo.size,
+          onProgress: (percent) => setDownloading({ source, percent }),
+        });
+        setDownloading(null);
+        return; // 成功即结束（内部已拉起安装器）
+      } catch (err) {
+        lastError = err;
+        // 权限未授予是确定性的，换镜像也没用，直接停
+        if (
+          err &&
+          typeof err === "object" &&
+          "code" in err &&
+          err.code === "NEED_INSTALL_PERMISSION"
+        ) {
+          break;
+        }
+        logger.warn("update", "镜像下载失败，尝试下一个", err as Error, {
+          source,
+          host: (() => {
+            try {
+              return new URL(url).host;
+            } catch {
+              return url;
+            }
+          })(),
+        });
+      }
     }
+
+    logger.error("update", "应用内下载更新包失败", lastError as Error, {
+      source,
+    });
+    setFailedSource(source);
+    const message =
+      lastError instanceof Error ? lastError.message : String(lastError);
+    toast.error(`下载失败：${message}`);
+    setDownloading(null);
   };
 
   const renderButtonContent = (
@@ -201,7 +196,7 @@ export function UpdateDialog({ open, onOpenChange }: UpdateDialogProps) {
           <div className="border rounded-lg p-4 space-y-3">
             <div className="flex items-center justify-between">
               <span className="text-sm font-medium">版本更新</span>
-              {/* Badge 支持点击检查更新，带 Icon 和 Loading 动画 */}
+              {/* 打开弹窗不再自动检查，按钮文案固定「检查更新」，只有检查中才临时变文案 */}
               <Badge
                 variant={hasUpdate ? "default" : "secondary"}
                 className={`gap-1 cursor-pointer select-none ${isChecking ? "opacity-70" : ""}`}
@@ -210,19 +205,30 @@ export function UpdateDialog({ open, onOpenChange }: UpdateDialogProps) {
                 <RefreshCw
                   className={`h-3 w-3 ${isChecking ? "animate-spin" : ""}`}
                 />
-                {isChecking
-                  ? "检查中..."
-                  : !checkedThisOpen
-                    ? "检查更新"
-                    : hasUpdate
-                      ? `新版本 ${latestVersionInfo?.latestVersion}`
-                      : "已是最新版本"}
+                {isChecking ? "检查中..." : "检查更新"}
               </Badge>
             </div>
+
+            {/* 最近检查时间：手动检查与启动时的自动检查都会写入 lastCheckTime */}
+            {lastCheckTime > 0 && (
+              <div className="flex items-center justify-between text-xs text-muted-foreground">
+                <span>最近检查</span>
+                <span>
+                  {format(new Date(lastCheckTime), "yyyy-MM-dd HH:mm")}
+                </span>
+              </div>
+            )}
 
             {/* 不管是否为最新版本，只要有数据就显示更新日志 */}
             {latestVersionInfo && (
               <div className="text-xs text-muted-foreground space-y-1">
+                {/* 徽标不再显示版本号，这里补一行，避免丢失「最新版本是哪个」 */}
+                <div className="flex justify-between">
+                  <span>最新版本</span>
+                  <span className="font-mono">
+                    {latestVersionInfo.latestVersion}
+                  </span>
+                </div>
                 <div className="flex justify-between">
                   <span>
                     {format(

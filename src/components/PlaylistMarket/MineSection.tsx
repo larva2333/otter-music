@@ -1,4 +1,11 @@
-import { useEffect, useState, useMemo, useCallback } from "react";
+import {
+  useEffect,
+  useState,
+  useMemo,
+  useCallback,
+  useRef,
+  type RefObject,
+} from "react";
 import { Button } from "@/components/ui/button";
 import {
   getRecommendPlaylists,
@@ -15,6 +22,8 @@ import { useMarketSession } from "@/store/session/market-session";
 import { PlaylistGrid } from "./PlaylistGrid";
 import { useNeteaseStore } from "@/store/netease-store";
 import { logger } from "@/lib/logger";
+import { usePullToRefresh } from "@/hooks/use-pull-to-refresh";
+import { PullRefreshIndicator } from "@/components/PullRefreshIndicator";
 
 const SUB_TAB_HEIGHT = "h-8";
 
@@ -215,8 +224,17 @@ const AlbumGrid = ({
   </div>
 );
 
-export function MineSection({ embedded = false }: { embedded?: boolean } = {}) {
+export function MineSection({
+  embedded = false,
+  scrollRef: scrollRefProp,
+}: {
+  embedded?: boolean;
+  /** 外层滚动容器；传入时在其上启用下拉刷新 */
+  scrollRef?: RefObject<HTMLElement | null>;
+} = {}) {
   const navigate = useNavigate();
+  const localScrollRef = useRef<HTMLElement>(null);
+  const activeScrollRef = scrollRefProp ?? localScrollRef;
   const {
     mineTab,
     setMineTab,
@@ -229,6 +247,15 @@ export function MineSection({ embedded = false }: { embedded?: boolean } = {}) {
     loadMoreError,
     handleRetry,
   } = useMineData();
+
+  // 下拉刷新：清空当前 tab 缓存触发重新拉取（未登录时无数据可刷，禁用）
+  const { status: pullStatus, indicatorRef } = usePullToRefresh(
+    activeScrollRef,
+    {
+      onRefresh: handleRetry,
+      enabled: !!currentUserId,
+    }
+  );
 
   // Tab Configurations
   const tabs: MineTabConfig[] = useMemo(
@@ -335,6 +362,7 @@ export function MineSection({ embedded = false }: { embedded?: boolean } = {}) {
         embedded ? "space-y-4" : "p-4 pb-bottom-stack space-y-6"
       )}
     >
+      <PullRefreshIndicator indicatorRef={indicatorRef} status={pullStatus} />
       <div
         className={cn(
           "flex items-center justify-between mb-4 px-1 relative",

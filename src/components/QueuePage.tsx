@@ -15,6 +15,8 @@ interface QueuePageProps {
   onRemove: (track: MusicTrack) => void;
   onClear: () => void;
   onBack?: () => void;
+  /** embedded：嵌在「歌单」页的 type 里，不带 PageLayout 头部 */
+  embedded?: boolean;
 }
 
 export function QueuePage({
@@ -25,42 +27,47 @@ export function QueuePage({
   onRemove,
   onClear,
   onBack,
+  embedded,
 }: QueuePageProps) {
-  return (
-    <PageLayout
+  const clearButton =
+    queue.length > 0 ? (
+      <Button
+        variant="ghost"
+        size="sm"
+        onClick={async () => {
+          if (
+            await confirmDialog({
+              title: "确定清空播放列表吗？",
+              destructive: true,
+              confirmText: "清空",
+            })
+          ) {
+            onClear();
+          }
+        }}
+      >
+        <Trash2 className="h-4 w-4" />
+      </Button>
+    ) : undefined;
+
+  const body = (
+    <MusicPlaylistView
       title="播放列表"
-      onBack={onBack}
-      action={
-        queue.length > 0 && (
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={async () => {
-              if (
-                await confirmDialog({
-                  title: "确定清空播放列表吗？",
-                  destructive: true,
-                  confirmText: "清空",
-                })
-              ) {
-                onClear();
-              }
-            }}
-          >
-            <Trash2 className="h-4 w-4" />
-          </Button>
-        )
-      }
-    >
-      <MusicPlaylistView
-        title="播放列表"
-        tracks={queue}
-        icon={<ListVideo className="h-8 w-8 text-primary/80" />}
-        onPlay={onPlay}
-        onRemove={onRemove}
-        currentTrackId={currentTrackId}
-        isPlaying={isPlaying}
-      />
+      tracks={queue}
+      icon={<ListVideo className="h-8 w-8 text-primary/80" />}
+      onPlay={onPlay}
+      onRemove={onRemove}
+      currentTrackId={currentTrackId}
+      isPlaying={isPlaying}
+      action={embedded ? clearButton : undefined}
+    />
+  );
+
+  if (embedded) return body;
+
+  return (
+    <PageLayout title="播放列表" onBack={onBack} action={clearButton}>
+      {body}
     </PageLayout>
   );
 }

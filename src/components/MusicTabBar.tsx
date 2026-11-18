@@ -1,22 +1,28 @@
 "use client";
 
-import { Search, Heart, User, Settings } from "lucide-react";
+import type { ComponentType, SVGProps } from "react";
+import { Search, Heart, Settings } from "lucide-react";
+import { PlaylistIcon } from "./PlaylistIcon";
 import { cn } from "@/lib/utils";
 import { Link, useLocation } from "react-router-dom";
+import { emitTabReclick } from "@/hooks/use-tab-reclick";
 
 export type TabId = "search" | "favorites" | "mine" | "settings";
+
+/** 底部导航 tab 顺序，页面级左右滑切 tab 时共用 */
+export const TAB_IDS: TabId[] = ["search", "favorites", "mine", "settings"];
 
 interface TabItem {
   id: TabId;
   label: string;
-  icon: typeof Search;
+  icon: ComponentType<SVGProps<SVGSVGElement>>;
   path: string;
 }
 
 const tabs: TabItem[] = [
   { id: "search", label: "发现", icon: Search, path: "/search" },
   { id: "favorites", label: "喜欢", icon: Heart, path: "/favorites" },
-  { id: "mine", label: "我的", icon: User, path: "/mine" },
+  { id: "mine", label: "歌单", icon: PlaylistIcon, path: "/mine" },
   { id: "settings", label: "设置", icon: Settings, path: "/settings" },
 ];
 
@@ -35,7 +41,7 @@ export function MusicTabBar() {
       return "favorites";
     }
 
-    // 我的 (Mine)
+    // 歌单 (Mine)
     if (pathname.startsWith("/mine")) {
       return "mine";
     }
@@ -60,30 +66,33 @@ export function MusicTabBar() {
             key={tab.id}
             to={tab.path}
             replace={isActive}
+            onClick={() => {
+              if (isActive) emitTabReclick(tab.id);
+            }}
+            state={{
+              pageDir:
+                TAB_IDS.indexOf(tab.id) > TAB_IDS.indexOf(activeTab)
+                  ? "forward"
+                  : "back",
+            }}
             className={cn(
-              "flex min-h-11 min-w-[56px] flex-col items-center justify-center gap-0.5 px-3 py-1 transition-colors",
+              "group flex min-h-11 min-w-[56px] flex-col items-center justify-center gap-0.5 px-3 py-1 transition-colors",
               isActive ? "text-primary" : "text-muted-foreground"
             )}
+            data-state={isActive ? "active" : "inactive"}
             aria-label={tab.label}
           >
-            <span
-              className={cn(
-                "flex h-8 w-12 items-center justify-center rounded-full transition-colors",
-                isActive ? "bg-primary text-primary-foreground" : ""
-              )}
-            >
-              <div className="h-5 w-5 shrink-0 flex-[0_0_20px] min-w-5 min-h-5">
-                <Icon
-                  className={cn(
-                    "h-full w-full transition-all",
-                    isActive
-                      ? "text-primary-foreground"
-                      : "text-muted-foreground"
-                  )}
-                  strokeWidth={isActive ? 2.5 : 2}
-                />
-              </div>
-            </span>
+            <div className="h-5 w-5 shrink-0 flex-[0_0_20px] min-w-5 min-h-5">
+              <Icon
+                className={cn(
+                  "h-full w-full transition-all",
+                  tab.id !== "mine" && "group-data-[state=active]:fill-current",
+                  tab.id === "settings" &&
+                    "group-data-[state=active]:[&_circle]:fill-background group-data-[state=active]:[&_circle]:stroke-background"
+                )}
+                strokeWidth={2}
+              />
+            </div>
             <span className="text-2xs font-medium">{tab.label}</span>
           </Link>
         );

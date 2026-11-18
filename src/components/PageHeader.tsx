@@ -7,23 +7,32 @@ interface PageHeaderProps {
   title: string;
   onBack: () => void;
   action?: React.ReactNode;
+  /** 底部 tab 页不需要侧边返回图标，系统返回键仍可用 */
+  showBack?: boolean;
 }
 
-export function PageHeader({ title, onBack, action }: PageHeaderProps) {
+export function PageHeader({
+  title,
+  onBack,
+  action,
+  showBack = true,
+}: PageHeaderProps) {
   return (
     <div
       data-tap-top=""
       className="flex items-center justify-between px-4 pb-1 pt-2 border-b bg-background/80 backdrop-blur-sm sticky top-0 z-10"
     >
       <div className="flex items-center gap-2 flex-1 min-w-0">
-        <Button
-          variant="ghost"
-          size="icon"
-          className="-ml-2 h-8 w-8 rounded-full hover:bg-muted/50"
-          onClick={onBack}
-        >
-          <ChevronLeft className="h-4 w-4" />
-        </Button>
+        {showBack && (
+          <Button
+            variant="ghost"
+            size="icon"
+            className="-ml-2 h-8 w-8 rounded-full hover:bg-muted/50"
+            onClick={onBack}
+          >
+            <ChevronLeft className="h-4 w-4" />
+          </Button>
+        )}
         <div className="flex flex-col min-w-0">
           <h1 className="text-base font-semibold tracking-tight truncate">
             {title}

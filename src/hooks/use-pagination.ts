@@ -24,7 +24,8 @@ export interface UsePaginationResult<T> {
   hasMore: boolean;
   offset: number;
   observerTargetRef: React.RefObject<HTMLDivElement | null>;
-  reset: () => void;
+  /** 回到第一页重新加载；返回的 Promise 在数据请求结束后 resolve */
+  reset: () => Promise<void>;
   restore: (data: { items: T[]; offset: number; hasMore: boolean }) => void;
 }
 
@@ -85,7 +86,7 @@ export function usePagination<T>({
   const reset = useCallback(() => {
     setOffset(0);
     setHasMore(true);
-    fetchPage(0);
+    return fetchPage(0);
   }, [fetchPage]);
 
   const loadNext = useCallback(() => {

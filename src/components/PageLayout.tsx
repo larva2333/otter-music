@@ -11,6 +11,8 @@ interface PageLayoutProps {
   action?: React.ReactNode;
   children: React.ReactNode;
   className?: string;
+  /** 底部 tab 页传 false 隐藏侧边返回图标（不影响系统返回键） */
+  showBack?: boolean;
 }
 
 export function PageLayout({
@@ -19,6 +21,7 @@ export function PageLayout({
   action,
   children,
   className,
+  showBack = true,
 }: PageLayoutProps) {
   const navigate = useNavigate();
 
@@ -32,7 +35,12 @@ export function PageLayout({
 
   return (
     <div className={cn("flex flex-col h-full", className)}>
-      <PageHeader title={title} onBack={handleBack} action={action} />
+      <PageHeader
+        title={title}
+        onBack={handleBack}
+        action={action}
+        showBack={showBack}
+      />
       {children}
     </div>
   );

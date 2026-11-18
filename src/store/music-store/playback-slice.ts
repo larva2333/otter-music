@@ -98,6 +98,7 @@ export interface PlaybackSlice {
   playTrackAsNext: (track: MusicTrack) => void;
   addBatchToNextPlay: (tracks: MusicTrack[]) => void;
   skipToNext: () => void;
+  skipToPrevious: () => void;
   removeFromQueue: (trackId: string) => void;
   clearQueue: () => void;
   reshuffle: () => void;
@@ -331,6 +332,16 @@ export const createPlaybackSlice: StateCreator<
       s.queue.length
         ? {
             currentIndex: (s.currentIndex + 1) % s.queue.length,
+            currentAudioTime: 0,
+          }
+        : {}
+    ),
+  skipToPrevious: () =>
+    set((s) =>
+      s.queue.length
+        ? {
+            currentIndex:
+              (s.currentIndex - 1 + s.queue.length) % s.queue.length,
             currentAudioTime: 0,
           }
         : {}

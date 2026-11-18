@@ -18,6 +18,7 @@ vi.mock("@/lib/storage-adapter", () => ({
 const mediaSessionMocks = vi.hoisted(() => ({
   setMetadata: vi.fn().mockResolvedValue(undefined),
   setPlaybackState: vi.fn().mockResolvedValue(undefined),
+  setPositionState: vi.fn().mockResolvedValue(undefined),
   setActionHandler: vi.fn(),
   setActionState: vi.fn().mockResolvedValue(undefined),
 }));
@@ -26,6 +27,7 @@ vi.mock("@jofr/capacitor-media-session", () => ({
   MediaSession: {
     setMetadata: mediaSessionMocks.setMetadata,
     setPlaybackState: mediaSessionMocks.setPlaybackState,
+    setPositionState: mediaSessionMocks.setPositionState,
     setActionHandler: mediaSessionMocks.setActionHandler,
     setActionState: mediaSessionMocks.setActionState,
   },

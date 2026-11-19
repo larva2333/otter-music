@@ -62,8 +62,11 @@ jobs:
         run: |
           npm ci
           npm run build
-          npm run resources
           npx cap sync android
+        # 注意：不要在这里跑 `npm run resources`。
+        # capacitor-assets generate 会用固定的低分辨率（前景 xxxhdpi 仅 192px）
+        # 覆盖仓库里已提交的高清 mipmap，导致 CI 产物图标在桌面被拉伸发糊。
+        # 图标与 splash 资源均已提交在 git 中，cap sync 不会改动它们。
 
       - name: Build release APK
         working-directory: android

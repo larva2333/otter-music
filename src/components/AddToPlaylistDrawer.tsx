@@ -7,6 +7,7 @@ import toast from "react-hot-toast";
 import { Drawer, DrawerContent, DrawerHeader, DrawerTitle } from "./ui/drawer";
 import { ScrollArea } from "./ui/scroll-area";
 import { PlaylistCover } from "./PlaylistCover";
+import { t2s } from "@/lib/utils/t2s";
 
 interface AddToPlaylistDrawerProps {
   open: boolean;
@@ -39,7 +40,7 @@ function PlaylistItem({
       />
       <div className="ml-4 flex-1 overflow-hidden flex flex-col justify-center gap-0.5">
         <p className="text-sm font-medium truncate leading-tight">
-          {playlist.name}
+          {t2s(playlist.name)}
         </p>
         <p className="text-xs text-muted-foreground/80 truncate">
           {trackCount} 首歌曲

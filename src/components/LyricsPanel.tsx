@@ -76,16 +76,18 @@ const LyricLineView = memo(function LyricLineView({
   return (
     <div
       className={cn(
-        "w-full max-w-3xl px-6 sm:px-8",
+        "lyric-line w-full max-w-3xl px-6 sm:px-8",
         "select-none",
         "transition-all duration-300 ease-out",
         "origin-center",
         align === "center" && "text-center",
         align === "left" && "text-left",
         align === "right" && "text-right",
-        // 背景跟随封面主色后不再保证是纯黑，非当前行必须提亮并带阴影，否则会被彩色背景吞掉
+        // 背景跟随封面主色后不再保证是纯黑，非当前行必须提亮并带阴影，否则会被彩色背景吞掉。
+        // 阴影与浅色底下的取色都收敛到 global.css 的 .lyric-* 里：
+        // 深色底用黑投影，浅色底换成白柔光，否则黑投影落在浅底上就是一团脏灰。
         isActive
-          ? "text-white opacity-100 hover:text-white/70"
+          ? "lyric-active text-white opacity-100 hover:text-white/70"
           : "text-white/60 opacity-100 hover:text-white/80",
         // 基准线行加浅色背景框；py 与 -my 等额抵消，保证行间距不变
         // self-start 阻止 flex 拉伸，避免抵消后的内边距被压缩
@@ -93,28 +95,16 @@ const LyricLineView = memo(function LyricLineView({
       )}
     >
       <p
-        className="font-medium leading-relaxed tracking-wide break-words"
-        style={{
-          fontSize: `${fontSize}px`,
-          textShadow: isActive
-            ? "0 1px 18px rgba(0, 0, 0, 0.55), 0 0 4px rgba(0, 0, 0, 0.35)"
-            : "0 1px 12px rgba(0, 0, 0, 0.45), 0 0 3px rgba(0, 0, 0, 0.3)",
-        }}
+        className="lyric-main font-medium leading-relaxed tracking-wide break-words"
+        style={{ fontSize: `${fontSize}px` }}
       >
         {line.text}
       </p>
 
       {line.ttext && (
         <p
-          className={cn(
-            "mt-1 font-medium leading-relaxed break-words",
-            "transition-colors duration-300",
-            isActive ? "text-white/75" : "text-white/40"
-          )}
-          style={{
-            fontSize: `${translationSize}px`,
-            textShadow: "0 1px 10px rgba(0, 0, 0, 0.45)",
-          }}
+          className="lyric-trans mt-1 font-medium leading-relaxed break-words transition-colors duration-300"
+          style={{ fontSize: `${translationSize}px` }}
         >
           {line.ttext}
         </p>

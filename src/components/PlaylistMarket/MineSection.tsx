@@ -8,7 +8,6 @@ import {
 } from "react";
 import { Button } from "@/components/ui/button";
 import {
-  getRecommendPlaylists,
   getUserPlaylists,
   getSubscribedAlbums,
 } from "@/lib/netease/netease-api";
@@ -24,6 +23,7 @@ import { useNeteaseStore } from "@/store/netease-store";
 import { logger } from "@/lib/logger";
 import { usePullToRefresh } from "@/hooks/use-pull-to-refresh";
 import { PullRefreshIndicator } from "@/components/PullRefreshIndicator";
+import { t2s } from "@/lib/utils/t2s";
 
 const SUB_TAB_HEIGHT = "h-8";
 
@@ -36,7 +36,13 @@ interface MineTabConfig {
 }
 
 function useMineData() {
-  const mineTab = useMusicStore((s) => s.lastMineTab);
+  // 旧版本持久值（recommend/daily/radar）已迁出「我的」，回落到首个 tab
+  const rawMineTab = useMusicStore((s) => s.lastMineTab) as string;
+  const mineTab = (
+    ["created", "subscribed", "albums"] as readonly string[]
+  ).includes(rawMineTab)
+    ? (rawMineTab as MusicState["lastMineTab"])
+    : "created";
   const setMineTab = useMusicStore((s) => s.setLastMineTab);
   const { mineData, setMineData } = useMarketSession();
   const { cookie, user } = useNeteaseStore();
@@ -48,8 +54,7 @@ function useMineData() {
 
   const handleRetry = useCallback(() => {
     setError(null);
-    if (mineTab === "recommend") setMineData({ recommend: null });
-    else if (mineTab === "created" || mineTab === "subscribed")
+    if (mineTab === "created" || mineTab === "subscribed")
       setMineData({ created: null, subscribed: null });
     else if (mineTab === "albums") setMineData({ albums: null });
   }, [mineTab, setMineData]);
@@ -84,7 +89,6 @@ function useMineData() {
     const fetchMineData = async () => {
       if (!cookie) return;
 
-      if (mineTab === "recommend" && mineData.recommend) return;
       if (
         (mineTab === "created" || mineTab === "subscribed") &&
         mineData.created
@@ -96,10 +100,7 @@ function useMineData() {
         setLoading(true);
         setError(null);
 
-        if (mineTab === "recommend" && !mineData.recommend) {
-          const recommend = await getRecommendPlaylists(cookie);
-          setMineData((prev) => ({ ...prev, recommend }));
-        } else if (
+        if (
           (mineTab === "created" || mineTab === "subscribed") &&
           !mineData.created
         ) {
@@ -143,7 +144,6 @@ function useMineData() {
     mineTab,
     currentUserId,
     cookie,
-    mineData.recommend,
     mineData.created,
     mineData.albums,
     setMineData,
@@ -213,10 +213,10 @@ const AlbumGrid = ({
         </div>
         <div className="px-0.5 flex flex-col gap-0.5">
           <h3 className="text-sm font-medium leading-snug line-clamp-2 text-foreground/80 group-hover:text-primary transition-colors cursor-pointer">
-            {item.name}
+            {t2s(item.name)}
           </h3>
           <span className="text-xs text-muted-foreground/60 tracking-wider">
-            {item.artist?.name}
+            {t2s(item.artist?.name)}
           </span>
         </div>
       </div>
@@ -260,21 +260,6 @@ export function MineSection({
   // Tab Configurations
   const tabs: MineTabConfig[] = useMemo(
     () => [
-      {
-        id: "recommend",
-        label: "推荐",
-        count: mineData.recommend?.length,
-        content: !currentUserId ? (
-          <LoginPrompt />
-        ) : mineData.recommend && mineData.recommend.length > 0 ? (
-          <PlaylistGrid
-            list={mineData.recommend}
-            onClick={(id) => navigate(`/netease-playlist/${id}`)}
-          />
-        ) : (
-          <EmptyState />
-        ),
-      },
       {
         id: "created",
         label: "创建",
@@ -359,37 +344,39 @@ export function MineSection({
     <div
       className={cn(
         // embedded：嵌在「我的」页里时不再自带外边距，由父级控制节奏
-        embedded ? "space-y-4" : "p-4 pb-bottom-stack space-y-6"
+        embedded ? "space-y-4" : "p-4 pb-bottom-stack"
       )}
     >
       <PullRefreshIndicator indicatorRef={indicatorRef} status={pullStatus} />
       <div
         className={cn(
-          "flex items-center justify-between mb-4 px-1 relative",
+          "flex items-center justify-between mb-4 px-1 relative gap-4",
           SUB_TAB_HEIGHT
         )}
       >
-        <div className="flex items-center gap-6">
-          {tabs.map((tab) => (
-            <button
-              key={tab.id}
-              onClick={() => setMineTab(tab.id)}
-              className={cn(
-                "text-base transition-all whitespace-nowrap",
-                mineTab === tab.id
-                  ? "font-bold text-foreground tracking-wide"
-                  : "font-medium text-muted-foreground hover:text-foreground"
-              )}
-            >
-              {tab.label}{" "}
-              {tab.count !== undefined && (
-                <span className="text-xs opacity-60 ml-0.5">{tab.count}</span>
-              )}
-            </button>
-          ))}
+        <div className="flex-1 min-w-0 overflow-x-auto no-scrollbar">
+          <div className="flex items-center gap-6 w-max">
+            {tabs.map((tab) => (
+              <button
+                key={tab.id}
+                onClick={() => setMineTab(tab.id)}
+                className={cn(
+                  "text-base transition-all whitespace-nowrap",
+                  mineTab === tab.id
+                    ? "font-bold text-foreground tracking-wide"
+                    : "font-medium text-muted-foreground hover:text-foreground"
+                )}
+              >
+                {tab.label}{" "}
+                {tab.count !== undefined && (
+                  <span className="text-xs opacity-60 ml-0.5">{tab.count}</span>
+                )}
+              </button>
+            ))}
+          </div>
         </div>
         {/* Action Button Area */}
-        <div className="transition-opacity animate-in fade-in duration-200">
+        <div className="transition-opacity animate-in fade-in duration-200 shrink-0">
           {activeTabConfig.action}
         </div>
       </div>

@@ -70,7 +70,7 @@ function SettingsSection({
         type="button"
         onClick={() => setOpen((v) => !v)}
         aria-expanded={open}
-        className="flex items-center gap-1 text-[13px] font-bold text-muted-foreground mb-1.5 px-1 py-0.5"
+        className="flex items-center gap-1 text-sm font-bold text-muted-foreground mb-1.5 px-1 py-0.5"
       >
         <span>{title}</span>
         <ChevronDown
@@ -122,6 +122,12 @@ export function SettingsPage({ onBack }: SettingsPageProps) {
     setBilibiliKeepOriginalMeta,
     showSourceBadge,
     setShowSourceBadge,
+    highlightCurrentTrack,
+    setHighlightCurrentTrack,
+    showBarBackground,
+    setShowBarBackground,
+    lightThemeLightBackground,
+    setLightThemeLightBackground,
   } = useMusicStore(
     useShallow((state) => ({
       volume: state.volume,
@@ -133,6 +139,12 @@ export function SettingsPage({ onBack }: SettingsPageProps) {
       setBilibiliKeepOriginalMeta: state.setBilibiliKeepOriginalMeta,
       showSourceBadge: state.showSourceBadge,
       setShowSourceBadge: state.setShowSourceBadge,
+      highlightCurrentTrack: state.highlightCurrentTrack,
+      setHighlightCurrentTrack: state.setHighlightCurrentTrack,
+      showBarBackground: state.showBarBackground,
+      setShowBarBackground: state.setShowBarBackground,
+      lightThemeLightBackground: state.lightThemeLightBackground,
+      setLightThemeLightBackground: state.setLightThemeLightBackground,
     }))
   );
 
@@ -197,6 +209,39 @@ export function SettingsPage({ onBack }: SettingsPageProps) {
               <Switch
                 checked={showSourceBadge}
                 onCheckedChange={setShowSourceBadge}
+              />
+            }
+          />
+          <SettingItem
+            icon={Music4}
+            title="高亮正在播放的歌曲"
+            subtitle="列表中给正在播放的歌曲整行加背景色高亮"
+            action={
+              <Switch
+                checked={highlightCurrentTrack}
+                onCheckedChange={setHighlightCurrentTrack}
+              />
+            }
+          />
+          <SettingItem
+            icon={Music4}
+            title="播放条显示背景"
+            subtitle="播放条使用封面取色渐变背景，关闭则显示卡片底色"
+            action={
+              <Switch
+                checked={showBarBackground}
+                onCheckedChange={setShowBarBackground}
+              />
+            }
+          />
+          <SettingItem
+            icon={Palette}
+            title="浅色主题显示浅色背景"
+            subtitle="浅色主题下播放条与播放页使用浅色封面背景，关闭则使用深色"
+            action={
+              <Switch
+                checked={lightThemeLightBackground}
+                onCheckedChange={setLightThemeLightBackground}
               />
             }
           />

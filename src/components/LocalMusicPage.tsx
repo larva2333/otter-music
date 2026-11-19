@@ -18,11 +18,7 @@ import {
   DrawerHeader,
   DrawerTitle,
 } from "@/components/ui/drawer";
-import {
-  LocalMusicPlugin,
-  LocalMusicFile,
-  SimplifiedConvertItem,
-} from "@/plugins/local-music";
+import { LocalMusicPlugin, LocalMusicFile } from "@/plugins/local-music";
 import { MusicTrack } from "@/types/music";
 import { simplifyLocalFilesText } from "@/lib/utils/simplify-local-files";
 import { normalizeLocalMusicFiles } from "@/lib/utils/local-track-meta";
@@ -103,11 +99,6 @@ export function LocalMusicPage({
   const [excludedExpanded, setExcludedExpanded] = useState(false);
   const [pickingFolder, setPickingFolder] = useState(false);
   const [excludedLoading, setExcludedLoading] = useState(false);
-
-  // 繁转简状态
-  const [t2sConverting, setT2sConverting] = useState(false);
-  const [t2sPending, setT2sPending] = useState<SimplifiedConvertItem[]>([]);
-  const [t2sConfirmOpen, setT2sConfirmOpen] = useState(false);
 
   /* --- Store --- */
   const { queue, currentIndex, skipToNext, isShuffle } = useMusicStore(
@@ -286,81 +277,6 @@ export function LocalMusicPage({
     }
   }, []);
 
-  /* --- 繁转简逻辑 --- */
-  const handleDetectTraditional = useCallback(async (targets: MusicTrack[]) => {
-    if (!targets.length) {
-      toast("没有选中的歌曲");
-      return;
-    }
-
-    const toastId = toast.loading("正在检测繁体...");
-    try {
-      // 改内嵌标签要写文件，必须持有「所有文件管理」权限
-      const permission = await LocalMusicPlugin.hasAllStoragePermission();
-      if (!permission.hasPermission) {
-        toast.dismiss(toastId);
-        setShowPermissionDialog(true);
-        return;
-      }
-
-      const result = await LocalMusicPlugin.convertToSimplified({
-        localPaths: targets.map((t) => t.url_id),
-        dryRun: true,
-      });
-      if (!result.success) throw new Error(result.error || "检测失败");
-
-      const items = (result.items ?? []).filter((item) => item.wouldChange);
-      toast.dismiss(toastId);
-      // 预检读不到标签（异体字、特殊容器格式）时不再直接拦掉，
-      // 交给用户决定是否强制试一次；转换内部对没变化的文件不会写入。
-      setT2sPending(
-        items.length > 0
-          ? items
-          : targets.map((t) => ({ path: t.url_id, wouldChange: false }))
-      );
-      setT2sConfirmOpen(true);
-    } catch (err) {
-      toast.dismiss(toastId);
-      logger.warn("LocalMusicPage", "繁转简检测失败", err);
-      toast.error(err instanceof Error ? err.message : "检测失败");
-    }
-  }, []);
-
-  const handleConvertTraditional = useCallback(async () => {
-    const paths = t2sPending.map((item) => item.path);
-    if (paths.length === 0) return;
-
-    setT2sConverting(true);
-    const promise = LocalMusicPlugin.convertToSimplified({
-      localPaths: paths,
-      renameFiles: true,
-    })
-      .then(async (result) => {
-        if (!result.success) throw new Error(result.error || "转换失败");
-        // 文件名可能变了，重新走一次媒体库扫描拿到新路径
-        await performScan("quick");
-        setT2sConfirmOpen(false);
-        setT2sPending([]);
-        return result;
-      })
-      .finally(() => setT2sConverting(false));
-
-    toast.promise(promise, {
-      loading: "正在转换...",
-      success: (result) => {
-        if (result.failed) {
-          const reason = result.items?.find((item) => item.error)?.error;
-          return `已转换 ${result.changed} 首，${result.failed} 首失败${
-            reason ? `：${reason}` : ""
-          }`;
-        }
-        if (!result.changed) return "没有文件被修改（可能已是简体）";
-        return `已转换 ${result.changed} 首`;
-      },
-      error: (err) => (err instanceof Error ? err.message : "转换失败"),
-    });
-  }, [performScan, t2sPending]);
-
   /* --- 数据转换与播放 --- */
   const tracks = useMemo(
     () =>
@@ -432,28 +348,17 @@ export function LocalMusicPage({
           isPlaying={isPlaying}
           onRemove={(track) => setDeleteTargets([track])}
           onBatchRemove={setDeleteTargets}
-          onBatchConvertToSimplified={handleDetectTraditional}
           removeLabel="删除"
           confirmRemove={false}
+          // 全盘扫描放头部右上角，不跟播放按钮挤在标题下方那一行
+          headerRight={embedded ? fullScanButton : undefined}
           action={
-            embedded ? (
-              <>
-                {fullScanButton}
-                <button
-                  onClick={() => navigate("/playlist/__offline__")}
-                  className="flex items-center gap-1.5 px-3 h-8 rounded-full text-xs text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors"
-                >
-                  <WifiOff size={14} className="shrink-0" />
-                </button>
-              </>
-            ) : (
-              <button
-                onClick={() => navigate("/playlist/__offline__")}
-                className="flex items-center gap-1.5 px-3 h-8 rounded-full text-xs text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors"
-              >
-                <WifiOff size={14} className="shrink-0" />
-              </button>
-            )
+            <button
+              onClick={() => navigate("/playlist/__offline__")}
+              className="flex items-center gap-1.5 px-3 h-8 rounded-full text-xs text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors"
+            >
+              <WifiOff size={14} className="shrink-0" />
+            </button>
           }
         />
       )}
@@ -522,46 +427,6 @@ export function LocalMusicPage({
                   ? `删除 ${deleteTargets.length} 个文件`
                   : "删除文件"
                 : "从列表移除"}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      <Dialog open={t2sConfirmOpen} onOpenChange={setT2sConfirmOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>写入简体标签</DialogTitle>
-            <DialogDescription>
-              {t2sPending.some((item) => item.wouldChange) ? (
-                <>
-                  列表显示已经是简体，这一步会把简体写进文件本身：修改{" "}
-                  {t2sPending.length} 首歌曲的内嵌标签（FLAC 的
-                  TITLE/ARTIST/ALBUM）并重命名文件。音频数据不会被重新编码。
-                  文件名变更后旧播放列表路径会失效，且操作不可撤销。
-                </>
-              ) : (
-                <>
-                  预检没有检测到繁体中文字（可能是异体字或标签读取差异）。仍要对这{" "}
-                  {t2sPending.length}{" "}
-                  首写入简体标签吗？已是简体的文件不会被改动。
-                </>
-              )}
-            </DialogDescription>
-          </DialogHeader>
-          <DialogFooter>
-            <Button
-              variant="ghost"
-              onClick={() => setT2sConfirmOpen(false)}
-              disabled={t2sConverting}
-            >
-              取消
-            </Button>
-            <Button
-              data-testid="confirm-traditional"
-              onClick={handleConvertTraditional}
-              disabled={t2sConverting}
-            >
-              {t2sConverting ? "转换中..." : "开始转换"}
             </Button>
           </DialogFooter>
         </DialogContent>

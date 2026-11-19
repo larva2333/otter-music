@@ -40,6 +40,9 @@ interface MarketSessionState {
   billboardDate: string | undefined;
   /** 奖项页上次浏览的年份（key: awardId），会话级缓存 */
   awardYears: Record<string, number>;
+  /** 歌单广场页内筛选分类（null = 全部）；仅会话级，不持久化 */
+  marketFilter: string | null;
+  setMarketFilter: (filter: string | null) => void;
   setMineData: (
     data: Partial<MineDataState> | ((prev: MineDataState) => MineDataState)
   ) => void;
@@ -71,6 +74,9 @@ export const useMarketSession = create<MarketSessionState>()(
       searchCache: null,
       billboardDate: undefined,
       awardYears: {},
+      marketFilter: null,
+
+      setMarketFilter: (marketFilter) => set({ marketFilter }),
 
       setMineData: (data) =>
         set((state) => ({
@@ -137,6 +143,7 @@ export const useMarketSession = create<MarketSessionState>()(
           searchCache: null,
           billboardDate: undefined,
           awardYears: {},
+          marketFilter: null,
         }),
     }),
     {

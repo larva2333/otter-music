@@ -43,10 +43,15 @@ export function usePagination<T>({
   const [offset, setOffset] = useState(0);
   const observerTargetRef = useRef<HTMLDivElement>(null);
   const fetchingRef = useRef(false);
+  /** 递增的请求序号：reset(force) 抢占后，旧请求的结果直接丢弃 */
+  const fetchIdRef = useRef(0);
 
   const fetchPage = useCallback(
-    async (currentOffset: number) => {
-      if (fetchingRef.current) return;
+    async (currentOffset: number, force = false) => {
+      // 并发保护仅用于无限滚动（loadNext 不会并发，由 observer 的 fetching 状态保证）；
+      // force=true 时抢占进行中的请求，旧结果按序号失效丢弃
+      if (fetchingRef.current && !force) return;
+      const fetchId = ++fetchIdRef.current;
       fetchingRef.current = true;
 
       if (currentOffset === 0) {
@@ -57,6 +62,7 @@ export function usePagination<T>({
 
       try {
         const result = await adapter.fetch(currentOffset);
+        if (fetchId !== fetchIdRef.current) return;
         if (result) {
           setItems((prev) => {
             const existingIds = new Set(prev.map(getId));
@@ -72,12 +78,15 @@ export function usePagination<T>({
           setHasMore(false);
         }
       } catch (err) {
+        if (fetchId !== fetchIdRef.current) return;
         onError?.(err, currentOffset);
         setHasMore(false);
       } finally {
-        setLoading(false);
-        setFetching(false);
-        fetchingRef.current = false;
+        if (fetchId === fetchIdRef.current) {
+          setLoading(false);
+          setFetching(false);
+          fetchingRef.current = false;
+        }
       }
     },
     [adapter, getId, onError]
@@ -86,7 +95,7 @@ export function usePagination<T>({
   const reset = useCallback(() => {
     setOffset(0);
     setHasMore(true);
-    return fetchPage(0);
+    return fetchPage(0, true);
   }, [fetchPage]);
 
   const loadNext = useCallback(() => {

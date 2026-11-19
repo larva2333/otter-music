@@ -16,7 +16,7 @@ import { useExitLayer } from "@/hooks/useExitLayer";
 import { useTapTopToScrollTop } from "@/hooks/useTapTopToScrollTop";
 import { useScrollRestoration } from "@/hooks/useScrollRestoration";
 import { App as CapacitorApp } from "@capacitor/app";
-import { useEffect, useCallback, useRef, lazy, Suspense } from "react";
+import { useEffect, useCallback, useRef, lazy, Suspense, useMemo } from "react";
 import { IS_NATIVE } from "@/lib/api/config";
 
 const FullScreenPlayer = lazy(() =>
@@ -204,13 +204,17 @@ export function RootLayout() {
 
   // 根 tab 间切换的进入动画：方向由导航方随 location.state 带来
   //（底部 tab 点击 / 跨 tab 滑动都会带 pageDir），二级页与同路由内的类别切换不带，不播放。
-  const pageDir = (location.state as { pageDir?: string } | null)?.pageDir;
-  const pageAnimClass =
-    pageDir === "forward"
-      ? "page-enter-forward"
-      : pageDir === "back"
-        ? "page-enter-back"
-        : "";
+  // 只在 pathname 真正变化时取值：再点当前 tab 会以 replace 重导航（location 变了、
+  // 路径没变），如果每次都跟着 state 重算，动画类会从 forward 翻成 back 再播一遍，
+  // 看起来就是页面「晃一下」。
+  const pageAnimClass = useMemo(() => {
+    const dir = (location.state as { pageDir?: string } | null)?.pageDir;
+    if (dir === "forward") return "page-enter-forward";
+    if (dir === "back") return "page-enter-back";
+    return "";
+    // 故意只依赖 pathname：state 变化不应触发动画重播
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [location.pathname]);
 
   return (
     <>

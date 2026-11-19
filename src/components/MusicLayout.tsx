@@ -50,7 +50,13 @@ export function MusicLayout({
       <div className="flex-1 min-h-0 relative">
         <div
           data-page-scroll=""
-          className={cn("h-full overflow-auto scrollbar-hide")}
+          // overflow-x-clip：根 tab 切换时整页会横向平移 56px 做进入动画，
+          // 平移出来的那部分会撑大 scrollWidth（实测 400→456），
+          // 手指在页面上横滑就能把整页拖歪。clip 只裁剪、不产生横向滚动容器，
+          // 纵向滚动（overflow-y-auto）不受影响。
+          className={cn(
+            "h-full overflow-y-auto overflow-x-clip scrollbar-hide"
+          )}
         >
           {children}
         </div>
@@ -65,24 +71,27 @@ export function MusicLayout({
           叠加 --kb-lift：键盘弹出时壳层会被缩到键盘上方（Android 15+ 是脚本手动缩壳层，
           低版本是 adjustResize 缩窗口），胶囊下移同样的高度，视觉上钉在屏幕原位
           （被键盘盖住），而不是跟着壳层底边被顶到键盘上方。 */}
-      {!hidePlayer && (
-        <div
-          className={cn(
-            "flex-none z-50 absolute left-0 right-0 will-change-transform",
-            "bottom-[calc(var(--safe-area-bottom)+8px)]",
-            "transition-transform ease-[cubic-bezier(0.32,0.72,0,1)]",
-            // 68px = 原 tab 页位置(72+安全区+4) 减去 二级页位置(安全区+8)
-            isTab
-              ? "translate-y-[calc(var(--kb-lift,0px)-68px)]"
-              : "translate-y-[var(--kb-lift,0px)]"
-          )}
-          // 键盘开合那一刻（--kb-anim 为 0ms）不能走过渡，否则胶囊会先弹到键盘上沿
-          // 再滑回去；平时保持 320ms，tab ↔ 二级页的 68px 位移才平滑
-          style={{ transitionDuration: "var(--kb-anim, 320ms)" }}
-        >
-          {player}
-        </div>
-      )}
+      {/* 播放条常驻挂载：进入全屏播放时只隐藏，不卸载。
+          卸载会让 MusicNowPlayingBar 里的取色 state 全部丢失，返回时重新
+          加载封面 + 跑 k-means，胶囊会先白一下再刷上颜色（用户反馈的"重新绘制"）。 */}
+      <div
+        aria-hidden={hidePlayer || undefined}
+        className={cn(
+          "flex-none z-50 absolute left-0 right-0 will-change-transform",
+          "bottom-[calc(var(--safe-area-bottom)+8px)]",
+          "transition-transform ease-[cubic-bezier(0.32,0.72,0,1)]",
+          hidePlayer && "invisible pointer-events-none",
+          // 68px = 原 tab 页位置(72+安全区+4) 减去 二级页位置(安全区+8)
+          isTab
+            ? "translate-y-[calc(var(--kb-lift,0px)-68px)]"
+            : "translate-y-[var(--kb-lift,0px)]"
+        )}
+        // 键盘开合那一刻（--kb-anim 为 0ms）不能走过渡，否则胶囊会先弹到键盘上沿
+        // 再滑回去；平时保持 320ms，tab ↔ 二级页的 68px 位移才平滑
+        style={{ transitionDuration: "var(--kb-anim, 320ms)" }}
+      >
+        {player}
+      </div>
 
       {/* 二级页没有 tab bar 底板，胶囊两侧会露出滚动内容；补一层底部羽化，
           保证文字在胶囊附近渐隐，而不是硬切到胶囊边缘 */}

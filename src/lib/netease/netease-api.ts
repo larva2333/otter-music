@@ -361,6 +361,64 @@ export const getRecommendPlaylists = async (
   return res ?? [];
 };
 
+/**
+ * 每日单曲推荐（网易云「每日歌曲推荐」/weapi/v3/discovery/recommend/songs）。
+ * 登录后返回个性化日推；未登录游客拿到通用推荐。TTL 1 小时，与官方更新节奏对齐。
+ */
+export const getDailyRecommendSongs = async (
+  cookie: string = ""
+): Promise<MusicTrack[]> => {
+  const finalCookie = resolveRequestCookie(cookie);
+  const res = await cachedFetch<NeteaseSong[]>(
+    `netease:v2:daily-songs:${finalCookie.slice(-16)}`,
+    async () => {
+      const r = await requestWeapi<{
+        data?: { dailySongs?: NeteaseSong[] };
+      }>(
+        `${BASE_URL}/weapi/v3/discovery/recommend/songs`,
+        { limit: 30, offset: 0 },
+        finalCookie
+      );
+      return r.data?.data?.dailySongs ?? [];
+    },
+    TTL_SHORT
+  );
+  return (res ?? []).map((s) => convertSongToMusicTrack(s));
+};
+
+/**
+ * 「换一批」推荐：从网易云个性化推荐歌单中随机取一张，
+ * 打散其歌曲返回前 30 首。推荐歌单接口每次调用都会轮换（不走缓存），
+ * 因此每次刷新都能拿到一批不同的歌；游客可用。
+ */
+export const getShuffledRecommendSongs = async (
+  cookie: string = ""
+): Promise<MusicTrack[]> => {
+  const finalCookie = resolveRequestCookie(cookie);
+  const r = await requestWeapi<{ result?: { id: number }[] }>(
+    `${BASE_URL}/weapi/personalized/playlist`,
+    { limit: 30, total: true, n: 0 },
+    finalCookie
+  );
+  const playlists = r.data?.result ?? [];
+  if (playlists.length === 0) throw new Error("no recommend playlists");
+  const pick = playlists[Math.floor(Math.random() * playlists.length)];
+
+  // 只取 trackIds（n:0 不拉内嵌 tracks），打散后按需取详情
+  const detail = await requestWeapi<{
+    playlist?: { trackIds?: { id: number }[] };
+  }>(
+    `${BASE_URL}/weapi/v3/playlist/detail`,
+    { id: pick.id, n: 0, limit: 0, total: true },
+    finalCookie
+  );
+  const trackIds = (detail.data?.playlist?.trackIds ?? []).map((t) => t.id);
+  if (trackIds.length === 0) throw new Error("empty playlist tracks");
+  const shuffled = [...trackIds].sort(() => Math.random() - 0.5).slice(0, 30);
+  const songs = await getTracksDetail(shuffled, finalCookie);
+  return songs.map((s) => convertSongToMusicTrack(s as NeteaseSong));
+};
+
 export const getPlaylistDetail = (playlistId: string, cookie: string = "") => {
   const realId = playlistId.replace(/^(neplaylist_|ne_playlist_)/, "");
   return cachedFetch<PlaylistDetail>(
@@ -632,6 +690,66 @@ export const getToplist = async (
       return r.data.list.map(toMarketPlaylistFromToplist);
     },
     TTL_SHORT
+  );
+  return res ?? [];
+};
+
+/** 歌手榜（网易云「歌手榜」）条目 */
+export type TopArtist = {
+  id: number;
+  name: string;
+  picUrl: string;
+  albumSize?: number;
+  musicSize?: number;
+};
+
+/** 热门歌手榜：发现页「歌手」分类的数据源 */
+export const getTopArtists = async (
+  cookie: string = ""
+): Promise<TopArtist[]> => {
+  const finalCookie = resolveRequestCookie(cookie);
+  const res = await cachedFetch<TopArtist[]>(
+    `netease:v2:toplist:artist:${finalCookie.slice(-16)}`,
+    async () => {
+      const r = await requestWeapi<{ list: { artists: TopArtist[] } }>(
+        `${BASE_URL}/weapi/toplist/artist`,
+        { type: 1 },
+        finalCookie
+      );
+      return r.data.list?.artists ?? [];
+    },
+    TTL_SHORT
+  );
+  return res ?? [];
+};
+
+/**
+ * 歌手列表（发现页「歌手」筛选）。
+ * area：-1全部 / 7华语 / 96欧美 / 8日本 / 16韩国 / 0其他
+ * type：-1全部 / 1男 / 2女 / 3乐队
+ * initial：-1热门 / 0「#」/ 65~90 对应 A~Z（接口只认 ASCII 码，传字母会 400）
+ * 接口失败（部分服务端不支持）时返回空数组，由调用方决定是否回落到歌手榜。
+ */
+export const getArtistList = async (
+  filter: { area?: string; type?: string; initial?: string } = {},
+  cookie: string = ""
+): Promise<TopArtist[]> => {
+  const area = filter.area ?? "-1";
+  const type = filter.type ?? "-1";
+  const initial = filter.initial ?? "-1";
+  const finalCookie = resolveRequestCookie(cookie);
+  const res = await cachedFetch<TopArtist[]>(
+    `netease:v4:artist:list:${area}:${type}:${initial}:${finalCookie.slice(-16)}`,
+    async () => {
+      // 注意：必须是 v1 路径。/weapi/artist/list 会忽略 type/area 参数（实测返回同一批歌手）
+      const r = await requestWeapi<{ artists?: TopArtist[] }>(
+        `${BASE_URL}/weapi/v1/artist/list`,
+        { area, type, initial, offset: 0, limit: 100, total: true },
+        finalCookie
+      );
+      return r.data.artists ?? [];
+    },
+    TTL_MEDIUM
   );
   return res ?? [];
 };

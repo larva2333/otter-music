@@ -38,11 +38,6 @@ vi.mock("@/plugins/local-music", () => ({
     getExcludedFolders: vi.fn(),
     removeExcludedFolder: vi.fn(),
     pickExcludedDirectory: vi.fn(),
-    convertToSimplified: vi.fn(),
-    toSimplifiedTexts: vi.fn(async ({ texts }: { texts: string[] }) => ({
-      success: true,
-      texts,
-    })),
     readSidecarLyric: vi.fn(),
     hasAllStoragePermission: vi.fn(),
   },
@@ -121,7 +116,6 @@ describe("LocalMusicPage", () => {
         tracks,
         onPlay,
         onRemove,
-        onBatchConvertToSimplified,
       }: {
         tracks: MusicTrack[];
         onPlay: (track: MusicTrack | null, index?: number) => void;
@@ -129,7 +123,6 @@ describe("LocalMusicPage", () => {
           track: MusicTrack,
           silent?: boolean
         ) => void | Promise<void>;
-        onBatchConvertToSimplified?: (tracks: MusicTrack[]) => void;
       }) => (
         <div>
           {tracks.map((track) => (
@@ -145,15 +138,6 @@ describe("LocalMusicPage", () => {
           <button type="button" onClick={() => onPlay(null)}>
             play all
           </button>
-          {onBatchConvertToSimplified && (
-            <button
-              type="button"
-              data-testid="detect-traditional"
-              onClick={() => onBatchConvertToSimplified(tracks)}
-            >
-              繁体转简体
-            </button>
-          )}
         </div>
       )
     );
@@ -323,139 +307,6 @@ describe("LocalMusicPage", () => {
     });
 
     expect(LocalMusicPlugin.scanAllStorage).toHaveBeenCalledTimes(1);
-  });
-
-  it("detects traditional tracks and asks for confirmation before converting", async () => {
-    vi.mocked(LocalMusicPlugin.hasAllStoragePermission).mockResolvedValue({
-      hasPermission: true,
-    });
-    vi.mocked(LocalMusicPlugin.convertToSimplified).mockResolvedValue({
-      success: true,
-      total: 3,
-      changed: 2,
-      renamed: 0,
-      skipped: 1,
-      failed: 0,
-      items: [
-        { path: "/music/old.mp3", wouldChange: true },
-        { path: "/music/new.mp3", wouldChange: true },
-      ],
-    });
-
-    renderPage();
-    await flushReact();
-
-    await act(async () => {
-      container
-        ?.querySelector<HTMLButtonElement>("[data-testid='detect-traditional']")
-        ?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
-    });
-    await flushReact();
-
-    expect(LocalMusicPlugin.convertToSimplified).toHaveBeenCalledWith({
-      localPaths: ["/music/new.mp3", "/music/old.mp3", "/music/missing.mp3"],
-      dryRun: true,
-    });
-    // 只把会变的曲目带进确认框
-    expect(
-      document.querySelector("[data-testid='confirm-traditional']")
-    ).toBeTruthy();
-  });
-
-  it("still asks for confirmation when the dry-run detects nothing", async () => {
-    vi.mocked(LocalMusicPlugin.hasAllStoragePermission).mockResolvedValue({
-      hasPermission: true,
-    });
-    vi.mocked(LocalMusicPlugin.convertToSimplified).mockResolvedValue({
-      success: true,
-      total: 3,
-      changed: 0,
-      skipped: 3,
-      failed: 0,
-      items: [],
-    });
-
-    renderPage();
-    await flushReact();
-
-    await act(async () => {
-      container
-        ?.querySelector<HTMLButtonElement>("[data-testid='detect-traditional']")
-        ?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
-    });
-    await flushReact();
-
-    // 预检不可靠时也要给出强制转换的机会，而不是直接拦掉
-    expect(
-      document.querySelector("[data-testid='confirm-traditional']")
-    ).toBeTruthy();
-  });
-
-  it("asks for storage permission instead of converting when it is not granted", async () => {
-    vi.mocked(LocalMusicPlugin.hasAllStoragePermission).mockResolvedValue({
-      hasPermission: false,
-    });
-
-    renderPage();
-    await flushReact();
-
-    await act(async () => {
-      container
-        ?.querySelector<HTMLButtonElement>("[data-testid='detect-traditional']")
-        ?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
-    });
-    await flushReact();
-
-    expect(LocalMusicPlugin.convertToSimplified).not.toHaveBeenCalled();
-  });
-
-  it("converts only the detected tracks with renaming when confirmed", async () => {
-    vi.mocked(LocalMusicPlugin.hasAllStoragePermission).mockResolvedValue({
-      hasPermission: true,
-    });
-    vi.mocked(LocalMusicPlugin.convertToSimplified)
-      .mockResolvedValueOnce({
-        success: true,
-        total: 3,
-        changed: 2,
-        items: [
-          { path: "/music/old.mp3", wouldChange: true },
-          { path: "/music/new.mp3", wouldChange: true },
-        ],
-      })
-      .mockResolvedValueOnce({
-        success: true,
-        total: 2,
-        changed: 2,
-        renamed: 2,
-        skipped: 0,
-        failed: 0,
-        items: [],
-      });
-
-    renderPage();
-    await flushReact();
-
-    await act(async () => {
-      container
-        ?.querySelector<HTMLButtonElement>("[data-testid='detect-traditional']")
-        ?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
-    });
-    await flushReact();
-
-    await act(async () => {
-      document
-        .querySelector<HTMLButtonElement>("[data-testid='confirm-traditional']")
-        ?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
-    });
-    await flushReact();
-
-    expect(LocalMusicPlugin.convertToSimplified).toHaveBeenLastCalledWith({
-      localPaths: ["/music/old.mp3", "/music/new.mp3"],
-      renameFiles: true,
-    });
-    // 文件名可能变了，转换后必须重新扫描
-    expect(LocalMusicPlugin.scanLocalMusic).toHaveBeenCalledTimes(1);
   });
 
   it("removes local track from the current list without deleting the file by default", async () => {

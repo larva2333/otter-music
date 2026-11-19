@@ -18,9 +18,11 @@ const positions = new Map<string, number>();
 
 function scrollers(): HTMLElement[] {
   if (typeof document === "undefined") return [];
+  // 跳过被隐藏（display:none）的容器：歌单页的四个 type 面板是常驻的，
+  // 隐藏面板的 scrollTop 恒读 0，混进来会把「第几个容器」的记账错位
   return Array.from(
     document.querySelectorAll<HTMLElement>("[data-page-scroll]")
-  );
+  ).filter((el) => el.getClientRects().length > 0);
 }
 
 function keyOf(pathname: string, index: number) {

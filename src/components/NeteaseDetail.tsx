@@ -23,6 +23,8 @@ import {
   Album,
   Bookmark,
   ListMusic,
+  Play,
+  Disc3,
 } from "lucide-react";
 import toast from "react-hot-toast";
 import { writeClipboardText } from "@/lib/clipboard";
@@ -38,6 +40,7 @@ import { useMusicStore } from "@/store/music-store";
 import { useNeteaseStore } from "@/store/netease-store";
 import { SongDetail } from "@/lib/netease/netease-raw-types";
 import { ArtistAlbumSheet } from "@/components/ArtistAlbumSheet";
+import { ArtistAlbumList } from "@/components/ArtistAlbumList";
 import type { ArtistAlbumSheetNavigationState } from "@/lib/navigation/netease-detail-navigation";
 import { useArtistAlbumSheet } from "@/hooks/useArtistAlbumSheet";
 import { useMarketSession } from "@/store/session/market-session";
@@ -46,6 +49,7 @@ import { useDetailPage } from "@/hooks/useDetailPage";
 import { resolveQqAlbumMid } from "@/lib/qqmusic/qqmusic-api";
 import { useImportPlaylist } from "@/hooks/useImportPlaylist";
 import { useExitLayer } from "@/hooks/useExitLayer";
+import { t2s } from "@/lib/utils/t2s";
 
 interface NeteaseDetailProps {
   id: string | null;
@@ -84,6 +88,8 @@ export function NeteaseDetail({
   const [hasMore, setHasMore] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
+  /** 歌手详情视图：热门歌曲 / 专辑（默认热门歌曲） */
+  const [artistView, setArtistView] = useState<"songs" | "albums">("songs");
 
   const importPlaylist = useImportPlaylist();
   const isShuffle = useMusicStore((state) => state.isShuffle);
@@ -120,10 +126,10 @@ export function NeteaseDetail({
           const res = await getPlaylistDetail(id, cookie);
           if (!res) throw new Error("Not found");
           rawDetail = {
-            name: res.name,
+            name: t2s(res.name),
             coverImgUrl: res.coverImgUrl,
-            description: res.description,
-            creator: res.creator?.nickname,
+            description: t2s(res.description),
+            creator: t2s(res.creator?.nickname),
             trackCount: res.trackCount,
             playCount: res.playCount,
             creatorId: res.creator?.userId,
@@ -133,9 +139,9 @@ export function NeteaseDetail({
           const res = await getArtist(id, cookie);
           if (!res) throw new Error("Not found");
           rawDetail = {
-            name: res.artist.name,
+            name: t2s(res.artist.name),
             coverImgUrl: res.artist.picUrl,
-            description: res.artist.briefDesc,
+            description: t2s(res.artist.briefDesc),
             trackCount: res.artist.musicSize,
             albumCount: res.artist.albumSize,
           };
@@ -147,10 +153,10 @@ export function NeteaseDetail({
           ]);
           if (!res?.album) throw new Error("Not found");
           rawDetail = {
-            name: res.album.name,
+            name: t2s(res.album.name),
             coverImgUrl: res.album.picUrl,
-            description: res.album.description,
-            creator: res.album.artist?.name,
+            description: t2s(res.album.description),
+            creator: t2s(res.album.artist?.name),
             trackCount: res.songs.length,
             publishTime: res.album.publishTime,
             sub: dynamicRes?.isSub || false,
@@ -172,6 +178,17 @@ export function NeteaseDetail({
       setHasMore(detail.trackCount > tracks.length);
     }
   }, [type, detail, tracks]);
+
+  // 换歌手时视图回到「热门歌曲」
+  useEffect(() => {
+    setArtistView("songs");
+  }, [id]);
+
+  /** 歌手页主按钮：热门歌曲 ⇄ 查看专辑 */
+  const toggleArtistView = () => {
+    setArtistView((prev) => (prev === "songs" ? "albums" : "songs"));
+    scrollRef.current?.scrollTo({ top: 0 });
+  };
 
   /* ---------------- 网易云专辑加载失败 → QQ 音乐回退 ---------------- */
 
@@ -389,20 +406,48 @@ export function NeteaseDetail({
       }
       searchQuery={searchQuery}
       onSearchChange={setSearchQuery}
+      primaryAction={
+        type === "artist"
+          ? {
+              // 按钮文案 = 点击后要去的地方：歌曲列表里点「查看专辑」，专辑里点「热门歌曲」
+              label: artistView === "songs" ? "查看专辑" : "热门歌曲",
+              icon:
+                artistView === "songs" ? (
+                  <Disc3 className="h-3 w-3" />
+                ) : (
+                  <Play className="h-3 w-3 fill-current" />
+                ),
+              onClick: toggleArtistView,
+            }
+          : undefined
+      }
     >
-      <div className="flex-1 min-h-0">
-        <MusicTrackList
-          tracks={filteredTracks}
-          scrollContainerRef={scrollRef}
-          onPlay={(track) => onPlay(track, tracks)}
-          currentTrackId={currentTrackId}
-          isPlaying={isPlaying}
-          emptyMessage="列表为空"
-          onLoadMore={type === "artist" ? handleLoadMore : undefined}
-          hasMore={hasMore}
-          loading={loading || loadingMore}
-        />
-      </div>
+      {type === "artist" && artistView === "albums" && id ? (
+        <div className="px-4 pt-5">
+          <ArtistAlbumList
+            artistId={id}
+            artistName={detail?.name}
+            scrollContainerRef={scrollRef}
+            filter={searchQuery}
+          />
+        </div>
+      ) : (
+        <div className="flex-1 min-h-0">
+          <MusicTrackList
+            tracks={filteredTracks}
+            scrollContainerRef={scrollRef}
+            onPlay={(track) => onPlay(track, tracks)}
+            currentTrackId={currentTrackId}
+            isPlaying={isPlaying}
+            emptyMessage="列表为空"
+            onLoadMore={type === "artist" ? handleLoadMore : undefined}
+            hasMore={hasMore}
+            // 歌手详情：上滑到底部自动加载下一页（不传则只有底部按钮）
+            autoLoadMore={type === "artist"}
+            loading={loading || loadingMore}
+          />
+        </div>
+      )}
       <ArtistAlbumSheet
         artistId={id}
         isOpen={isAlbumSheetOpen}

@@ -81,8 +81,7 @@ interface BackupPayload {
   searchSource: MusicSource;
   sourceConfigs: SourceConfig[];
   lastPlaylistCategory: string;
-  lastMineTab: "recommend" | "created" | "subscribed" | "albums";
-  lastFeaturedTab: string;
+  lastMineTab: "created" | "subscribed" | "albums";
   lastBillboardGroup: "songs" | "albums" | "artists";
   playlistCategoryOrder: string[] | null;
   enableAutoMatch: boolean;
@@ -156,7 +155,6 @@ export function serializeStoreData(): string {
     sourceConfigs: state.sourceConfigs,
     lastPlaylistCategory: state.lastPlaylistCategory,
     lastMineTab: state.lastMineTab,
-    lastFeaturedTab: state.lastFeaturedTab,
     lastBillboardGroup: state.lastBillboardGroup,
     playlistCategoryOrder: state.playlistCategoryOrder,
     enableAutoMatch: state.enableAutoMatch,
@@ -352,8 +350,7 @@ export function importStoreData(payload: BackupPayload): void {
     searchSource: payload.searchSource ?? "all",
     sourceConfigs: payload.sourceConfigs ?? [],
     lastPlaylistCategory: payload.lastPlaylistCategory ?? "全部",
-    lastMineTab: payload.lastMineTab ?? "recommend",
-    lastFeaturedTab: payload.lastFeaturedTab ?? "",
+    lastMineTab: payload.lastMineTab ?? "created",
     lastBillboardGroup: payload.lastBillboardGroup ?? "songs",
     playlistCategoryOrder: payload.playlistCategoryOrder ?? null,
     enableAutoMatch: payload.enableAutoMatch ?? true,

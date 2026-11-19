@@ -26,6 +26,7 @@ import {
 import { normalizeResourceUrl } from "@otter-music/shared";
 import { MusicTrack } from "@/types/music";
 import { useDetailPage } from "@/hooks/useDetailPage";
+import { t2s } from "@/lib/utils/t2s";
 
 interface BilibiliArtistDetailProps {
   id: string | null;
@@ -230,7 +231,7 @@ export function BilibiliArtistDetail({
                     </div>
                     <div className="px-0.5 flex flex-col gap-0.5">
                       <h4 className="text-sm font-medium leading-tight line-clamp-2 text-foreground/80">
-                        {entry.name}
+                        {t2s(entry.name)}
                       </h4>
                       <p className="text-2xs text-muted-foreground/60 uppercase tracking-wider">
                         {entry.count} 个视频

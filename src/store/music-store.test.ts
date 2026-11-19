@@ -84,6 +84,19 @@ describe("MusicStore", () => {
       expect(useMusicStore.getState().customBackgroundImage).toBeNull();
       expect(useMusicStore.getState().vinylColor).toBe("#0A0A0A");
     });
+
+    it("播放条背景 / 浅色背景 / 列表高亮开关默认开启且可切换", () => {
+      expect(useMusicStore.getState().showBarBackground).toBe(true);
+      expect(useMusicStore.getState().lightThemeLightBackground).toBe(true);
+      expect(useMusicStore.getState().highlightCurrentTrack).toBe(true);
+
+      useMusicStore.getState().setShowBarBackground(false);
+      useMusicStore.getState().setLightThemeLightBackground(false);
+      useMusicStore.getState().setHighlightCurrentTrack(false);
+      expect(useMusicStore.getState().showBarBackground).toBe(false);
+      expect(useMusicStore.getState().lightThemeLightBackground).toBe(false);
+      expect(useMusicStore.getState().highlightCurrentTrack).toBe(false);
+    });
   });
 
   describe("Favorites", () => {
@@ -546,7 +559,6 @@ describe("浏览位置不跨进程记忆", () => {
       JSON.stringify({
         state: {
           lastPlaylistCategory: "说唱",
-          lastFeaturedTab: "Billboard",
           lastBillboardGroup: "albums",
         },
         version: 0,
@@ -556,23 +568,21 @@ describe("浏览位置不跨进程记忆", () => {
     await useMusicStore.persist.rehydrate();
 
     const state = useMusicStore.getState();
-    expect(state.lastPlaylistCategory).toBe("全部");
-    expect(state.lastFeaturedTab).toBe("");
+    // 分类改成 id 之后默认是推荐分类的 id（recommend），不再是旧的中文名「全部」
+    expect(state.lastPlaylistCategory).toBe("recommend");
     expect(state.lastBillboardGroup).toBe("songs");
   });
 
   it("resetBrowsePosition 把浏览位置归零", () => {
     useMusicStore.setState({
       lastPlaylistCategory: "说唱",
-      lastFeaturedTab: "Billboard",
       lastBillboardGroup: "albums",
     });
 
     useMusicStore.getState().resetBrowsePosition();
 
     const state = useMusicStore.getState();
-    expect(state.lastPlaylistCategory).toBe("全部");
-    expect(state.lastFeaturedTab).toBe("");
+    expect(state.lastPlaylistCategory).toBe("recommend");
     expect(state.lastBillboardGroup).toBe("songs");
   });
 
@@ -585,7 +595,6 @@ describe("浏览位置不跨进程记忆", () => {
     const persisted = JSON.parse(writes[writes.length - 1][1]);
 
     expect(persisted.state.lastPlaylistCategory).toBeUndefined();
-    expect(persisted.state.lastFeaturedTab).toBeUndefined();
     expect(persisted.state.lastBillboardGroup).toBeUndefined();
   });
 });

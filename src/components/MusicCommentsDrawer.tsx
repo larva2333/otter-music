@@ -12,6 +12,7 @@ import { NeteaseComment } from "@/lib/netease/netease-raw-types";
 import { format } from "date-fns";
 import { MessageSquareQuote } from "lucide-react";
 import { logger } from "@/lib/logger";
+import { t2s } from "@/lib/utils/t2s";
 
 interface MusicCommentsDrawerProps {
   track: MusicTrack | null;
@@ -64,7 +65,7 @@ export function MusicCommentsDrawer({
       <DrawerContent className="h-[85vh] flex flex-col p-0 gap-0 rounded-t-3xl border-none bg-background/95 backdrop-blur-xl outline-none">
         <DrawerHeader className="px-6 py-5 pb-2 border-none text-left">
           <DrawerTitle className="text-lg font-semibold tracking-tight">
-            {track?.name ? `${track.name} · 评论` : "评论"}
+            {track?.name ? `${t2s(track.name)} · 评论` : "评论"}
           </DrawerTitle>
         </DrawerHeader>
 

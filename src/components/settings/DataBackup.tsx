@@ -371,11 +371,11 @@ export function DataBackup({ open, onOpenChange }: DataBackupProps) {
                     <div className="flex items-center gap-1.5 text-sm">
                       <span>{entry.date}</span>
                       {entry.kind === "manual" ? (
-                        <span className="rounded bg-primary/10 px-1.5 py-0.5 text-[10px] leading-none text-primary">
+                        <span className="rounded bg-primary/10 px-1.5 py-0.5 text-2xs leading-none text-primary">
                           手动
                         </span>
                       ) : (
-                        <span className="rounded bg-sky-500/12 px-1.5 py-0.5 text-[10px] leading-none text-sky-500 dark:bg-sky-400/15 dark:text-sky-400">
+                        <span className="rounded bg-sky-500/12 px-1.5 py-0.5 text-2xs leading-none text-sky-500 dark:bg-sky-400/15 dark:text-sky-400">
                           自动
                         </span>
                       )}

@@ -29,6 +29,13 @@ interface GenericDetailPageProps {
   onPlayTrack?: (track: MusicTrack) => void;
   searchQuery?: string;
   onSearchChange?: (value: string) => void;
+  /** 替换默认「播放全部」按钮（歌手页视图切换用） */
+  primaryAction?: {
+    label: string;
+    icon?: ReactNode;
+    onClick: () => void;
+  };
+  hideSearch?: boolean;
   children: ReactNode;
 }
 
@@ -46,6 +53,8 @@ export function GenericDetailPage({
   onPlayTrack,
   searchQuery,
   onSearchChange,
+  primaryAction,
+  hideSearch,
   children,
 }: GenericDetailPageProps) {
   if (loading) return <DetailSkeleton onBack={onBack} />;
@@ -80,6 +89,8 @@ export function GenericDetailPage({
               onPlayTrack={onPlayTrack}
               searchQuery={searchQuery}
               onSearchChange={onSearchChange}
+              primaryAction={primaryAction}
+              hideSearch={hideSearch}
             />
           )}
           {children}

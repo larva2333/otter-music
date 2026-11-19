@@ -88,9 +88,9 @@ export function ConfirmDialogHost() {
     >
       <DialogContent className="max-w-[calc(100vw-2.5rem)] rounded-2xl sm:max-w-sm">
         <DialogHeader>
-          <DialogTitle className="text-[15px]">{current?.title}</DialogTitle>
+          <DialogTitle className="text-base">{current?.title}</DialogTitle>
           {current?.description && (
-            <DialogDescription className="text-[13px] leading-relaxed">
+            <DialogDescription className="text-sm leading-relaxed">
               {current.description}
             </DialogDescription>
           )}
@@ -98,14 +98,14 @@ export function ConfirmDialogHost() {
         <DialogFooter className="mt-2 flex-row justify-end gap-2">
           <Button
             variant="outline"
-            className="h-9 flex-1 text-[13px] sm:flex-none"
+            className="h-9 flex-1 text-sm sm:flex-none"
             onClick={() => settle(false)}
           >
             {current?.cancelText ?? "取消"}
           </Button>
           <Button
             variant={current?.destructive ? "destructive" : "default"}
-            className="h-9 flex-1 text-[13px] sm:flex-none"
+            className="h-9 flex-1 text-sm sm:flex-none"
             onClick={() => settle(true)}
           >
             {current?.confirmText ?? "确定"}

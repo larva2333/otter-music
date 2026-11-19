@@ -10,6 +10,7 @@ import { resolveQqAlbumMid } from "@/lib/qqmusic/qqmusic-api";
 import { MusicCover } from "@/components/MusicCover";
 import type { BillboardChartEntry } from "@otter-music/shared";
 import { logger } from "@/lib/logger";
+import { t2s } from "@/lib/utils/t2s";
 
 /** 取歌手串的第一位（"Shakira X Burna Boy" -> "Shakira"）作匹配词 */
 const firstArtist = (artist: string): string =>
@@ -189,11 +190,11 @@ export function BillboardEntryGrid({
           </div>
           <div className="px-0.5">
             <h3 className="text-sm font-medium leading-snug line-clamp-2 text-foreground/80 group-hover:text-primary transition-colors cursor-pointer">
-              {entry.title}
+              {t2s(entry.title)}
             </h3>
             {group === "albums" && (
               <p className="text-xs text-muted-foreground/70 mt-0.5 line-clamp-1">
-                {entry.artist}
+                {t2s(entry.artist)}
               </p>
             )}
           </div>

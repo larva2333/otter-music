@@ -86,32 +86,6 @@ export interface ExcludedFolderMutationResult {
   error?: string;
 }
 
-/** 单条繁转简结果 */
-export interface SimplifiedConvertItem {
-  path: string;
-  /** 改名后的新路径，未改名为原路径 */
-  newPath?: string;
-  tagsChanged?: boolean;
-  renamed?: boolean;
-  /** dryRun 时表示“会改但还没改” */
-  wouldChange?: boolean;
-  /** 未改写内嵌标签的原因（如非 FLAC） */
-  skipReason?: string;
-  /** 转换失败的原因 */
-  error?: string;
-}
-
-export interface SimplifiedConvertResult {
-  success: boolean;
-  total?: number;
-  changed?: number;
-  renamed?: number;
-  skipped?: number;
-  failed?: number;
-  items?: SimplifiedConvertItem[];
-  error?: string;
-}
-
 export interface LocalMusicPlugin {
   scanLocalMusic(): Promise<ScanResult>;
   scanAllStorage(): Promise<ScanResult>;
@@ -150,19 +124,6 @@ export interface LocalMusicPlugin {
     folder: string;
   }): Promise<ExcludedFolderMutationResult>;
   pickExcludedDirectory(): Promise<PickDirectoryResult>;
-  /** 繁体转简体：改内嵌标签（FLAC）并可选重命名文件 */
-  convertToSimplified(options: {
-    localPaths: string[];
-    renameFiles?: boolean;
-    /** 只检测不落盘 */
-    dryRun?: boolean;
-  }): Promise<SimplifiedConvertResult>;
-  /** 批量把文本转成简体，仅用于列表显示，不写任何文件 */
-  toSimplifiedTexts(options: { texts: string[] }): Promise<{
-    success: boolean;
-    texts?: string[];
-    error?: string;
-  }>;
   /** 读取与音频同名的侧挂 .lrc 歌词 */
   readSidecarLyric(options: {
     localPath: string;

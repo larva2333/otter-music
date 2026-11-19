@@ -3,10 +3,30 @@
 import { cn } from "@/lib/utils";
 import { MusicCover } from "./MusicCover";
 
+/**
+ * 唱臂位置：
+ * - playing：唱头落到沟槽（-4°）
+ * - paused：唱头抬离盘面（-40°）
+ * - away：切歌途中唱臂进一步荡开、彻底让出唱片（-62°）
+ * 三态共用同一个旋转轴心，根部始终不动。
+ */
+export type TonearmState = "playing" | "paused" | "away";
+
+const TONEARM_ANGLE: Record<TonearmState, number> = {
+  playing: -4,
+  paused: -40,
+  away: -62,
+};
+
 interface VinylCoverProps {
   src?: string | null;
   alt?: string;
   isPlaying?: boolean;
+  /**
+   * 受控唱臂位置。不传时沿用 isPlaying 的播放/暂停两态，保持原有调用方不变；
+   * 播放页切歌期间显式传 "away"，让唱臂荡开后再落回。
+   */
+  armState?: TonearmState;
   className?: string;
   iconClassName?: string;
   /** 封面自带白边的裁切缩放，透传给中心封面的 <img> */
@@ -17,6 +37,14 @@ interface VinylCoverProps {
   discColor?: string;
   /** 是否渲染唱臂骨架（基座+臂管+唱头）。播放条里的小黑胶不放骨架。 */
   showTonearm?: boolean;
+  /**
+   * 唱臂容器的额外样式。播放页横滑切歌时整个封面容器会 translate，
+   * 传反向 translate 进来即可让唱臂固定在屏幕原位（只有唱片滑动/旋转）。
+   * transition 也由调用方给全，保证跟手阶段无过渡、松手阶段与封面同步。
+   */
+  tonearmContainerStyle?: React.CSSProperties;
+  /** 唱臂容器节点引用：播放页横滑时直接写它的 translate 做反向抵消 */
+  tonearmContainerRef?: React.RefObject<HTMLDivElement | null>;
   /**
    * 唱臂骨架被点击（鼠标 click 路径）。触摸端的轻点在 touchend 已处理，
    * 这里只兜住桌面端鼠标点击，并把 click 拦在骨架内不再冒泡到外层容器。
@@ -42,6 +70,7 @@ export function VinylCover({
   src,
   alt,
   isPlaying = false,
+  armState,
   className,
   iconClassName,
   imgStyle,
@@ -49,6 +78,8 @@ export function VinylCover({
   onPreviewOpenChange,
   discColor = DEFAULT_DISC_COLOR,
   showTonearm = true,
+  tonearmContainerStyle,
+  tonearmContainerRef,
   onControlActivate,
 }: VinylCoverProps) {
   const transparent = discColor.toLowerCase() === "transparent";
@@ -73,7 +104,7 @@ export function VinylCover({
     // 只有唱臂骨架（基座 + 臂管 + 唱头）带 data-vinyl-control，轻点它才播放/暂停。
     <div
       data-vinyl-cover
-      className={cn("relative h-full w-full select-none", className)}
+      className={cn("relative h-full w-full select-none vinyl-tone", className)}
     >
       {/* 盘外那圈浅灰托盘边（网易的黑胶盘不是直接贴在背景上）。
           无骨架场景（播放条小盘）托盘直接铺满，让盘面水平垂直都居中 */}
@@ -135,7 +166,11 @@ export function VinylCover({
       {/* 唱臂：基座在盘外正上方，折线（竖直段→圆角拐弯→斜段），唱头落在黑胶沟槽带中间。
           播放条等小尺寸场景用 showTonearm={false} 只留盘面。 */}
       {showTonearm && (
-        <div className="pointer-events-none absolute inset-0">
+        <div
+          ref={tonearmContainerRef}
+          className="pointer-events-none absolute inset-0"
+          style={tonearmContainerStyle}
+        >
           {/* 基座：干净的白色圆点 + 浅灰轴心，z-10 盖住唱臂根部（臂从圆盘底下伸出）。
             骨架根部单独开放命中，pointer-events-auto 抵消父级的 none。
             before 伪元素把命中区向外扩 8px：圆点本身只有 6% 宽，直接点很难准。 */}
@@ -151,7 +186,11 @@ export function VinylCover({
             viewBox="0 0 100 100"
             className="absolute inset-0 h-full w-full overflow-visible"
             style={{
-              transform: isPlaying ? "rotate(-4deg)" : "rotate(-40deg)",
+              transform: `rotate(${
+                TONEARM_ANGLE[armState ?? (isPlaying ? "playing" : "paused")]
+              }deg)`,
+              // 轴心固定在基座中心（基座 div 中心正是 50% / -6%），
+              // 切歌荡开、落回都绕这一根轴，根部始终不动。
               transformOrigin: "50% -6%",
               transition: "transform 350ms ease-out",
               // 整块 svg 不挡盘面；只有下面显式声明 pointer-events 的骨架笔画可命中

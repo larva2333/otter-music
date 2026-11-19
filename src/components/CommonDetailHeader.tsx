@@ -1,10 +1,11 @@
-import { useState, memo, useCallback } from "react";
+import { useState, memo, useCallback, useRef } from "react";
 import { MusicCover } from "@/components/MusicCover";
 import { format } from "date-fns";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Play, Search } from "lucide-react";
+import { Play, Search, X } from "lucide-react";
+import { useSearchBackClear } from "@/hooks/useSearchBackClear";
 import type { MusicTrack } from "@/types/music";
 
 export interface CommonDetailHeaderProps {
@@ -20,6 +21,17 @@ export interface CommonDetailHeaderProps {
   tracks?: MusicTrack[];
   searchQuery?: string;
   onSearchChange?: (value: string) => void;
+  /**
+   * 替换默认的「播放全部」按钮（歌手页用来做「热门歌曲 / 查看专辑」视图切换）。
+   * 传入时不再播放全部。
+   */
+  primaryAction?: {
+    label: string;
+    icon?: React.ReactNode;
+    onClick: () => void;
+  };
+  /** 隐藏搜索框（专辑视图下搜索歌曲无意义） */
+  hideSearch?: boolean;
 }
 
 export const CommonDetailHeader = memo(function CommonDetailHeader({
@@ -35,11 +47,28 @@ export const CommonDetailHeader = memo(function CommonDetailHeader({
   tracks,
   searchQuery = "",
   onSearchChange,
+  primaryAction,
+  hideSearch,
 }: CommonDetailHeaderProps) {
   const [isExpanded, setIsExpanded] = useState(false);
+  const [isSearchFocused, setIsSearchFocused] = useState(false);
+  const searchInputRef = useRef<HTMLInputElement>(null);
+
+  // 搜索框聚焦时，返回键＝清空内容并收起键盘（一步到位），不退出详情页
+  useSearchBackClear({
+    focused: isSearchFocused,
+    value: searchQuery,
+    onClear: () => onSearchChange?.(""),
+    onDismiss: () => {
+      searchInputRef.current?.blur();
+      setIsSearchFocused(false);
+    },
+  });
 
   const hasDesc = !!description;
   const hasTracks = !!(onPlayTrack && tracks && tracks.length > 0);
+  /** 有自定义主按钮时，即使列表还没数据也要显示按钮栏 */
+  const showBar = hasTracks || !!primaryAction;
 
   const handlePlay = useCallback(() => {
     if (!hasTracks) return;
@@ -48,14 +77,17 @@ export const CommonDetailHeader = memo(function CommonDetailHeader({
   }, [isShuffle, tracks, onPlayTrack, hasTracks]);
 
   // 根据是否有描述，动态映射样式配置，避免在 JSX 中写死大量三元运算符
+  // hasDesc 分支：「播放全部」按钮与封面等宽（w-24 = size-24），搜索框占满剩余空间
   const styles = {
     bar: hasDesc
-      ? "mt-3 pb-5 grid grid-cols-3 gap-2 w-full"
+      ? "mt-3 pb-5 flex items-center gap-2 w-full"
       : "mt-auto flex items-center gap-2",
     btn: hasDesc
-      ? "rounded-full px-3 h-9 col-span-1 min-w-0"
+      ? "rounded-full px-1.5 h-9 w-24 justify-center shrink-0 text-xs"
       : "rounded-full px-3 h-8 md:h-9 gap-1.5 min-w-0 shrink",
-    searchWrapper: hasDesc ? "relative col-span-2" : "relative flex-1 min-w-0",
+    searchWrapper: hasDesc
+      ? "relative flex-1 min-w-0"
+      : "relative flex-1 min-w-0",
     searchIcon: hasDesc
       ? "absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground/60"
       : "absolute left-2 top-2.5 h-3 w-3 text-muted-foreground md:h-4 md:w-4 md:top-2",
@@ -64,22 +96,50 @@ export const CommonDetailHeader = memo(function CommonDetailHeader({
       : "pl-8 h-8 text-xs w-full md:h-9 md:text-sm",
   };
 
-  const playSearchBar = hasTracks && (
+  const playSearchBar = showBar && (
     <div className={styles.bar}>
-      <Button size="sm" className={styles.btn} onClick={handlePlay}>
-        <Play className="h-3 w-3 fill-current" />
-        {hasDesc && <span>播放全部</span>}
-      </Button>
+      {primaryAction ? (
+        <Button
+          size="sm"
+          className={styles.btn}
+          onClick={primaryAction.onClick}
+        >
+          {primaryAction.icon}
+          {hasDesc && <span className="truncate">{primaryAction.label}</span>}
+        </Button>
+      ) : (
+        <Button size="sm" className={styles.btn} onClick={handlePlay}>
+          <Play className="h-3 w-3 fill-current" />
+          {hasDesc && <span>播放全部</span>}
+        </Button>
+      )}
 
-      {onSearchChange && (
+      {onSearchChange && !hideSearch && (
         <div className={styles.searchWrapper}>
           <Search className={styles.searchIcon} />
           <Input
+            ref={searchInputRef}
             placeholder="搜索..."
             value={searchQuery}
             onChange={(e) => onSearchChange(e.target.value)}
-            className={styles.input}
+            onFocus={() => setIsSearchFocused(true)}
+            onBlur={() => setIsSearchFocused(false)}
+            className={cn(styles.input, searchQuery && "pr-8")}
           />
+          {/* 有内容时显示清除按钮，一键清空搜索词 */}
+          {searchQuery && (
+            <button
+              type="button"
+              onClick={() => {
+                onSearchChange("");
+                searchInputRef.current?.focus();
+              }}
+              aria-label="清除搜索"
+              className="absolute right-2 top-1/2 -translate-y-1/2 h-5 w-5 flex items-center justify-center rounded-full bg-muted-foreground/20 text-muted-foreground hover:bg-muted-foreground/30 hover:text-foreground transition-colors"
+            >
+              <X className="h-3 w-3" />
+            </button>
+          )}
         </div>
       )}
     </div>

@@ -134,33 +134,22 @@ export const NETEASE_CATS: CatGroup[] = [
   },
 ];
 
-export const SPECIAL_CATS: CatItem[] = [
-  F("官方"),
-  { id: "Awards", name: "奖项" },
-  F("榜单"),
+export const RECOMMEND_CATS: CatItem[] = [
+  { id: "mine", name: "我的" },
+  { id: "recommend", name: "推荐" },
+  { id: "radar", name: "雷达" },
+  { id: "artist", name: "歌手" },
+  // 原「全部」分类：browse 请求用 id「全部」拿全量歌单
+  { id: "全部", name: "歌单广场" },
   { id: "toplist", name: "排行榜" },
 ];
 
-export const RECOMMEND_CATS: CatItem[] = [
-  F("全部"),
-  { id: "featured", name: "精选" },
-
-  F("华语"),
-  F("欧美"),
-
-  F("流行"),
-  F("说唱"),
-  F("摇滚"),
-  F("电子"),
-  F("民谣"),
-  F("轻音乐"),
-
-  { id: "Billboard", name: "Billboard" },
-  F("播客"),
-];
-
-/** 不走网易云 browse 分页适配器的分类（独立 Section 与精选下的特殊子 Tab） */
+/** 不走网易云 browse 分页适配器的分类（含「我的」、独立 Section 与特殊子 Tab） */
 export const NON_BROWSE_CATEGORIES: ReadonlySet<string> = new Set([
+  "mine",
+  "recommend",
+  "radar",
+  "artist",
   "播客",
   "Alist",
   "Billboard",
@@ -172,7 +161,7 @@ export const NON_BROWSE_CATEGORIES: ReadonlySet<string> = new Set([
  * ========================================================= */
 
 /** 常驻栏固定分类：不可排序、不可删除，始终置前 */
-export const FIXED_CATS: CatItem[] = RECOMMEND_CATS.slice(0, 2);
+export const FIXED_CATS: CatItem[] = RECOMMEND_CATS.slice(0, 6);
 
 /** 可添加为常驻的全部分类目录（各分组分类平铺，含 Alist / Billboard） */
 export const ADDABLE_CATS: CatItem[] = NETEASE_CATS.flatMap((g) => g.filters);
@@ -188,7 +177,8 @@ export function resolveBarCategories(savedOrder: string[] | null): {
   const catalog = new Map(ADDABLE_CATS.map((c) => [c.id, c]));
 
   if (!savedOrder) {
-    return { fixed: FIXED_CATS, residents: RECOMMEND_CATS.slice(2) };
+    // 未自定义时固定 6 项，无可滚动常驻项
+    return { fixed: FIXED_CATS, residents: RECOMMEND_CATS.slice(6) };
   }
   return {
     fixed: FIXED_CATS,

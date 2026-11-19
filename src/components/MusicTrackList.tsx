@@ -45,9 +45,17 @@ import {
   Check,
   MoreVertical,
   ListPlus,
-  Languages,
+  ArrowDownUp,
+  ArrowUp,
+  ArrowDown,
 } from "lucide-react";
 import { Checkbox } from "@/components/ui/checkbox";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import {
   Popover,
   PopoverContent,
@@ -61,7 +69,8 @@ import { useAutoLoadMore } from "@/hooks/use-auto-load-more";
 import { useExitLayerStore } from "@/hooks/useExitLayer";
 import { MusicTrack } from "@/types/music";
 import toast from "react-hot-toast";
-import { processBatchCPU } from "@/lib/utils";
+import { processBatchCPU, cn } from "@/lib/utils";
+import { sortTracks, type TrackSortKey } from "@/lib/utils/sort-tracks";
 import { useShallow } from "zustand/react/shallow";
 
 interface MusicTrackListProps {
@@ -86,8 +95,14 @@ interface MusicTrackListProps {
   showItemRemove?: boolean;
   preselectedIds?: Set<string>;
   onSelectionModeChange?: (active: boolean) => void;
-  /** 提供后，多选菜单显示「写入简体标签」。仅本地音源需要。 */
-  onBatchConvertToSimplified?: (tracks: MusicTrack[]) => void;
+  /** 行首显示封面（代替序号），用于推荐流这类轻量列表 */
+  showCover?: boolean;
+  /**
+   * 不渲染顶部「# / 排序 / 多选」表头（纯内容列表）。
+   * 表头同时承载批量操作条，隐藏后没有地方放「退出多选 / 全选」，
+   * 所以这个模式下一并禁用长按多选，用行尾菜单做单曲操作。
+   */
+  hideHeader?: boolean;
 }
 
 const ROW_HEIGHT = 60;
@@ -150,7 +165,8 @@ export function MusicTrackList({
   showItemRemove = true,
   preselectedIds,
   onSelectionModeChange,
-  onBatchConvertToSimplified,
+  showCover,
+  hideHeader,
 }: MusicTrackListProps) {
   const [isSelectionMode, setIsSelectionMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
@@ -172,7 +188,48 @@ export function MusicTrackList({
   );
 
   const enableDnd = isSelectionMode && !!onReorder;
-  const trackIds = useMemo(() => tracks.map((t) => t.id), [tracks]);
+
+  /**
+   * 列表视图排序：点击表头弹出下拉框选择（默认排序 / 按歌名 / 按专辑 / 按歌手）。
+   * 选中某字段后表头显示字段名 + 升/降序箭头；再次选择同一字段切换升降序；
+   * 换字段则回到升序。仅影响展示顺序（不落盘）。
+   */
+  type SortField = "name" | "album" | "artist" | "time";
+  const [sortState, setSortState] = useState<{
+    field: SortField | "default";
+    dir: "asc" | "desc";
+  }>({ field: "default", dir: "asc" });
+
+  const FIELD_LABELS: Record<SortField, string> = {
+    name: "歌名",
+    album: "专辑",
+    artist: "歌手",
+    time: "添加时间",
+  };
+
+  const handleSortSelect = useCallback((field: SortField | "default") => {
+    setSortState((prev) =>
+      field === "default"
+        ? { field: "default", dir: "asc" }
+        : field === prev.field
+          ? // 同一字段再次选择：切换升降序
+            { field, dir: prev.dir === "asc" ? "desc" : "asc" }
+          : // 换字段：回到升序
+            { field, dir: "asc" }
+    );
+  }, []);
+
+  const displayTracks = useMemo(() => {
+    if (sortState.field === "default") return tracks;
+    return sortTracks(
+      tracks,
+      `${sortState.field}-${sortState.dir}` as TrackSortKey
+    );
+  }, [tracks, sortState]);
+  const trackIds = useMemo(
+    () => displayTracks.map((t) => t.id),
+    [displayTracks]
+  );
 
   const handleDragStart = (event: DragStartEvent) => {
     setActiveId(event.active.id as string);
@@ -183,10 +240,10 @@ export function MusicTrackList({
     setActiveId(null);
 
     if (active.id !== over?.id && onReorder) {
-      const oldIndex = tracks.findIndex((t) => t.id === active.id);
-      const newIndex = tracks.findIndex((t) => t.id === over?.id);
+      const oldIndex = displayTracks.findIndex((t) => t.id === active.id);
+      const newIndex = displayTracks.findIndex((t) => t.id === over?.id);
       if (oldIndex !== -1 && newIndex !== -1) {
-        onReorder(arrayMove(tracks, oldIndex, newIndex));
+        onReorder(arrayMove(displayTracks, oldIndex, newIndex));
       }
     }
   };
@@ -381,14 +438,6 @@ export function MusicTrackList({
     await downloadMusicTrackBatch(selected, parseInt(quality));
   };
 
-  /** 写入简体标签：交给上层检测与确认，这里只负责把选中项传出去 */
-  const handleBatchConvertToSimplified = () => {
-    const selected = getSelectedTracks();
-    if (!selected.length || !onBatchConvertToSimplified) return;
-    onBatchConvertToSimplified(selected);
-    resetSelection();
-  };
-
   const dropAnimation: DropAnimation = {
     sideEffects: defaultDropAnimationSideEffects({
       styles: {
@@ -400,7 +449,7 @@ export function MusicTrackList({
   };
 
   const virtualizer = useVirtualizer({
-    count: tracks.length + 1,
+    count: displayTracks.length + 1,
     getScrollElement: () => scrollContainerRef?.current ?? internalRef.current,
     estimateSize: () => ROW_HEIGHT,
     overscan: 8,
@@ -427,11 +476,64 @@ export function MusicTrackList({
 
   const renderHeader = () => (
     <div className="sticky top-0 z-20 border-b bg-background/95 backdrop-blur supports-backdrop-filter:bg-background/60">
-      <div className="grid items-center gap-4 px-4 h-10 text-xs text-muted-foreground grid-cols-[1.75rem_1fr_auto]">
+      <div className="grid items-center gap-4 px-4 h-10 text-sm font-bold text-muted-foreground grid-cols-[1.75rem_1fr_auto]">
         {!isSelectionMode ? (
           <>
             <div className="text-center">#</div>
-            <div>标题</div>
+            {/* 点击弹出排序下拉框；表头显示当前排序状态（默认排序 / 歌名↑ / 歌名↓…） */}
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <button
+                  className="flex items-center gap-1 -ml-1 text-sm font-bold text-muted-foreground hover:text-foreground transition-colors"
+                  aria-label="切换列表排序"
+                >
+                  {sortState.field === "default" ? (
+                    <>
+                      <ArrowDownUp className="h-3 w-3" />
+                      默认排序
+                    </>
+                  ) : (
+                    <>
+                      {FIELD_LABELS[sortState.field]}
+                      {sortState.dir === "asc" ? (
+                        <ArrowUp className="h-3 w-3 text-primary" />
+                      ) : (
+                        <ArrowDown className="h-3 w-3 text-primary" />
+                      )}
+                    </>
+                  )}
+                </button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="start">
+                <DropdownMenuItem
+                  className={cn(
+                    sortState.field === "default" &&
+                      "bg-accent text-primary-foreground"
+                  )}
+                  onClick={() => handleSortSelect("default")}
+                >
+                  默认排序
+                  {sortState.field === "default" && (
+                    <Check className="h-3.5 w-3.5 ml-auto text-primary-foreground" />
+                  )}
+                </DropdownMenuItem>
+                {(["name", "album", "artist", "time"] as const).map((field) => (
+                  <DropdownMenuItem
+                    key={field}
+                    className={cn(
+                      sortState.field === field &&
+                        "bg-accent text-primary-foreground"
+                    )}
+                    onClick={() => handleSortSelect(field)}
+                  >
+                    按{FIELD_LABELS[field]}
+                    {sortState.field === field && (
+                      <Check className="h-3.5 w-3.5 ml-auto text-primary-foreground" />
+                    )}
+                  </DropdownMenuItem>
+                ))}
+              </DropdownMenuContent>
+            </DropdownMenu>
             <div className="flex justify-end gap-1">
               <Button
                 variant="ghost"
@@ -460,7 +562,7 @@ export function MusicTrackList({
 
             {/* 第二列：已选统计 */}
             <div className="flex items-center min-w-0">
-              <span className="text-[13px] text-foreground truncate">
+              <span className="text-sm text-foreground truncate">
                 已选 {selectedIds.size} 首
               </span>
             </div>
@@ -480,43 +582,34 @@ export function MusicTrackList({
                 </PopoverTrigger>
                 <PopoverContent side="bottom" align="end" className="w-40 p-1">
                   <div
-                    className="flex items-center px-2 py-1.5 text-[13px] rounded-sm hover:bg-accent cursor-pointer"
+                    className="flex items-center px-2 py-1.5 text-sm rounded-sm hover:bg-accent cursor-pointer"
                     onClick={handleBatchNextPlay}
                   >
                     <Plus className="mr-2 h-3.5 w-3.5" /> 添加到播放列表
                   </div>
                   <div
-                    className="flex items-center px-2 py-1.5 text-[13px] rounded-sm hover:bg-accent cursor-pointer"
+                    className="flex items-center px-2 py-1.5 text-sm rounded-sm hover:bg-accent cursor-pointer"
                     onClick={handleBatchFavorites}
                   >
                     <Heart className="mr-2 h-3.5 w-3.5" /> 喜欢
                   </div>
                   <div
-                    className="flex items-center px-2 py-1.5 text-[13px] rounded-sm hover:bg-accent cursor-pointer"
+                    className="flex items-center px-2 py-1.5 text-sm rounded-sm hover:bg-accent cursor-pointer"
                     onClick={handleBatchDownload}
                   >
                     <Download className="mr-2 h-3.5 w-3.5" /> 下载
                   </div>
                   <div
-                    className="flex items-center px-2 py-1.5 text-[13px] rounded-sm hover:bg-accent cursor-pointer"
+                    className="flex items-center px-2 py-1.5 text-sm rounded-sm hover:bg-accent cursor-pointer"
                     onClick={() => setIsAddToPlaylistOpen(true)}
                   >
                     <ListPlus className="mr-2 h-3.5 w-3.5" /> 添加到歌单
                   </div>
-                  {onBatchConvertToSimplified && (
-                    <div
-                      className="flex items-center px-2 py-1.5 text-[13px] rounded-sm hover:bg-accent cursor-pointer"
-                      data-testid="batch-convert-traditional"
-                      onClick={handleBatchConvertToSimplified}
-                    >
-                      <Languages className="mr-2 h-3.5 w-3.5" /> 写入简体标签
-                    </div>
-                  )}
                   {(onRemove || onBatchRemove) && (
                     <>
                       <div className="border-t my-1" />
                       <div
-                        className="flex items-center px-2 py-1.5 text-[13px] rounded-sm hover:bg-accent cursor-pointer text-destructive"
+                        className="flex items-center px-2 py-1.5 text-sm rounded-sm hover:bg-accent cursor-pointer text-destructive"
                         onClick={handleBatchRemove}
                       >
                         <Trash2 className="mr-2 h-3.5 w-3.5" /> {removeLabel}
@@ -543,7 +636,7 @@ export function MusicTrackList({
   );
   return (
     <div className="flex flex-col w-full" ref={internalRef}>
-      {renderHeader()}
+      {hideHeader ? null : renderHeader()}
       <DndContext
         sensors={sensors}
         collisionDetection={closestCenter}
@@ -561,7 +654,7 @@ export function MusicTrackList({
             style={{ height: virtualizer.getTotalSize() }}
           >
             {virtualizer.getVirtualItems().map((item) => {
-              const track = tracks[item.index];
+              const track = displayTracks[item.index];
               const content = track ? (
                 <MusicTrackItem
                   track={track}
@@ -575,18 +668,22 @@ export function MusicTrackList({
                   onSelect={() => toggleSelect(track.id)}
                   // 长按任意一行切换这行的选中状态，并以该状态作为整段滑动的笔刷：
                   // 起点选中 → 后续划过的行全选中；起点取消 → 后续全取消
-                  onLongPress={() => {
-                    const paintSelected = !selectedIds.has(track.id);
-                    setIsSelectionMode(true);
-                    onSelectionModeChange?.(true);
-                    setSelectedIds((prev) => {
-                      const next = new Set(prev);
-                      if (paintSelected) next.add(track.id);
-                      else next.delete(track.id);
-                      return next;
-                    });
-                    startDragSelect(track.id, paintSelected);
-                  }}
+                  onLongPress={
+                    hideHeader
+                      ? undefined
+                      : () => {
+                          const paintSelected = !selectedIds.has(track.id);
+                          setIsSelectionMode(true);
+                          onSelectionModeChange?.(true);
+                          setSelectedIds((prev) => {
+                            const next = new Set(prev);
+                            if (paintSelected) next.add(track.id);
+                            else next.delete(track.id);
+                            return next;
+                          });
+                          startDragSelect(track.id, paintSelected);
+                        }
+                  }
                   onRemove={
                     !isSelectionMode && onRemove && showItemRemove
                       ? () => onRemove(track)
@@ -595,6 +692,7 @@ export function MusicTrackList({
                   removeLabel={removeLabel}
                   confirmRemove={confirmRemove}
                   quality={quality}
+                  showCover={showCover}
                   showSourceBadge={
                     isSelectionMode || storeShowBadge || showSourceBadge
                   }

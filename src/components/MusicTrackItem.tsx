@@ -7,7 +7,7 @@ import {
   sourceBadgeStyles,
   sourceLabels,
 } from "@/types/music";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { toastUtils } from "@/lib/utils/toast";
 import toast from "react-hot-toast";
 import { useShallow } from "zustand/react/shallow";
@@ -16,8 +16,18 @@ import { MusicTrackMobileMenu } from "./MusicTrackMobileMenu";
 import { MusicTrackVariants } from "./MusicTrackVariants";
 import { Checkbox } from "./ui/checkbox";
 import { Badge } from "./ui/badge";
-import { DatabaseZap, DollarSign, Gem, GripVertical } from "lucide-react";
+import {
+  DatabaseZap,
+  DollarSign,
+  Gem,
+  GripVertical,
+  Pause,
+  Play,
+} from "lucide-react";
 import { useDownloadStore } from "@/store/download-store";
+import { CachedImage } from "./CachedImage";
+import { musicApi } from "@/lib/music-api";
+import { t2s, t2sArtists } from "@/lib/utils/t2s";
 
 // 预定义 Badge 样式，避免每次渲染都重新计算
 const PRIVILEGE_BADGES = {
@@ -52,6 +62,61 @@ function getPrivilegeBadge(track: MusicTrack) {
   return null;
 }
 
+/**
+ * 行首封面（列表「带封面」模式下代替序号）。
+ *
+ * 曲目只带 `pic_id`，真正的图片地址要按音源换（网易云 / QQ / 本地反查 …），
+ * 所以这里按行懒解析：`musicApi.getPic` 自带内存 + 磁盘缓存，同一首不会重复请求。
+ * 图片本身交给 CachedImage：等 decode 完成再显示，不会出现半张图逐行刷出来。
+ */
+function TrackCoverThumb({
+  track,
+  isCurrent,
+  isPlaying,
+}: {
+  track: MusicTrack | MergedMusicTrack;
+  isCurrent?: boolean;
+  isPlaying?: boolean;
+}) {
+  const [src, setSrc] = useState<string | null>(() =>
+    track.pic_id?.startsWith("http") ? track.pic_id : null
+  );
+
+  const picId = track.pic_id;
+  const source = track.source;
+
+  useEffect(() => {
+    if (!picId || picId.startsWith("http")) return;
+    let alive = true;
+    musicApi
+      .getPic(picId, source, 120, track as MusicTrack)
+      .then((url) => {
+        if (alive && url) setSrc(url);
+      })
+      .catch(() => undefined);
+    return () => {
+      alive = false;
+    };
+    // track 对象每次渲染都可能变，用会真正影响结果的字段做依赖
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [picId, source]);
+
+  return (
+    <div className="relative h-10 w-10 shrink-0 overflow-hidden rounded-md bg-muted">
+      <CachedImage src={src} alt={track.name} size={80} />
+      {isCurrent && (
+        <div className="absolute inset-0 flex items-center justify-center bg-black/40">
+          {isPlaying ? (
+            <Pause className="h-3.5 w-3.5 fill-current text-white" />
+          ) : (
+            <Play className="h-3.5 w-3.5 fill-current text-white" />
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 interface MusicTrackItemProps {
   track: MusicTrack | MergedMusicTrack;
   playlistId?: string;
@@ -70,6 +135,8 @@ interface MusicTrackItemProps {
   isDownloaded?: boolean; // 可选，未传则从 store 按需读取
   quality?: string;
   showSourceBadge?: boolean;
+  /** 行首显示封面（代替序号）。推荐流这类「无表头」列表用 */
+  showCover?: boolean;
   className?: string;
   style?: React.CSSProperties;
   dragHandleProps?: React.HTMLAttributes<HTMLDivElement>;
@@ -93,6 +160,7 @@ export function MusicTrackItem({
   isDownloaded,
   quality = "192",
   showSourceBadge = true,
+  showCover,
   className,
   style,
   dragHandleProps,
@@ -107,6 +175,11 @@ export function MusicTrackItem({
         addToNextPlay: state.addToNextPlay,
       }))
     );
+  // 列表级 UI 偏好由行组件自己读 store（与 showSourceBadge 同一套路），
+  // 这样所有经过 MusicTrackList 的列表都统一受这一个开关控制。
+  const highlightCurrentTrack = useMusicStore(
+    (state) => state.highlightCurrentTrack
+  );
 
   // 按需读取下载状态（虚拟列表保证活跃 Item 极少，按需 selector 远比父组件全量 map 高效）
   const downloadKey = buildDownloadKey(track.source, track.id);
@@ -183,14 +256,25 @@ export function MusicTrackItem({
       data-track-id={track.id}
       style={style}
       className={cn(
-        "group grid gap-4 items-center px-4 py-2.5 transition-all text-sm cursor-pointer",
-        "grid-cols-[1.75rem_1fr_auto]",
-        isSelected && showCheckbox ? "bg-primary/10" : "hover:bg-muted/50",
+        "group grid items-center px-4 py-2.5 transition-all text-sm cursor-pointer",
+        showCover
+          ? "gap-3 grid-cols-[2.5rem_1fr_auto]"
+          : "gap-4 grid-cols-[1.75rem_1fr_auto]",
+        isSelected && showCheckbox
+          ? "bg-primary/10"
+          : highlightCurrentTrack && isCurrent
+            ? "bg-primary/10"
+            : "hover:bg-muted/50",
         className
       )}
     >
       <div
-        className="col-span-2 grid grid-cols-[1.75rem_1fr] gap-4 items-center"
+        className={cn(
+          "col-span-2 grid items-center",
+          showCover
+            ? "gap-3 grid-cols-[2.5rem_1fr]"
+            : "gap-4 grid-cols-[1.75rem_1fr]"
+        )}
         onClick={handleRowClick}
         onTouchStart={handleRowTouchStart}
         onTouchMove={handleRowTouchMove}
@@ -205,6 +289,12 @@ export function MusicTrackItem({
               checked={isSelected}
               onClick={(e) => e.stopPropagation()}
               onCheckedChange={() => onSelect?.()}
+            />
+          ) : showCover ? (
+            <TrackCoverThumb
+              track={track}
+              isCurrent={isCurrent}
+              isPlaying={isPlaying}
             />
           ) : (
             <div className="relative w-4 h-4 flex items-center justify-center">
@@ -234,8 +324,8 @@ export function MusicTrackItem({
               isCurrent && "text-primary"
             )}
           >
-            <span className="truncate" title={track.name}>
-              {track.name}
+            <span className="truncate" title={t2s(track.name)}>
+              {t2s(track.name)}
             </span>
 
             {showSourceBadge && (
@@ -269,8 +359,8 @@ export function MusicTrackItem({
             <MusicTrackVariants variants={variants} />
           </div>
           <div className="text-xs text-muted-foreground truncate opacity-70">
-            {track.artist.join(" / ")}
-            {track.album && ` • ${track.album}`}
+            {t2sArtists(track.artist).join(" / ")}
+            {track.album && ` • ${t2s(track.album)}`}
           </div>
         </div>
       </div>

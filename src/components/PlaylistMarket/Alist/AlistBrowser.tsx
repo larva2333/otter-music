@@ -24,6 +24,7 @@ import {
 import { cn } from "@/lib/utils";
 import { logger } from "@/lib/logger";
 import toast from "react-hot-toast";
+import { t2s } from "@/lib/utils/t2s";
 
 const splitPath = (path: string) => {
   if (!path || path === "/") return [{ name: "根目录", path: "/" }];
@@ -196,12 +197,15 @@ const TrackItem = ({
 }) => {
   const fmt = getFormat(track.url_id);
   const sizeStr = formatSize(size);
+  const highlightCurrentTrack = useMusicStore((s) => s.highlightCurrentTrack);
   return (
     <div
       onClick={onClick}
       className={cn(
         LIST_ITEM_CLASS,
-        isActive ? "bg-primary/10 text-primary" : "text-foreground/90"
+        isActive
+          ? cn("text-primary", highlightCurrentTrack && "bg-primary/10")
+          : "text-foreground/90"
       )}
     >
       <div className="flex items-center gap-3 min-w-0 flex-1">
@@ -220,7 +224,7 @@ const TrackItem = ({
               isActive && "font-semibold"
             )}
           >
-            {track.name}
+            {t2s(track.name)}
           </span>
           {(parent || sizeStr || fmt) && (
             <div className="flex items-center gap-1.5 text-xs text-muted-foreground/50 mt-0.5">

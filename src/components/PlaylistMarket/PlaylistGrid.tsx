@@ -1,6 +1,7 @@
 import { memo, type CSSProperties } from "react";
 import { MarketPlaylist } from "@/lib/netease/netease-types";
 import { CachedImage } from "@/components/CachedImage";
+import { t2s } from "@/lib/utils/t2s";
 
 interface PlaylistGridProps {
   list: MarketPlaylist[];
@@ -50,7 +51,7 @@ export const PlaylistGrid = memo(function PlaylistGrid({
           </div>
           <div className="px-0.5">
             <h3 className="text-sm font-medium leading-snug line-clamp-2 text-foreground/80 group-hover:text-primary transition-colors cursor-pointer">
-              {item.name}
+              {t2s(item.name)}
             </h3>
           </div>
         </div>

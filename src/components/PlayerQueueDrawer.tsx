@@ -19,6 +19,7 @@ import { cn } from "@/lib/utils";
 import { useHistoryStore } from "@/store/history-store";
 import { useMusicStore } from "@/store/music-store";
 import type { MusicTrack } from "@/types/music";
+import { t2s, t2sArtists } from "@/lib/utils/t2s";
 
 interface PlayerQueueDrawerProps {
   queue: MusicTrack[];
@@ -54,13 +55,16 @@ function QueueTrackItem({
   itemRef,
 }: QueueTrackItemProps) {
   const coverUrl = useMusicCover(track);
+  const highlightCurrentTrack = useMusicStore(
+    (state) => state.highlightCurrentTrack
+  );
 
   const handleRemove = async (e: React.MouseEvent) => {
     e.stopPropagation();
     if (
       isCurrent &&
       !(await confirmDialog({
-        title: `确定删除《${track.name}》吗？`,
+        title: `确定删除《${t2s(track.name)}》吗？`,
         destructive: true,
         confirmText: "删除",
       }))
@@ -75,10 +79,10 @@ function QueueTrackItem({
       ref={itemRef}
       role="button"
       tabIndex={0}
-      aria-label={`播放 ${track.name}`}
+      aria-label={`播放 ${t2s(track.name)}`}
       className={cn(
         "grid grid-cols-[40px_1fr_auto] items-center gap-3 rounded-xl px-3 py-2 transition-colors hover:bg-muted/60 active:bg-muted",
-        isCurrent && "bg-muted/50"
+        isCurrent && highlightCurrentTrack && "bg-primary/10"
       )}
       onClick={onSelect}
       onKeyDown={(e) => {
@@ -112,10 +116,10 @@ function QueueTrackItem({
             isCurrent ? "text-primary" : "text-foreground"
           )}
         >
-          {track.name}
+          {t2s(track.name)}
         </span>
         <span className="text-sm text-muted-foreground/70 truncate leading-tight">
-          {track.artist.join(" / ")}
+          {t2sArtists(track.artist).join(" / ")}
         </span>
       </div>
 
@@ -124,7 +128,7 @@ function QueueTrackItem({
           className="rounded-lg p-2 text-muted-foreground/50 hover:text-foreground"
           onClick={handleRemove}
           title={`删除`}
-          aria-label={`删除 ${track.name}`}
+          aria-label={`删除 ${t2s(track.name)}`}
         >
           <X className="h-5 w-5" />
         </button>

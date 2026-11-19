@@ -16,12 +16,11 @@ export const DEFAULT_VINYL_COLOR = "#0A0A0A";
 export const TRANSPARENT_VINYL_COLOR = "transparent";
 
 /**
- * 「上次浏览位置」的出厂值：歌单广场第一个分类 = 全部。
+ * 「上次浏览位置」的出厂值：发现页默认落在「推荐」。
  * 退出应用 / 冷启动时都回到这里，App 不记忆上次停在哪个分类。
  */
 export const DEFAULT_BROWSE_POSITION = {
-  lastPlaylistCategory: "全部",
-  lastFeaturedTab: "",
+  lastPlaylistCategory: "recommend",
   lastBillboardGroup: "songs",
 } as const;
 
@@ -35,8 +34,7 @@ export interface UiSlice {
   searchSource: MusicSource;
   sourceConfigs: SourceConfig[];
   lastPlaylistCategory: string;
-  lastMineTab: "recommend" | "created" | "subscribed" | "albums";
-  lastFeaturedTab: string;
+  lastMineTab: "created" | "subscribed" | "albums";
   lastBillboardGroup: "songs" | "albums" | "artists";
   /** 歌单广场常驻分类的自定义顺序；null 表示未自定义（使用默认序列） */
   playlistCategoryOrder: string[] | null;
@@ -57,6 +55,12 @@ export interface UiSlice {
   /** 黑胶盘面颜色（hex，或 "transparent" 表示透明） */
   vinylColor: string;
   showSourceBadge: boolean;
+  /** 歌曲列表中给正在播放的歌曲整行加背景高亮 */
+  highlightCurrentTrack: boolean;
+  /** 播放条是否显示封面取色的渐变背景；关闭时回退卡片底色 */
+  showBarBackground: boolean;
+  /** 浅色主题下播放条/播放页是否使用浅色背景；关闭时按深色取色 */
+  lightThemeLightBackground: boolean;
   lyricAlign: LyricAlign;
   lyricFontSize: number;
   lyricOffset: number;
@@ -74,13 +78,10 @@ export interface UiSlice {
   setSearchSource: (source: MusicSource) => void;
   setSourceConfigs: (configs: SourceConfig[]) => void;
   setLastPlaylistCategory: (category: string) => void;
-  setLastMineTab: (
-    tab: "recommend" | "created" | "subscribed" | "albums"
-  ) => void;
-  setLastFeaturedTab: (tab: string) => void;
+  setLastMineTab: (tab: "created" | "subscribed" | "albums") => void;
   setLastBillboardGroup: (group: "songs" | "albums" | "artists") => void;
   /**
-   * 把「上次浏览到哪儿」归零：分类回到第一个「全部」、精选子 tab 与榜单分组
+   * 把「上次浏览到哪儿」归零：分类回到第一个「全部」、榜单分组
    * 回到默认。退出应用时调用，保证下次进来看不到上次停的位置。
    * 注意只清位置，不清已缓存的数据（列表快照仍在，切回不会白屏）。
    */
@@ -100,6 +101,9 @@ export interface UiSlice {
   setCoverStyle: (style: CoverStyle) => void;
   setVinylColor: (color: string) => void;
   setShowSourceBadge: (show: boolean) => void;
+  setHighlightCurrentTrack: (highlight: boolean) => void;
+  setShowBarBackground: (show: boolean) => void;
+  setLightThemeLightBackground: (enable: boolean) => void;
   setLyricAlign: (align: LyricAlign) => void;
   setLyricFontSize: (size: number) => void;
   setLyricOffset: (offset: number) => void;
@@ -118,8 +122,7 @@ export const createUiSlice: StateCreator<MusicState, [], [], UiSlice> = (
   searchSource: "all",
   sourceConfigs: DEFAULT_SOURCE_CONFIGS,
   lastPlaylistCategory: DEFAULT_BROWSE_POSITION.lastPlaylistCategory,
-  lastMineTab: "recommend",
-  lastFeaturedTab: DEFAULT_BROWSE_POSITION.lastFeaturedTab,
+  lastMineTab: "created",
   lastBillboardGroup: DEFAULT_BROWSE_POSITION.lastBillboardGroup,
   playlistCategoryOrder: null,
   enableAutoMatch: true,
@@ -136,6 +139,9 @@ export const createUiSlice: StateCreator<MusicState, [], [], UiSlice> = (
   coverStyle: "original",
   vinylColor: DEFAULT_VINYL_COLOR,
   showSourceBadge: true,
+  highlightCurrentTrack: true,
+  showBarBackground: true,
+  lightThemeLightBackground: true,
   lyricAlign: "center",
   lyricFontSize: 15,
   lyricOffset: -0.5,
@@ -151,12 +157,10 @@ export const createUiSlice: StateCreator<MusicState, [], [], UiSlice> = (
   setLastPlaylistCategory: (lastPlaylistCategory) =>
     set({ lastPlaylistCategory }),
   setLastMineTab: (lastMineTab) => set({ lastMineTab }),
-  setLastFeaturedTab: (lastFeaturedTab) => set({ lastFeaturedTab }),
   setLastBillboardGroup: (lastBillboardGroup) => set({ lastBillboardGroup }),
   resetBrowsePosition: () =>
     set({
       lastPlaylistCategory: DEFAULT_BROWSE_POSITION.lastPlaylistCategory,
-      lastFeaturedTab: DEFAULT_BROWSE_POSITION.lastFeaturedTab,
       lastBillboardGroup: DEFAULT_BROWSE_POSITION.lastBillboardGroup,
     }),
   setPlaylistCategoryOrder: (playlistCategoryOrder) =>
@@ -179,6 +183,11 @@ export const createUiSlice: StateCreator<MusicState, [], [], UiSlice> = (
   setCoverStyle: (coverStyle) => set({ coverStyle }),
   setVinylColor: (vinylColor) => set({ vinylColor }),
   setShowSourceBadge: (showSourceBadge) => set({ showSourceBadge }),
+  setHighlightCurrentTrack: (highlightCurrentTrack) =>
+    set({ highlightCurrentTrack }),
+  setShowBarBackground: (showBarBackground) => set({ showBarBackground }),
+  setLightThemeLightBackground: (lightThemeLightBackground) =>
+    set({ lightThemeLightBackground }),
   setLyricAlign: (lyricAlign) => set({ lyricAlign }),
   setLyricFontSize: (lyricFontSize) => set({ lyricFontSize }),
   setLyricOffset: (lyricOffset) => set({ lyricOffset }),

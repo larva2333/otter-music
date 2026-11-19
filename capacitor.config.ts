@@ -8,6 +8,10 @@ const config: CapacitorConfig = {
     SystemBars: {
       insetsHandling: "css",
     },
+    // 只用来监听键盘开合（判断「返回键被输入法吃掉」），不改 WebView 尺寸行为
+    Keyboard: {
+      resizeOnFullScreen: false,
+    },
   },
 };
 

@@ -8,6 +8,7 @@ import { RefreshCcw, Music, ListMusic, Info } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import toast from "react-hot-toast";
 import { format } from "date-fns";
+import { t2s, t2sArtists } from "@/lib/utils/t2s";
 
 // 统一的列表项组件
 function DeletedItem({
@@ -119,8 +120,8 @@ export function TrashPage() {
                   <DeletedItem
                     key={track.id}
                     icon={Music}
-                    title={track.name}
-                    subtitle={track.artist?.join(", ") || "未知歌手"}
+                    title={t2s(track.name)}
+                    subtitle={t2sArtists(track.artist).join(", ") || "未知歌手"}
                     date={track.update_time}
                     onRestore={() => {
                       restoreFromFavorites(track.id);
@@ -144,7 +145,7 @@ export function TrashPage() {
                   <DeletedItem
                     key={playlist.id}
                     icon={ListMusic}
-                    title={playlist.name}
+                    title={t2s(playlist.name)}
                     subtitle={`${playlist.tracks.length} 首歌曲`}
                     date={playlist.update_time}
                     onRestore={() => {

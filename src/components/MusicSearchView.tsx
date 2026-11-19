@@ -15,6 +15,7 @@ import { Search, X, Loader2 } from "lucide-react";
 import { getExactKey } from "@/lib/utils/music-key";
 import { useDebounce } from "@/hooks/use-debounce";
 import { useExitLayer } from "@/hooks/useExitLayer";
+import { useSearchBackClear } from "@/hooks/useSearchBackClear";
 import { musicApi } from "@/lib/music-api";
 import { useMusicStore } from "@/store/music-store";
 import {
@@ -126,6 +127,7 @@ export function MusicSearchView({
   const wrapperRef = useRef<HTMLDivElement>(null);
   const isSearchingRef = useRef(false);
   const isInputFocusedRef = useRef(false);
+  const [isInputFocused, setIsInputFocused] = useState(false);
   const suggestionContextRef = useRef<{
     query: string;
     suggestions: SearchSuggestionItem[];
@@ -266,6 +268,7 @@ export function MusicSearchView({
 
   const handleInputFocus = () => {
     isInputFocusedRef.current = true;
+    setIsInputFocused(true);
     if (!searchQuery.trim()) {
       openHistory();
       return;
@@ -275,6 +278,7 @@ export function MusicSearchView({
 
   const handleInputBlur = () => {
     isInputFocusedRef.current = false;
+    setIsInputFocused(false);
     setShowSuggestions(false);
   };
 
@@ -436,6 +440,16 @@ export function MusicSearchView({
     const id = pushExitLayer({ close: closeHistory });
     return () => popExitLayer(id);
   }, [showHistory, searchQuery, pushExitLayer, popExitLayer]);
+
+  // 输入框聚焦时返回键不退出发现页：一次返回就清空搜索词并收起键盘。
+  // 有内容时直接复用 resetSearch（清空结果 + 失焦），和「有内容」那层行为一致，
+  // 只是把「收键盘 / 清空」两步合成一步。
+  useSearchBackClear({
+    focused: isInputFocused,
+    value: searchQuery,
+    onClear: () => resetSearch(),
+    onDismiss: () => searchInputRef.current?.blur(),
+  });
 
   /* ---------------- 请求核心 ---------------- */
   useEffect(() => {
@@ -716,7 +730,7 @@ export function MusicSearchView({
                   searchInputRef.current?.blur();
                   setShowHistory(false);
                 }}
-                className="-mr-1.5 h-7 w-auto min-w-[108px] shrink-0 border-0 bg-transparent! px-2 text-[13px] text-muted-foreground shadow-none hover:text-foreground focus:ring-0"
+                className="-mr-1.5 h-7 w-auto min-w-[108px] shrink-0 border-0 bg-transparent! px-2 text-sm text-muted-foreground shadow-none hover:text-foreground focus:ring-0"
               >
                 <SelectValue />
               </SelectTrigger>
@@ -729,7 +743,7 @@ export function MusicSearchView({
                   <SelectItem
                     key={opt.value}
                     value={opt.value}
-                    className="pl-1 whitespace-nowrap text-[13px]"
+                    className="pl-1 whitespace-nowrap text-sm"
                   >
                     {opt.label}
                   </SelectItem>

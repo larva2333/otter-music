@@ -20,6 +20,7 @@ import { getUpNameCache } from "@/lib/bilibili/up-name-cache";
 import { useDetailPage } from "@/hooks/useDetailPage";
 import { useImportPlaylist } from "@/hooks/useImportPlaylist";
 import { Button } from "@/components/ui/button";
+import { t2s } from "@/lib/utils/t2s";
 
 interface BilibiliCollectionDetailProps {
   id: string | null;
@@ -119,9 +120,9 @@ export function BilibiliCollectionDetail({
 
   const genericDetail: GenericDetailData | undefined = detail
     ? {
-        title: detail.title,
+        title: t2s(detail.title),
         coverUrl: detail.coverUrl,
-        creator: detail.upName || undefined,
+        creator: t2s(detail.upName) || undefined,
         countDesc: `${detail.trackCount} 个视频`,
         fallbackIcon: <ListMusic className="h-8 w-8 text-primary/80" />,
       }
@@ -144,7 +145,7 @@ export function BilibiliCollectionDetail({
           disabled={activeTracks.length === 0}
           onClick={() =>
             detail &&
-            importPlaylist(detail.title, detail.coverUrl, activeTracks)
+            importPlaylist(t2s(detail.title), detail.coverUrl, activeTracks)
           }
         >
           <Import className="w-5 h-5" />

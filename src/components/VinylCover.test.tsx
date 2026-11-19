@@ -165,4 +165,45 @@ describe("VinylCover", () => {
     // 暂停抬到 -40°，唱头完全离开盘面并离盘更远（盘心 50,58 半径 43）
     expect(arm().style.transform).toBe("rotate(-40deg)");
   });
+
+  it("切歌受控状态 away 让唱臂荡到 -62°，且根部轴心始终固定在基座中心", async () => {
+    await render(true);
+    const arm = () =>
+      document.body.querySelector(
+        '[data-testid="vinyl-tonearm"]'
+      ) as SVGElement;
+    // 轴心与基座 div 的中心重合：left 50% / top -9% + 半高 3% = -6%
+    expect(arm().style.transformOrigin).toBe("50% -6%");
+
+    await act(async () => {
+      root?.render(
+        <VinylCover
+          src="https://example.com/cover.jpg"
+          isPlaying={true}
+          armState="away"
+        />
+      );
+    });
+    expect(arm().style.transform).toBe("rotate(-62deg)");
+    // 荡开后根部轴心不变
+    expect(arm().style.transformOrigin).toBe("50% -6%");
+    // 基座是独立节点、不参与旋转，所以根部视觉上完全不动
+    const base = document.body.querySelector(
+      "[data-vinyl-control]"
+    ) as HTMLElement;
+    expect(base.style.transform).toBe("");
+
+    await act(async () => {
+      root?.render(
+        <VinylCover
+          src="https://example.com/cover.jpg"
+          isPlaying={true}
+          armState="playing"
+        />
+      );
+    });
+    // 新歌切入后唱臂落回沟槽
+    expect(arm().style.transform).toBe("rotate(-4deg)");
+    expect(arm().style.transformOrigin).toBe("50% -6%");
+  });
 });

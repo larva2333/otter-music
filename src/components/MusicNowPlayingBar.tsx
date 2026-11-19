@@ -12,6 +12,8 @@ import { VinylCover } from "./VinylCover";
 import { useCallback } from "react";
 import toast from "react-hot-toast";
 import type { MusicTrack } from "@/types/music";
+import { useIsDarkTheme } from "@/hooks/useIsDarkTheme";
+import { t2s, t2sArtists } from "@/lib/utils/t2s";
 
 interface MusicNowPlayingBarProps {
   onOpenFullScreen?: () => void;
@@ -45,6 +47,8 @@ export function MusicNowPlayingBar({
     playTrackAsNext,
     coverStyle,
     vinylColor,
+    showBarBackground,
+    lightThemeLightBackground,
   } = useMusicStore(
     useShallow((state) => ({
       isPlaying: state.isPlaying,
@@ -64,17 +68,30 @@ export function MusicNowPlayingBar({
       playTrackAsNext: state.playTrackAsNext,
       coverStyle: state.coverStyle,
       vinylColor: state.vinylColor,
+      showBarBackground: state.showBarBackground,
+      lightThemeLightBackground: state.lightThemeLightBackground,
     }))
   );
 
   const currentTrack = queue[currentIndex] || null;
 
-  // 胶囊背景取封面主色：top→bottom 是汽水算法在 Lab 空间压过亮度的主色变体，
-  // 既保留封面色相又足够深，白字在两种主题下都能读。取色失败时回退原卡片色。
-  const { colors } = useCoverColors(coverUrl);
-  const tinted = !!colors;
+  // 胶囊背景取封面主色：深色主题压到深色区间（白字可读），
+  // 浅色主题抬到高明度区间（浅底深字），两种主题都保留封面色相。
+  // 取色失败时回退卡片底色。
+  const isDarkTheme = useIsDarkTheme();
+  const isLightTheme = !isDarkTheme;
+  // 浅色主题是否走浅色取色由设置决定；关闭背景开关时干脆不取色（省一次图片解码）
+  const useLightColors = isLightTheme && lightThemeLightBackground;
+  const { colors } = useCoverColors(
+    showBarBackground ? coverUrl : null,
+    useLightColors ? "light" : "dark"
+  );
+  const tinted = showBarBackground && !!colors;
   const [r1, g1, b1] = colors?.top ?? [0, 0, 0];
   const [r2, g2, b2] = colors?.bottom ?? [0, 0, 0];
+  // 文字明暗只看取到的背景本身：切换主题的那一拍可能还沿用上一模式的颜色，
+  // 按背景亮度选黑白，任何时候都不会出现白字浅底。
+  const lightTint = tinted && 0.299 * r1 + 0.587 * g1 + 0.114 * b1 > 150;
   const barStyle = tinted
     ? {
         backgroundImage: `linear-gradient(to right, rgb(${r1}, ${g1}, ${b1}) 0%, rgb(${r2}, ${g2}, ${b2}) 100%)`,
@@ -125,7 +142,11 @@ export function MusicNowPlayingBar({
         // 胶囊必须是实色：半透明 / 磨砂会让滚动内容透上来，滑动时忽明忽暗
         className={cn(
           "flex items-center transition-all duration-300 gap-2 px-2 py-1.5 rounded-full border border-transparent shadow-[0_2px_10px_rgba(15,46,66,0.10)]",
-          tinted ? "border-white/10" : "bg-card dark:border-white/10"
+          lightTint
+            ? "border-black/5"
+            : tinted
+              ? "border-white/10"
+              : "bg-card dark:border-white/10"
         )}
         style={barStyle}
       >
@@ -165,18 +186,22 @@ export function MusicNowPlayingBar({
             <span
               className={cn(
                 "font-medium transition-all duration-300 text-sm",
-                tinted ? "text-white" : "text-foreground"
+                tinted && !lightTint ? "text-white" : "text-foreground"
               )}
             >
-              {currentTrack.name}
+              {t2s(currentTrack.name)}
             </span>
             <span
               className={cn(
                 "truncate transition-all duration-300 text-xs",
-                tinted ? "text-white/70" : "text-muted-foreground"
+                lightTint
+                  ? "text-foreground/60"
+                  : tinted
+                    ? "text-white/70"
+                    : "text-muted-foreground"
               )}
             >
-              - {currentTrack.artist?.join(", ")}
+              - {t2sArtists(currentTrack.artist).join(", ")}
             </span>
           </p>
         </div>
@@ -187,9 +212,11 @@ export function MusicNowPlayingBar({
           <button
             className={cn(
               "p-1 transition-colors focus:outline-none",
-              tinted
-                ? "text-white/70 hover:text-white"
-                : "text-muted-foreground hover:text-foreground"
+              lightTint
+                ? "text-foreground/60 hover:text-foreground"
+                : tinted
+                  ? "text-white/70 hover:text-white"
+                  : "text-muted-foreground hover:text-foreground"
             )}
             onClick={skipToPrevious}
             aria-label="上一首"
@@ -214,9 +241,11 @@ export function MusicNowPlayingBar({
                 strokeWidth="2.4"
                 className={cn(
                   "transition-all duration-300",
-                  tinted
-                    ? "text-white/25"
-                    : "text-foreground/20 dark:text-foreground/28"
+                  lightTint
+                    ? "text-foreground/15"
+                    : tinted
+                      ? "text-white/25"
+                      : "text-foreground/20 dark:text-foreground/28"
                 )}
               />
               {/* 进度圆环 - 从上方开始 */}
@@ -230,7 +259,7 @@ export function MusicNowPlayingBar({
                 strokeLinecap="round"
                 className={cn(
                   "transition-[stroke-dashoffset] duration-300",
-                  tinted ? "text-white" : "text-primary"
+                  tinted && !lightTint ? "text-white" : "text-primary"
                 )}
                 strokeDasharray={circumference}
                 strokeDashoffset={strokeDashoffset}
@@ -242,7 +271,7 @@ export function MusicNowPlayingBar({
             <button
               className={cn(
                 "absolute inset-0 flex items-center justify-center transition-colors focus:outline-none",
-                tinted
+                tinted && !lightTint
                   ? "text-white hover:text-white/80"
                   : "text-primary hover:text-primary/80"
               )}
@@ -263,9 +292,11 @@ export function MusicNowPlayingBar({
           <button
             className={cn(
               "p-1 transition-colors focus:outline-none",
-              tinted
-                ? "text-white/70 hover:text-white"
-                : "text-muted-foreground hover:text-foreground"
+              lightTint
+                ? "text-foreground/60 hover:text-foreground"
+                : tinted
+                  ? "text-white/70 hover:text-white"
+                  : "text-muted-foreground hover:text-foreground"
             )}
             onClick={skipToNext}
             aria-label="下一首"
@@ -290,9 +321,11 @@ export function MusicNowPlayingBar({
             <button
               className={cn(
                 "transition-all shrink-0 focus:outline-none p-1.5",
-                tinted
-                  ? "text-white/70 hover:text-white"
-                  : "text-muted-foreground hover:text-foreground"
+                lightTint
+                  ? "text-foreground/60 hover:text-foreground"
+                  : tinted
+                    ? "text-white/70 hover:text-white"
+                    : "text-muted-foreground hover:text-foreground"
               )}
               aria-label="播放列表"
             >

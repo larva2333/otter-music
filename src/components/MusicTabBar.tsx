@@ -66,8 +66,14 @@ export function MusicTabBar() {
             key={tab.id}
             to={tab.path}
             replace={isActive}
-            onClick={() => {
-              if (isActive) emitTabReclick(tab.id);
+            onClick={(event) => {
+              if (!isActive) return;
+              // 已经在当前 tab 上：只派发「再次点击」事件（页面据此回到顶部 / 切分类），
+              // 不再重导航。重导航会把 location.state 换成新的 pageDir，页面进入动画
+              // 会重播一次（方向还会从 forward 翻成 back），看起来就是「晃一下」；
+              // 顺带避免把 /mine?type=xxx 这类带查询参数的地址冲掉。
+              event.preventDefault();
+              emitTabReclick(tab.id);
             }}
             state={{
               pageDir:

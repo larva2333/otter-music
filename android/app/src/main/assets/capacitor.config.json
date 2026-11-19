@@ -5,6 +5,9 @@
   "plugins": {
     "SystemBars": {
       "insetsHandling": "css"
+    },
+    "Keyboard": {
+      "resizeOnFullScreen": false
     }
   }
 }

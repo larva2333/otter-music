@@ -6,14 +6,8 @@ import { useMusicStore } from "@/store/music-store";
 export type RootSwipeTab = "search" | "favorites" | "mine" | "settings";
 export type SwipeEdgeDir = "next" | "prev";
 
-/** 歌单页 5 个 type 的顺序；跨 tab 滑动的落点取两端 */
-export const MINE_TYPE_IDS = [
-  "mine",
-  "netease",
-  "queue",
-  "history",
-  "local",
-] as const;
+/** 歌单页 4 个 type 的顺序；跨 tab 滑动的落点取两端 */
+export const MINE_TYPE_IDS = ["mine", "queue", "history", "local"] as const;
 
 /**
  * 四个根 tab 的滑动边界统一处理。

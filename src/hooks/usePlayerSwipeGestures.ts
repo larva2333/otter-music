@@ -38,6 +38,11 @@ type Axis = "none" | "horizontal" | "vertical" | "ignored";
  * 轻点是在容器的 touchend 里处理的，子元素的 click.stopPropagation 拦不住它，
  * 不排除的话点歌词页的「从此句播放」会顺带切回封面。
  */
+/** 写单个元素的位移；抽成独立函数，避免把 hook 参数里的 ref 当成被修改的对象 */
+function writeTranslate(el: HTMLElement | null, x: number) {
+  if (el) el.style.translate = x ? `${x}px` : "";
+}
+
 function isInteractiveTarget(target: EventTarget | null): boolean {
   const element = target as HTMLElement | null;
   if (!element || typeof element.closest !== "function") return false;
@@ -55,12 +60,28 @@ interface GestureState {
   dy: number;
 }
 
+/**
+ * 横滑跟手的直接 DOM 写入目标。
+ *
+ * 不传时走原来的 state 驱动（单测用）；传了之后跟手位移直接写这两个元素的
+ * `translate`，不再每帧 setState —— 否则每次 touchmove 都会重渲染整个播放页
+ * （歌词、按钮、图标全在树里），在 Android WebView 上就是肉眼可见的卡顿。
+ */
+export interface SwipeDragRefs {
+  /** 封面容器：写横滑位移 */
+  cover?: React.RefObject<HTMLElement | null>;
+  /** 唱臂容器：写反向位移，抵消封面平移让唱臂固定在屏幕原位 */
+  tonearm?: React.RefObject<HTMLElement | null>;
+}
+
 interface UsePlayerSwipeGesturesOptions {
   /** 歌词页等需要原生滚动的手势场景，置 false 后所有手势都不响应 */
   enabled: boolean;
   onClose: () => void;
   onPrev: () => void;
   onNext: () => void;
+  /** 提供后横滑跟手走 DOM 直写（无每帧重渲染）；不提供则回退到 state */
+  dragRefs?: SwipeDragRefs;
   /**
    * 轻点回调。放在 touchend 里执行而不是等浏览器的 click：
    * 上滑/滚动之后的惯性期内，WebView 会把紧跟的 tap 用于「停止滚动」，
@@ -114,6 +135,7 @@ export function usePlayerSwipeGestures({
   onNext,
   onTap,
   containerRef,
+  dragRefs,
 }: UsePlayerSwipeGesturesOptions): UsePlayerSwipeGesturesResult {
   const [dragY, setDragY] = useState(0);
   const [isDragging, setIsDragging] = useState(false);
@@ -125,6 +147,45 @@ export function usePlayerSwipeGestures({
   const gestureRef = useRef<GestureState | null>(null);
   const suppressClickUntilRef = useRef(0);
   const tapHandledAtRef = useRef(0);
+
+  /**
+   * DOM 直写通道：跟手期间把位移直接写到封面/唱臂元素上，一帧最多写一次。
+   * dragRefs 由调用方用 useMemo 稳定，闭包捕获即可始终指向同一组节点。
+   */
+  const dragXDomRef = useRef(0);
+  const dragRafRef = useRef<number | null>(null);
+  const horizFlagRef = useRef(false);
+
+  const writeDragX = useCallback(
+    (x: number) => {
+      dragXDomRef.current = x;
+      if (!dragRefs) return;
+      writeTranslate(dragRefs.cover?.current ?? null, x);
+      // 唱臂反向平移同样的距离，抵消封面的位移 —— 唱臂固定在屏幕原位
+      writeTranslate(dragRefs.tonearm?.current ?? null, -x);
+    },
+    [dragRefs]
+  );
+
+  /** 帧节流：一帧内多次 touchmove 只写一次 DOM，避免多余样式计算 */
+  const scheduleDragX = useCallback(
+    (x: number) => {
+      dragXDomRef.current = x;
+      if (dragRafRef.current !== null) return;
+      dragRafRef.current = requestAnimationFrame(() => {
+        dragRafRef.current = null;
+        writeDragX(dragXDomRef.current);
+      });
+    },
+    [writeDragX]
+  );
+
+  const cancelDragFrame = useCallback(() => {
+    if (dragRafRef.current !== null) {
+      cancelAnimationFrame(dragRafRef.current);
+      dragRafRef.current = null;
+    }
+  }, []);
 
   /**
    * 只靠 CSS `touch-action: none` 在部分 WebView 上并不够：
@@ -154,7 +215,12 @@ export function usePlayerSwipeGestures({
     setDragY(0);
     setIsHorizDragging(false);
     setDragX(0);
-  }, []);
+    if (dragRefs) {
+      horizFlagRef.current = false;
+      cancelDragFrame();
+      writeDragX(0);
+    }
+  }, [cancelDragFrame, writeDragX, dragRefs]);
 
   const handleTouchStart = useCallback(
     (e: React.TouchEvent) => {
@@ -177,6 +243,11 @@ export function usePlayerSwipeGestures({
         setIsDragging(false);
         setDragX(0);
         setIsHorizDragging(false);
+        if (dragRefs) {
+          horizFlagRef.current = false;
+          cancelDragFrame();
+          writeDragX(0);
+        }
       }
 
       // 多指（缩放、双指下滑）不参与手势，避免识别成切歌
@@ -201,7 +272,7 @@ export function usePlayerSwipeGestures({
         dy: 0,
       };
     },
-    [enabled, onTap]
+    [enabled, onTap, cancelDragFrame, writeDragX, dragRefs]
   );
 
   const handleTouchMove = useCallback(
@@ -239,12 +310,24 @@ export function usePlayerSwipeGestures({
         setIsDragging(true);
         setDragY(Math.min(dy * DRAG_RESISTANCE, MAX_DRAG));
       } else if (gesture.axis === "horizontal") {
-        // 跟手：封面随手指横移，松手后才决定回弹还是切歌
-        setIsHorizDragging(true);
-        setDragX(dx * HORIZONTAL_RESISTANCE);
+        // 跟手：封面随手指横移，松手后才决定回弹还是切歌。
+        // 有 DOM 直写目标时只写样式、不 setState —— 这是横滑丝滑的关键：
+        // 每个 touchmove 都 setState 会让整个播放页每帧重渲染，肉眼可见地卡。
+        const x = dx * HORIZONTAL_RESISTANCE;
+        if (dragRefs) {
+          // 方向刚判定的第一帧切一次 transition（关掉过渡才跟手），只此一次
+          if (!horizFlagRef.current) {
+            horizFlagRef.current = true;
+            setIsHorizDragging(true);
+          }
+          scheduleDragX(x);
+        } else {
+          setIsHorizDragging(true);
+          setDragX(x);
+        }
       }
     },
-    [enabled]
+    [enabled, scheduleDragX, dragRefs]
   );
 
   const handleTouchEnd = useCallback(
@@ -305,6 +388,44 @@ export function usePlayerSwipeGestures({
           Math.abs(dx) >= SWIPE_THRESHOLD ||
           (isFling && Math.abs(dx) >= FLING_DISTANCE);
         setIsHorizDragging(false);
+        horizFlagRef.current = false;
+
+        // DOM 直写路径：位移不经过 state，松手时只需要一帧写回即可
+        if (dragRefs) {
+          if (!shouldSwitch) {
+            // 距离不够：归零，刚恢复的 CSS 过渡会把封面吸回原位
+            scheduleDragX(0);
+            return;
+          }
+
+          markClickSuppression();
+          // 自然方向：左滑看到下一首，右滑回到上一首。
+          // 新封面从「滑走的那一侧的反方向」进场：左滑时从右侧进来，右滑时从左侧进来。
+          const direction = dx < 0 ? 1 : -1;
+          const entryOffset =
+            Math.round((window.innerWidth || 360) * SLIDE_IN_RATIO) * direction;
+
+          // 丢掉跟手阶段还没落盘的写入，避免和入场首帧打架
+          cancelDragFrame();
+          setSlideSnap(true);
+          if (dx < 0) onNext();
+          else onPrev();
+
+          // 三帧时序，保证每一帧的 transition 状态都已由 React 落到 DOM：
+          // 第 1 帧关掉过渡后瞬移到进场起点；
+          // 第 2 帧让 React 把过渡写回去；
+          // 第 3 帧归零，由 CSS 过渡把新封面滑到位。
+          requestAnimationFrame(() => {
+            writeDragX(entryOffset);
+            requestAnimationFrame(() => {
+              setSlideSnap(false);
+              requestAnimationFrame(() => writeDragX(0));
+            });
+          });
+          return;
+        }
+
+        // 未传 DOM 目标（单测场景）：保持原来的 state 驱动
         setDragX(0);
 
         if (!shouldSwitch) {
@@ -313,14 +434,10 @@ export function usePlayerSwipeGestures({
         }
 
         markClickSuppression();
-        // 自然方向：左滑看到下一首，右滑回到上一首。
-        // 新封面从「滑走的那一侧的反方向」进场：左滑时从右侧进来，右滑时从左侧进来。
         const direction = dx < 0 ? 1 : -1;
         const entryOffset =
           Math.round((window.innerWidth || 360) * SLIDE_IN_RATIO) * direction;
 
-        // 先把新封面瞬移到进场起点（这一帧不能有过渡），再下一帧归零，
-        // 由 CSS 过渡把它滑到位；两帧之间夹一个 rAF 让浏览器吃到起始位置。
         setDragEntryX(entryOffset);
         setSlideSnap(true);
         if (dx < 0) onNext();
@@ -337,7 +454,18 @@ export function usePlayerSwipeGestures({
 
       reset();
     },
-    [enabled, onClose, onNext, onPrev, onTap, reset]
+    [
+      enabled,
+      onClose,
+      onNext,
+      onPrev,
+      onTap,
+      reset,
+      cancelDragFrame,
+      scheduleDragX,
+      writeDragX,
+      dragRefs,
+    ]
   );
 
   const shouldSuppressClick = useCallback(() => {

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   SquarePlus,
   MoreVertical,
@@ -42,24 +42,23 @@ import { useSearchParams } from "react-router-dom";
 import { MINE_TYPE_IDS, useRootTabSwipe } from "@/hooks/use-root-tab-swipe";
 import { useActivePlaylists } from "@/hooks/use-active-playlists";
 import { PlaylistImportDrawer } from "./PlaylistImportDrawer";
-import { MineSection } from "./PlaylistMarket/MineSection";
 import { getPlayAllStartIndex, usePlayHelper } from "@/hooks/usePlayHelper";
 import { usePlayContextHandler } from "@/hooks/usePlayContextHandler";
 import { useSwipeCategories } from "@/hooks/use-swipe-categories";
 import { useTabReclick } from "@/hooks/use-tab-reclick";
 import { cn } from "@/lib/utils";
 import type { MusicTrack } from "@/types/music";
+import { t2s } from "@/lib/utils/t2s";
 
 interface MinePageProps {
   onSelectPlaylist: (playlistId: string) => void;
 }
 
-/** 「歌单」页的 5 个 type */
-type MineTab = "mine" | "netease" | "queue" | "history" | "local";
+/** 「歌单」页的 4 个 type */
+type MineTab = "mine" | "queue" | "history" | "local";
 
 const MINE_TABS: { id: MineTab; label: string }[] = [
   { id: "mine", label: "我的歌单" },
-  { id: "netease", label: "网易云歌单" },
   { id: "queue", label: "播放列表" },
   { id: "history", label: "播放历史" },
   { id: "local", label: "本地音乐" },
@@ -70,10 +69,16 @@ export function MinePage({ onSelectPlaylist }: MinePageProps) {
   const requestedType = searchParams.get("type");
   const rootRef = useRef<HTMLDivElement>(null);
   const tabsBarRef = useRef<HTMLDivElement>(null);
-  const neteaseScrollRef = useRef<HTMLDivElement>(null);
   // 跨 tab 滑动落点由 ?type= 带过来（本地 state 不跨路由保留）
-  const [activeTab, setActiveTab] = useState<MineTab>(
-    MINE_TYPE_IDS.find((id) => id === requestedType) ?? "mine"
+  const initialTab: MineTab =
+    MINE_TYPE_IDS.find((id) => id === requestedType) ?? "mine";
+  const [activeTab, setActiveTab] = useState<MineTab>(initialTab);
+  /* 四个 type 的内容一旦进来就常驻，切 tab 只切「显示」不再整块重挂。
+     不这么做的话，每次点 tab 都要重新挂载整份列表（本地音乐 435 首实测
+     一次 250~300ms 的主线程长任务），连续点几下就能明显感觉到卡、慢半拍。
+     visitedTabs 与 activeTab 在同一个事件里一起更新，避免「面板晚一帧才出现」。 */
+  const [visitedTabs, setVisitedTabs] = useState<Set<MineTab>>(
+    () => new Set<MineTab>([initialTab])
   );
   const [indicator, setIndicator] = useState<{
     left: number;
@@ -104,21 +109,26 @@ export function MinePage({ onSelectPlaylist }: MinePageProps) {
   const queueOnPlay = usePlayContextHandler(queue, "queue");
   const activePlaylists = useActivePlaylists();
 
+  /* 切 type 的唯一入口：同时把目标面板标记为「已挂载」，两件事在同一次
+     setState 批次里，面板不会晚一帧才出现。 */
+  const activateTab = useCallback((id: MineTab) => {
+    setVisitedTabs((prev) => (prev.has(id) ? prev : new Set(prev).add(id)));
+    setActiveTab(id);
+  }, []);
+
   // 内容左右滑切换 type；滑到边界外沿链落到底部导航 tab
   //（最左「我的歌单」右滑 → 喜欢，最右「本地音乐」左滑 → 设置）
   useSwipeCategories(rootRef, {
     ids: MINE_TABS.map((t) => t.id),
     activeId: activeTab,
-    onChange: (id) => setActiveTab(id as MineTab),
+    onChange: (id) => activateTab(id as MineTab),
     onEdge: useRootTabSwipe("mine"),
   });
 
   // 再次点击底部「歌单」tab：在当前页内循环切换 type（不跨页、不回第一个）
   useTabReclick("mine", () => {
-    setActiveTab((prev) => {
-      const index = MINE_TABS.findIndex((t) => t.id === prev);
-      return MINE_TABS[(index + 1) % MINE_TABS.length].id;
-    });
+    const index = MINE_TABS.findIndex((t) => t.id === activeTab);
+    activateTab(MINE_TABS[(index + 1) % MINE_TABS.length].id);
   });
 
   // 选中滑块位置跟随当前 type 平移（rAF 里测量，避免同步 setState 级联渲染）
@@ -240,7 +250,7 @@ export function MinePage({ onSelectPlaylist }: MinePageProps) {
           <button
             key={tab.id}
             data-tab-id={tab.id}
-            onClick={() => setActiveTab(tab.id)}
+            onClick={() => activateTab(tab.id)}
             className={cn(
               "relative flex-1 h-8 rounded-full text-sm font-medium whitespace-nowrap transition-colors",
               activeTab === tab.id
@@ -253,10 +263,18 @@ export function MinePage({ onSelectPlaylist }: MinePageProps) {
         ))}
       </div>
 
-      {activeTab === "mine" && (
+      {visitedTabs.has("mine") && (
         <div
-          data-page-scroll=""
-          className="flex-1 min-h-0 overflow-y-auto scrollbar-hide px-5 pb-bottom-stack"
+          data-mine-pane="mine"
+          // 只有当前可见的面板挂 data-page-scroll：回顶 / 滚动恢复都按这个标记
+          // 找容器，隐藏面板不该参与（display:none 时写 scrollTop 无效，
+          // 位置会原样保留，切回来还在原处）。
+          data-page-scroll={activeTab === "mine" ? "" : undefined}
+          aria-hidden={activeTab !== "mine"}
+          className={cn(
+            "flex-1 min-h-0 overflow-y-auto scrollbar-hide px-5 pb-bottom-stack",
+            activeTab !== "mine" && "hidden"
+          )}
         >
           {/* 标题栏 */}
           <div className="flex items-center justify-between mb-3 px-1 pt-1">
@@ -267,7 +285,7 @@ export function MinePage({ onSelectPlaylist }: MinePageProps) {
               <Button
                 variant="ghost"
                 size="sm"
-                className="h-8 gap-1 text-[13px] text-muted-foreground hover:text-foreground px-2"
+                className="h-8 gap-1 text-sm text-muted-foreground hover:text-foreground px-2"
                 onClick={() => setIsImportOpen(true)}
               >
                 <Link2 className="h-[13px] w-[13px]" />
@@ -276,7 +294,7 @@ export function MinePage({ onSelectPlaylist }: MinePageProps) {
               <Button
                 variant="ghost"
                 size="sm"
-                className="h-8 gap-1 text-[13px] text-muted-foreground hover:text-foreground px-2"
+                className="h-8 gap-1 text-sm text-muted-foreground hover:text-foreground px-2"
                 onClick={() => setIsCreateOpen(true)}
               >
                 <SquarePlus className="h-[13px] w-[13px]" />
@@ -331,7 +349,7 @@ export function MinePage({ onSelectPlaylist }: MinePageProps) {
                   <div
                     className="relative shrink-0 overflow-hidden rounded-lg"
                     role="button"
-                    aria-label={`播放歌单 ${playlist.name}`}
+                    aria-label={`播放歌单 ${t2s(playlist.name)}`}
                     onClick={(e) => {
                       e.stopPropagation();
                       playPlaylist(
@@ -376,7 +394,7 @@ export function MinePage({ onSelectPlaylist }: MinePageProps) {
                               : "text-foreground"
                           }`}
                         >
-                          {playlist.name}
+                          {t2s(playlist.name)}
                         </p>
                         <p className="text-xs text-muted-foreground/80 mt-0.5">
                           {
@@ -403,7 +421,7 @@ export function MinePage({ onSelectPlaylist }: MinePageProps) {
                         onClick={(e) => {
                           e.stopPropagation();
                           setEditingPlaylistId(playlist.id);
-                          setEditingName(playlist.name);
+                          setEditingName(t2s(playlist.name));
                         }}
                       >
                         <Pencil className="h-4 w-4 mr-2" />
@@ -428,18 +446,15 @@ export function MinePage({ onSelectPlaylist }: MinePageProps) {
         </div>
       )}
 
-      {activeTab === "netease" && (
+      {visitedTabs.has("queue") && (
         <div
-          ref={neteaseScrollRef}
-          data-page-scroll=""
-          className="flex-1 min-h-0 overflow-y-auto scrollbar-hide px-5 pb-bottom-stack pt-2"
+          data-mine-pane="queue"
+          aria-hidden={activeTab !== "queue"}
+          className={cn(
+            "flex-1 min-h-0 flex-col",
+            activeTab === "queue" ? "flex" : "hidden"
+          )}
         >
-          <MineSection embedded scrollRef={neteaseScrollRef} />
-        </div>
-      )}
-
-      {activeTab === "queue" && (
-        <div className="flex-1 min-h-0 flex flex-col">
           <QueuePage
             embedded
             queue={queue}
@@ -454,8 +469,15 @@ export function MinePage({ onSelectPlaylist }: MinePageProps) {
         </div>
       )}
 
-      {activeTab === "history" && (
-        <div className="flex-1 min-h-0 flex flex-col">
+      {visitedTabs.has("history") && (
+        <div
+          data-mine-pane="history"
+          aria-hidden={activeTab !== "history"}
+          className={cn(
+            "flex-1 min-h-0 flex-col",
+            activeTab === "history" ? "flex" : "hidden"
+          )}
+        >
           <MusicPlaylistView
             title="播放历史"
             tracks={history}
@@ -491,8 +513,15 @@ export function MinePage({ onSelectPlaylist }: MinePageProps) {
         </div>
       )}
 
-      {activeTab === "local" && (
-        <div className="flex-1 min-h-0 flex flex-col">
+      {visitedTabs.has("local") && (
+        <div
+          data-mine-pane="local"
+          aria-hidden={activeTab !== "local"}
+          className={cn(
+            "flex-1 min-h-0 flex-col",
+            activeTab === "local" ? "flex" : "hidden"
+          )}
+        >
           <LocalMusicPage
             embedded
             onPlay={handlePlay}

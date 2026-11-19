@@ -107,7 +107,7 @@ export function PlayerProgressBar({
         <div className="relative w-full h-1.5 group-hover:h-2 transition-all rounded-full bg-white/20">
           <div
             className={cn(
-              "absolute inset-y-0 left-0 bg-white rounded-full flex items-center justify-end shadow-[0_0_10px_rgba(255,255,255,0.3)]",
+              "absolute inset-y-0 left-0 bg-white rounded-full flex items-center justify-end player-progress-glow",
               !isDragging && "transition-all"
             )}
             style={{ width: `${displayProgress}%` }}

@@ -332,7 +332,6 @@ describe("RootLayout", () => {
     window.history.replaceState({ idx: 0 }, "");
     useMusicStore.setState({
       lastPlaylistCategory: "说唱",
-      lastFeaturedTab: "Billboard",
     });
 
     renderLayout(["/search"]);
@@ -342,7 +341,6 @@ describe("RootLayout", () => {
     });
 
     expect(useMusicStore.getState().lastPlaylistCategory).toBe("说唱");
-    expect(useMusicStore.getState().lastFeaturedTab).toBe("Billboard");
     expect(capacitorMocks.minimizeApp).toHaveBeenCalledTimes(1);
   });
 

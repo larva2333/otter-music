@@ -233,6 +233,118 @@
   }
 }
 
+/*
+ * 全屏播放页的浅色底（浅色主题 + 封面主题色背景时挂在页面根节点）。
+ *
+ * Tailwind v4 的 text-white / bg-white / ring-white / border-white 全走
+ * --color-white 这个变量，在这里改写一次，页内所有白字、白色的半透明底与描边
+ * 就整体反过来，不必逐处改类名。
+ * 例外：主播放按钮仍是白底墨色图标（见 .player-play-btn-light），
+ * 浅底上把它反转成深底白箭头会显得很重。
+ * 模糊封面 / 自定义照片这两种背景仍是暗的，不加这个类。
+ */
+.player-tone-light {
+  --color-white: #17222b;
+  --color-black: #ffffff;
+  --player-progress-glow: rgba(23, 34, 43, 0.28);
+}
+
+/* 进度条已播放段的白色光晕：浅色底上白光晕看不见，换成同色深光晕 */
+.player-progress-glow {
+  box-shadow: 0 0 10px var(--player-progress-glow, rgba(255, 255, 255, 0.3));
+}
+
+/*
+ * 黑胶盘面：盘是黑的，高光/托盘边必须保持真白色。
+ * 播放页浅色底会把 white 反转成深色，这里在盘内把变量还原。
+ */
+.vinyl-tone {
+  --color-white: #ffffff;
+  --color-black: #000000;
+}
+
+/*
+ * 歌词：深色底上文字是白的，靠黑色投影压住彩色背景；
+ * 浅色底上文字是墨色，投影必须换成白色柔光——
+ * 黑投影落在浅底上会糊成一团脏灰，字反而看不清。
+ */
+.lyric-main {
+  text-shadow:
+    0 1px 12px rgba(0, 0, 0, 0.45),
+    0 0 3px rgba(0, 0, 0, 0.3);
+}
+
+.lyric-active .lyric-main {
+  text-shadow:
+    0 1px 18px rgba(0, 0, 0, 0.55),
+    0 0 4px rgba(0, 0, 0, 0.35);
+}
+
+.lyric-trans {
+  color: rgba(255, 255, 255, 0.4);
+  text-shadow: 0 1px 10px rgba(0, 0, 0, 0.45);
+}
+
+.lyric-active .lyric-trans {
+  color: rgba(255, 255, 255, 0.75);
+}
+
+/*
+ * 浅色底：墨色字落在浅底上本来就够对比，不需要投影；
+ * 原来那层黑色投影在浅底上只会糊成一圈脏灰，直接去掉，字才锐利。
+ */
+.player-tone-light .lyric-main {
+  text-shadow: none;
+}
+
+.player-tone-light .lyric-active .lyric-main {
+  text-shadow: none;
+}
+
+/*
+ * 当前行强调：只靠不透明度区分，在浅色底上几乎看不出来。
+ * 用字重拉开层次（600 在 15px 下还是太接近 500，直接 700）。
+ * 不用 scale 放大 —— WebView 里非整数倍缩放会把字形重新栅格化，字反而发虚。
+ */
+.lyric-active .lyric-main {
+  font-weight: 700;
+}
+
+/*
+ * 浅色底：原来非当前行 0.6 配黑投影糊成一团脏灰，
+ * 后来提到 0.88 又和当前行分不出层次。
+ * 现在去掉投影、非当前行 0.64（纯墨色不投影，仍读得清），
+ * 层次同时靠字重和明度两条通道拉。
+ */
+.player-tone-light .lyric-line:not(.lyric-active) {
+  color: rgba(23, 34, 43, 0.64);
+}
+
+.player-tone-light .lyric-active {
+  color: #17222b;
+}
+
+.player-tone-light .lyric-trans {
+  color: rgba(23, 34, 43, 0.52);
+  text-shadow: none;
+}
+
+.player-tone-light .lyric-active .lyric-trans {
+  color: rgba(23, 34, 43, 0.88);
+}
+
+/*
+ * 浅色底的主播放按钮：白底 + 墨色图标（和深色底同一套视觉），
+ * 浅底上白圆靠一圈淡投影浮起来，不能直接反转成深底白箭头。
+ */
+.player-play-btn-light {
+  background-color: #ffffff;
+  color: #17222b;
+  box-shadow:
+    0 6px 18px rgba(23, 34, 43, 0.22),
+    0 0 0 1px rgba(23, 34, 43, 0.06);
+}
+
 @layer base {
   * {
     @apply border-border outline-ring/50;
@@ -416,10 +528,14 @@
 
 /* 根 tab 左右滑动时的页面进入动画：只动新页面，旧页面立即让位，
    避免两个带滚动容器的页面同时存在时互相抢滚动。 */
+/* 根 tab 切换的进入动画：位移 + 淡入。
+   28px/220ms 太轻，手指点完几乎看不出换页（像硬切），这里放大到 56px、
+   透明度从 0 起、时长 280ms，方向感能直接看出来；曲线仍是先快后慢的
+   减速曲线，收尾不会拖沓。 */
 @keyframes page-enter-forward {
   from {
-    opacity: 0.4;
-    transform: translateX(28px);
+    opacity: 0;
+    transform: translateX(56px);
   }
   to {
     opacity: 1;
@@ -429,8 +545,8 @@
 
 @keyframes page-enter-back {
   from {
-    opacity: 0.4;
-    transform: translateX(-28px);
+    opacity: 0;
+    transform: translateX(-56px);
   }
   to {
     opacity: 1;
@@ -439,11 +555,11 @@
 }
 
 .page-enter-forward {
-  animation: page-enter-forward 220ms cubic-bezier(0.32, 0.72, 0, 1);
+  animation: page-enter-forward 280ms cubic-bezier(0.25, 0.7, 0.3, 1);
 }
 
 .page-enter-back {
-  animation: page-enter-back 220ms cubic-bezier(0.32, 0.72, 0, 1);
+  animation: page-enter-back 280ms cubic-bezier(0.25, 0.7, 0.3, 1);
 }
 
 @media (prefers-reduced-motion: reduce) {

@@ -323,4 +323,55 @@ describe("usePlayerSwipeGestures 播放页手势", () => {
     expect(h.getLatest().slideSnap).toBe(false);
     h.cleanup();
   });
+
+  it("提供 DOM 目标时横滑直接写样式，不产生每帧 state 更新", () => {
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    const cover = document.createElement("div");
+    const tonearm = document.createElement("div");
+    const dragRefs = {
+      cover: { current: cover },
+      tonearm: { current: tonearm },
+    };
+
+    let latest: ReturnType<typeof usePlayerSwipeGestures> | undefined;
+
+    function TestHarness() {
+      const gestures = usePlayerSwipeGestures({
+        enabled: true,
+        onClose: vi.fn(),
+        onPrev: vi.fn(),
+        onNext: vi.fn(),
+        dragRefs,
+      });
+      useEffect(() => {
+        latest = gestures;
+      }, [gestures]);
+      return null;
+    }
+
+    act(() => {
+      root.render(<TestHarness />);
+    });
+
+    act(() => {
+      latest!.handlers.onTouchStart(touch(300, 300));
+      latest!.handlers.onTouchMove(touch(200, 305));
+    });
+    // 跟手期间位移只写 DOM，dragX state 保持 0 —— 整页不会因此重渲染
+    expect(latest!.dragX).toBe(0);
+
+    act(() => {
+      vi.advanceTimersByTime(20);
+    });
+
+    // 封面跟手左移 95px（-100 × 0.95），唱臂反向 +95px 抵消
+    expect(cover.style.translate).toBe("-95px");
+    expect(tonearm.style.translate).toBe("95px");
+    expect(latest!.dragX).toBe(0);
+
+    act(() => root.unmount());
+    container.remove();
+  });
 });

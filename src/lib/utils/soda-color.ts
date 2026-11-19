@@ -34,6 +34,23 @@ export const PARAMS = {
   gradientDL: -22,
 } as const;
 
+/** 浅色主题背景参数：主色抬到高明度区间（L 82–92），只留一点色相。 */
+export const LIGHT_PARAMS = {
+  // 封面主色亮度若在深色区间（L≈35），抬到这个浅色带；亮封面也不会顶到纯白
+  lScale: 0.55,
+  lBias: 60,
+  lMin: 82,
+  lMax: 92,
+  // 色度压到三成：浅底上高饱和会像荧光色块，且文字对比度不足
+  cGain: 0.75,
+  cMax: 30,
+  // 浅色下大落差会显脏，只留一点点方向感
+  gradientDL: -6,
+} as const;
+
+/** 取色目标：深色主题压暗背景，浅色主题提亮背景 */
+export type ColorMode = "dark" | "light";
+
 /** 固定种子的伪随机数发生器，保证取色结果可复现。 */
 function mulberry32(seed: number): () => number {
   let a = seed >>> 0;
@@ -177,35 +194,36 @@ export function dominantColor(pixels: RGB[]): RGB {
 }
 
 /** 由主色计算背景基色：Lab 下压缩并钳制亮度、增益色度、保持色相。 */
-export function backgroundColor(pixels: RGB[]): RGB {
+export function backgroundColor(pixels: RGB[], mode: ColorMode = "dark"): RGB {
+  const p = mode === "light" ? LIGHT_PARAMS : PARAMS;
   const lab = srgbToLab(dominantColor(pixels));
-  const l = Math.min(
-    PARAMS.lMax,
-    Math.max(PARAMS.lMin, PARAMS.lScale * lab[0] + PARAMS.lBias)
-  );
-  const c = Math.min(PARAMS.cMax, Math.hypot(lab[1], lab[2]) * PARAMS.cGain);
+  const l = Math.min(p.lMax, Math.max(p.lMin, p.lScale * lab[0] + p.lBias));
+  const c = Math.min(p.cMax, Math.hypot(lab[1], lab[2]) * p.cGain);
   const h = Math.atan2(lab[2], lab[1]);
   return labToSrgb([l, c * Math.cos(h), c * Math.sin(h)]);
 }
 
-/** 生成背景渐变起止色：顶部为基色，底部为基色亮度 -15。 */
-export function gradientStops(pixels: RGB[]): { top: RGB; bottom: RGB } {
-  const base = srgbToLab(backgroundColor(pixels));
-  const bottom: Lab = [
-    Math.max(base[0] + PARAMS.gradientDL, 0),
-    base[1],
-    base[2],
-  ];
+/** 生成背景渐变起止色：顶部为基色，底部为基色亮度按主题落差下移。 */
+export function gradientStops(
+  pixels: RGB[],
+  mode: ColorMode = "dark"
+): { top: RGB; bottom: RGB } {
+  const p = mode === "light" ? LIGHT_PARAMS : PARAMS;
+  const base = srgbToLab(backgroundColor(pixels, mode));
+  const bottom: Lab = [Math.max(base[0] + p.gradientDL, 0), base[1], base[2]];
   return { top: labToSrgb(base), bottom: labToSrgb(bottom) };
 }
 
 /** 从 RGBA 像素缓冲（如 96×96 canvas 的 getImageData 结果）提取背景色方案。 */
-export function extractFromPixels(data: Uint8ClampedArray): SodaColors {
+export function extractFromPixels(
+  data: Uint8ClampedArray,
+  mode: ColorMode = "dark"
+): SodaColors {
   const pixels: RGB[] = [];
   for (let i = 0; i < data.length; i += 4) {
     pixels.push([data[i], data[i + 1], data[i + 2]]);
   }
-  const stops = gradientStops(pixels);
+  const stops = gradientStops(pixels, mode);
   return {
     dominant: dominantColor(pixels).map(Math.round) as RGB,
     top: stops.top,

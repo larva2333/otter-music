@@ -57,6 +57,7 @@ import {
   parseBilibiliTrackId,
 } from "@otter-music/shared";
 import { logger } from "@/lib/logger";
+import { t2s, t2sArtists } from "@/lib/utils/t2s";
 
 interface MusicTrackMobileMenuProps {
   track: MusicTrack;
@@ -301,11 +302,11 @@ export function MusicTrackMobileMenu({
             />
             <div className="min-w-0">
               <div className="font-bold line-clamp-2 text-base">
-                {track.name}
+                {t2s(track.name)}
               </div>
               <div className="text-xs text-muted-foreground truncate">
-                {track.artist.join(" / ")}
-                {track.album && ` • ${track.album}`}
+                {t2sArtists(track.artist).join(" / ")}
+                {track.album && ` • ${t2s(track.album)}`}
               </div>
             </div>
           </div>
@@ -390,7 +391,7 @@ export function MusicTrackMobileMenu({
                     }
                   }}
                 >
-                  歌手：{track.artist.join(" / ")}
+                  歌手：{t2sArtists(track.artist).join(" / ")}
                 </ActionButton>
               )}
 
@@ -456,7 +457,7 @@ export function MusicTrackMobileMenu({
                   if (
                     !confirmRemove ||
                     (await confirmDialog({
-                      title: `确定${removeLabel}《${track.name}》吗？`,
+                      title: `确定${removeLabel}《${t2s(track.name)}》吗？`,
                       destructive: true,
                       confirmText: removeLabel,
                     }))

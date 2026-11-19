@@ -5,6 +5,7 @@ import { MusicTrack, sourceBadgeStyles, sourceLabels } from "@/types/music";
 import { Layers, Play } from "lucide-react";
 import { useState } from "react";
 import { toastUtils } from "@/lib/utils/toast";
+import { t2s, t2sArtists } from "@/lib/utils/t2s";
 import toast from "react-hot-toast";
 import { useShallow } from "zustand/react/shallow";
 import { AddToPlaylistDrawer } from "./AddToPlaylistDrawer";
@@ -81,19 +82,19 @@ export function MusicTrackVariants({ variants }: MusicTrackVariantsProps) {
                 <div className="flex-1 min-w-0 flex flex-col">
                   <span
                     className="text-sm font-medium truncate"
-                    title={variant.name}
+                    title={t2s(variant.name)}
                   >
-                    {variant.name}
+                    {t2s(variant.name)}
                   </span>
                   <span
                     className="text-xs text-muted-foreground truncate"
                     title={
-                      variant.artist.join(" / ") +
-                      (variant.album ? ` • ${variant.album}` : "")
+                      t2sArtists(variant.artist).join(" / ") +
+                      (variant.album ? ` • ${t2s(variant.album)}` : "")
                     }
                   >
-                    {variant.artist.join(" / ")}
-                    {variant.album && ` • ${variant.album}`}
+                    {t2sArtists(variant.artist).join(" / ")}
+                    {variant.album && ` • ${t2s(variant.album)}`}
                   </span>
                 </div>
                 <div className="flex items-center gap-1">

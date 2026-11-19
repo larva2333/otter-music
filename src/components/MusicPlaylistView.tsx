@@ -1,10 +1,11 @@
 import { Button } from "@/components/ui/button";
 import { confirmDialog } from "@/components/ui/confirm-dialog";
-import { Play, Search } from "lucide-react";
+import { Play, Search, X } from "lucide-react";
 import { filterTracks } from "@/lib/utils/filter-tracks";
 import { MusicTrackList } from "./MusicTrackList";
 import { Input } from "@/components/ui/input";
-import { useState, useMemo, useRef } from "react";
+import { useState, useMemo, useRef, useCallback } from "react";
+import { cn } from "@/lib/utils";
 import { MusicCover } from "./MusicCover";
 import { PlaylistCover } from "./PlaylistCover";
 import { PlaylistOperations } from "./PlaylistOperations";
@@ -29,7 +30,9 @@ import {
 import { Label } from "@/components/ui/label";
 
 import { format } from "date-fns";
+import { t2s } from "@/lib/utils/t2s";
 import { AddByUrlDrawer } from "./AddByUrlDrawer";
+import { useSearchBackClear } from "@/hooks/useSearchBackClear";
 import { logger } from "@/lib/logger";
 
 interface MusicPlaylistViewProps {
@@ -55,8 +58,23 @@ interface MusicPlaylistViewProps {
   removeLabel?: string;
   confirmRemove?: boolean;
   icon?: React.ReactNode;
-  /** 提供后，多选菜单显示「繁体转简体」 */
-  onBatchConvertToSimplified?: (tracks: MusicTrack[]) => void;
+  /**
+   * 隐藏整个头部（封面 / 标题 / 播放按钮 / 搜索框），只留纯列表。
+   * 推荐流这类「内容即全部」的页面用，避免一块与内容无关的表头占掉半屏。
+   */
+  hideHeader?: boolean;
+  /** 行首显示歌曲封面（代替序号），与 hideHeader 搭配使用 */
+  showTrackCover?: boolean;
+  /**
+   * 头部右上角的操作区（绝对定位）。
+   * 「全盘扫描」这类页面级操作放这里，不跟播放按钮挤在标题下方那一行。
+   */
+  headerRight?: React.ReactNode;
+  /**
+   * 标题文字样式覆盖。默认与「喜欢」页一致（text-base font-bold tracking-tight）；
+   * 「播放列表」这类需要与「我的歌单」标题对齐的页面可传入自己的样式。
+   */
+  titleClassName?: string;
 }
 
 export function MusicPlaylistView({
@@ -77,9 +95,14 @@ export function MusicPlaylistView({
   removeLabel,
   confirmRemove,
   icon,
-  onBatchConvertToSimplified,
+  hideHeader,
+  showTrackCover,
+  headerRight,
+  titleClassName = "text-base font-bold tracking-tight",
 }: MusicPlaylistViewProps) {
   const [searchQuery, setSearchQuery] = useState("");
+  const [isSearchFocused, setIsSearchFocused] = useState(false);
+  const searchInputRef = useRef<HTMLInputElement>(null);
   const [isCoverDialogOpen, setIsCoverDialogOpen] = useState(false);
   const [isAddByUrlOpen, setIsAddByUrlOpen] = useState(false);
   const [coverUrlInput, setCoverUrlInput] = useState("");
@@ -87,6 +110,18 @@ export function MusicPlaylistView({
     Set<string> | undefined
   >();
   const scrollContainerRef = useRef<HTMLDivElement>(null);
+
+  // 搜索框聚焦时，返回键＝清空内容并收起键盘（一步到位），不退出到桌面
+  const dismissSearch = useCallback(() => {
+    searchInputRef.current?.blur();
+    setIsSearchFocused(false);
+  }, []);
+  useSearchBackClear({
+    focused: isSearchFocused,
+    value: searchQuery,
+    onClear: () => setSearchQuery(""),
+    onDismiss: dismissSearch,
+  });
 
   const playlists = useMusicStore(useShallow((state) => state.playlists));
   const playlist = playlists.find((p) => p.id === playlistId);
@@ -207,109 +242,146 @@ export function MusicPlaylistView({
       data-page-scroll=""
       className="flex flex-1 min-h-0 flex-col overflow-y-auto"
     >
-      {/* Header */}
-      <div className="p-4 border-b flex gap-4 bg-muted/10 relative items-end">
-        <div className="h-22 w-22 bg-primary/10 rounded-lg flex items-center justify-center shadow-sm border overflow-hidden shrink-0">
-          {playlist ? (
-            <PlaylistCover
-              playlist={playlist}
-              className="h-full w-full"
-              iconClassName="h-8 w-8 text-primary/80"
-              fallbackIcon={icon}
-            />
-          ) : (
-            <MusicCover
-              src={coverUrl}
-              alt={title}
-              className="h-full w-full"
-              iconClassName="h-8 w-8 text-primary/80"
-              fallbackIcon={icon}
-            />
-          )}
-        </div>
-        <div className="flex-1 space-y-1">
-          <h2 className="text-base font-bold tracking-tight line-clamp-1">
-            {title}
-          </h2>
-          <div className="text-xs text-muted-foreground flex items-center gap-2">
-            <span>{tracks.length} 首歌曲</span>
-            {createdAt && (
-              <>
-                <span>•</span>
-                <span>{format(createdAt, "yyyy-MM-dd")}</span>
-              </>
-            )}
-            {description && (
-              <>
-                <span>•</span>
-                <span>{description}</span>
-              </>
+      {/* Header：尺寸/对齐与「喜欢」页保持一致 */}
+      {hideHeader ? null : (
+        <div className="p-4 border-b flex gap-4 items-end bg-muted/10 relative">
+          <div className="h-20 w-20 bg-primary/10 rounded-lg flex items-center justify-center shadow-sm border overflow-hidden shrink-0 flex-[0_0_80px] min-w-20 min-h-20">
+            {playlist ? (
+              <PlaylistCover
+                playlist={playlist}
+                className="h-full w-full"
+                iconClassName="h-8 w-8 text-primary/80"
+                fallbackIcon={icon}
+              />
+            ) : (
+              <MusicCover
+                src={coverUrl}
+                alt={title}
+                className="h-full w-full"
+                iconClassName="h-8 w-8 text-primary/80"
+                fallbackIcon={icon}
+              />
             )}
           </div>
-          <div className="pt-1 flex gap-2 items-center">
-            <Button
-              onClick={() => onPlay(null)}
-              className="rounded-full px-3 h-8"
-              size="sm"
+          <div className="flex-1 self-stretch flex flex-col justify-center gap-1">
+            <h2
+              className={cn(
+                titleClassName,
+                "line-clamp-1",
+                // 右上角有操作按钮时给标题让位，避免长标题压到按钮下面
+                headerRight && "pr-24"
+              )}
             >
-              <Play className="h-3 w-3 fill-current" />
-            </Button>
-            {action}
-            {playlistId && (
-              <PlaylistOperations
-                onRename={
-                  onRename
-                    ? () => {
-                        const newName = window.prompt(
-                          "请输入新歌单名称",
-                          title
-                        );
-                        if (newName && newName.trim()) {
-                          onRename(playlistId, newName.trim());
+              {t2s(title)}
+            </h2>
+            <div className="text-xs text-muted-foreground flex items-center gap-2">
+              <span>{tracks.length} 首歌曲</span>
+              {createdAt && (
+                <>
+                  <span>•</span>
+                  <span>{format(createdAt, "yyyy-MM-dd")}</span>
+                </>
+              )}
+              {description && (
+                <>
+                  <span>•</span>
+                  <span>{t2s(description)}</span>
+                </>
+              )}
+            </div>
+            <div className="pt-1 flex gap-2 items-center">
+              <Button
+                onClick={() => onPlay(null)}
+                className="rounded-full px-3 h-7"
+                size="sm"
+              >
+                <Play className="size-3 fill-current" />
+              </Button>
+              {action}
+              {playlistId && (
+                <PlaylistOperations
+                  onRename={
+                    onRename
+                      ? () => {
+                          const newName = window.prompt(
+                            "请输入新歌单名称",
+                            t2s(title)
+                          );
+                          if (newName && newName.trim()) {
+                            onRename(playlistId, newName.trim());
+                          }
                         }
-                      }
-                    : undefined
-                }
-                onDeduplicate={handleDeduplicate}
-                onExport={() => exportPlaylist(title, tracks)}
-                onDelete={
-                  onDelete
-                    ? async () => {
-                        if (
-                          await confirmDialog({
-                            title: `确定删除歌单「${title}」吗？`,
-                            destructive: true,
-                            confirmText: "删除",
-                          })
-                        ) {
-                          onDelete(playlistId);
+                      : undefined
+                  }
+                  onDeduplicate={handleDeduplicate}
+                  onExport={() => exportPlaylist(t2s(title), tracks)}
+                  onDelete={
+                    onDelete
+                      ? async () => {
+                          if (
+                            await confirmDialog({
+                              title: `确定删除歌单「${t2s(title)}」吗？`,
+                              destructive: true,
+                              confirmText: "删除",
+                            })
+                          ) {
+                            onDelete(playlistId);
+                          }
                         }
-                      }
-                    : undefined
-                }
-                onSetCover={handleSetCover}
-                onAddByUrl={
-                  isPersonalPlaylist ? () => setIsAddByUrlOpen(true) : undefined
-                }
-                onSort={isPersonalPlaylist ? handleSort : undefined}
-              />
-            )}
+                      : undefined
+                  }
+                  onSetCover={handleSetCover}
+                  onAddByUrl={
+                    isPersonalPlaylist
+                      ? () => setIsAddByUrlOpen(true)
+                      : undefined
+                  }
+                  onSort={isPersonalPlaylist ? handleSort : undefined}
+                />
+              )}
 
-            <div className="relative ml-auto w-32 md:w-48">
-              <Search className="absolute left-2 top-2.5 h-3 w-3 text-muted-foreground md:h-4 md:w-4 md:top-2" />
-              <Input
-                placeholder="搜索..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className="pl-8 h-8 text-xs md:w-48 md:h-9 md:text-sm"
-              />
+              <div className="relative ml-auto flex-1 min-w-0">
+                <Search className="absolute left-2 top-2.5 h-3 w-3 text-muted-foreground md:h-4 md:w-4 md:top-2" />
+                <Input
+                  ref={searchInputRef}
+                  placeholder="搜索..."
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  onFocus={() => setIsSearchFocused(true)}
+                  onBlur={() => setIsSearchFocused(false)}
+                  className={cn(
+                    "pl-8 h-8 text-xs md:h-9 md:text-sm w-full",
+                    searchQuery && "pr-8"
+                  )}
+                />
+                {/* 有内容时显示清除按钮，一键清空搜索词 */}
+                {searchQuery && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSearchQuery("");
+                      searchInputRef.current?.focus();
+                    }}
+                    aria-label="清除搜索"
+                    className="absolute right-2 top-1/2 -translate-y-1/2 h-5 w-5 flex items-center justify-center rounded-full bg-muted-foreground/20 text-muted-foreground hover:bg-muted-foreground/30 hover:text-foreground transition-colors"
+                  >
+                    <X className="h-3 w-3" />
+                  </button>
+                )}
+              </div>
             </div>
           </div>
+
+          {headerRight && (
+            <div className="absolute right-3 top-3 flex items-center gap-1">
+              {headerRight}
+            </div>
+          )}
         </div>
-      </div>
+      )}
 
       {/* List */}
-      <div className="flex-1 min-h-0 bg-background/50">
+      <div className={cn("flex-1 min-h-0", !hideHeader && "bg-background/50")}>
         <MusicTrackList
           tracks={filteredTracks}
           scrollContainerRef={scrollContainerRef}
@@ -330,7 +402,8 @@ export function MusicPlaylistView({
             isPersonalPlaylist && !searchQuery ? handleReorder : undefined
           }
           preselectedIds={dedupeSelectedIds}
-          onBatchConvertToSimplified={onBatchConvertToSimplified}
+          showCover={showTrackCover}
+          hideHeader={hideHeader}
           onSelectionModeChange={(active) => {
             if (!active) setDedupeSelectedIds(undefined);
           }}

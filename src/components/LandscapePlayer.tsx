@@ -23,6 +23,7 @@ import { PlayerQueueDrawer } from "@/components/PlayerQueueDrawer";
 import { useMusicStore } from "@/store/music-store";
 import { usePlayerActions } from "@/hooks/usePlayerActions";
 import toast from "react-hot-toast";
+import { t2s, t2sArtists } from "@/lib/utils/t2s";
 
 const TOP_BAR_AUTO_HIDE_DELAY = 3500;
 
@@ -214,10 +215,10 @@ export function LandscapePlayer({ background, onExit }: LandscapePlayerProps) {
           </div>
           <div className="w-full min-w-0 text-center">
             <p className="truncate text-sm font-semibold text-white">
-              {currentTrack?.name || "未知歌曲"}
+              {t2s(currentTrack?.name) || "未知歌曲"}
             </p>
             <p className="mt-0.5 truncate text-sm text-white/50">
-              {currentTrack?.artist?.join(", ") || "未知歌手"}
+              {t2sArtists(currentTrack?.artist).join(", ") || "未知歌手"}
             </p>
           </div>
         </div>

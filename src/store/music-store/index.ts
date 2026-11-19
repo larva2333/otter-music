@@ -56,7 +56,6 @@ export const useMusicStore = create<MusicState>()(
         // 上次的分类上（会话内的切换不受影响，仍会正常记着）。
         state.lastPlaylistCategory =
           DEFAULT_BROWSE_POSITION.lastPlaylistCategory;
-        state.lastFeaturedTab = DEFAULT_BROWSE_POSITION.lastFeaturedTab;
         state.lastBillboardGroup = DEFAULT_BROWSE_POSITION.lastBillboardGroup;
         // 合并 sourceConfigs：过滤已移除的音源，追加新增音源
         const validSources = new Set(
@@ -91,7 +90,7 @@ export const useMusicStore = create<MusicState>()(
         searchSource: state.searchSource,
         sourceConfigs: state.sourceConfigs,
         lastMineTab: state.lastMineTab,
-        // 不持久化「上次浏览位置」（lastPlaylistCategory / lastFeaturedTab /
+        // 不持久化「上次浏览位置」（lastPlaylistCategory /
         // lastBillboardGroup）：下次进入 App 一律回到第一个分类。
         playlistCategoryOrder: state.playlistCategoryOrder,
         enableAutoMatch: state.enableAutoMatch,
@@ -107,6 +106,9 @@ export const useMusicStore = create<MusicState>()(
         coverStyle: state.coverStyle,
         vinylColor: state.vinylColor,
         showSourceBadge: state.showSourceBadge,
+        highlightCurrentTrack: state.highlightCurrentTrack,
+        showBarBackground: state.showBarBackground,
+        lightThemeLightBackground: state.lightThemeLightBackground,
         lyricAlign: state.lyricAlign,
         lyricFontSize: state.lyricFontSize,
         lyricOffset: state.lyricOffset,

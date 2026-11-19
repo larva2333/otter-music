@@ -188,9 +188,7 @@ export function CoverStyleMenu({
         <div className="space-y-4">
           {/* 封面 / 黑胶 */}
           <section className="space-y-2">
-            <h3 className="text-[11px] tracking-wider text-white/40">
-              封面样式
-            </h3>
+            <h3 className="text-xs tracking-wider text-white/40">封面样式</h3>
             <div className="flex gap-2">
               {STYLE_OPTIONS.map(({ value, label, icon: Icon }) => {
                 const selected = coverStyle === value;
@@ -201,7 +199,7 @@ export function CoverStyleMenu({
                     onClick={() => setCoverStyle(value)}
                     aria-pressed={selected}
                     className={cn(
-                      "flex flex-1 flex-col items-center justify-center gap-1.5 rounded-xl py-2.5 text-[11px] transition-all",
+                      "flex flex-1 flex-col items-center justify-center gap-1.5 rounded-xl py-2.5 text-xs transition-all",
                       selected
                         ? "bg-white/15 text-white ring-1 ring-white/20"
                         : "bg-white/5 text-white/60 hover:bg-white/10 hover:text-white"
@@ -220,9 +218,7 @@ export function CoverStyleMenu({
 
           {/* 修改背景 */}
           <section className="space-y-2">
-            <h3 className="text-[11px] tracking-wider text-white/40">
-              修改背景
-            </h3>
+            <h3 className="text-xs tracking-wider text-white/40">修改背景</h3>
             <div className="grid grid-cols-4 gap-2">
               {BACKGROUND_OPTIONS.map(({ value, label }) => {
                 const selected = fullScreenBackgroundMode === value;
@@ -240,7 +236,7 @@ export function CoverStyleMenu({
                     }
                     aria-pressed={selected}
                     className={cn(
-                      "flex flex-col items-center justify-center gap-1.5 rounded-xl py-2.5 text-[11px] transition-all",
+                      "flex flex-col items-center justify-center gap-1.5 rounded-xl py-2.5 text-xs transition-all",
                       selected
                         ? "bg-white/15 text-white ring-1 ring-white/20"
                         : "bg-white/5 text-white/60 hover:bg-white/10 hover:text-white"
@@ -274,7 +270,7 @@ export function CoverStyleMenu({
                 <button
                   type="button"
                   onClick={handlePickImage}
-                  className="flex-1 rounded-lg bg-white/5 py-2 text-[11px] text-white/60 transition-colors hover:bg-white/10 hover:text-white"
+                  className="flex-1 rounded-lg bg-white/5 py-2 text-xs text-white/60 transition-colors hover:bg-white/10 hover:text-white"
                 >
                   更换照片
                 </button>
@@ -284,7 +280,7 @@ export function CoverStyleMenu({
                     setCustomBackgroundImage(null);
                     setFullScreenBackgroundMode("theme");
                   }}
-                  className="flex-1 rounded-lg bg-white/5 py-2 text-[11px] text-white/60 transition-colors hover:bg-white/10 hover:text-white"
+                  className="flex-1 rounded-lg bg-white/5 py-2 text-xs text-white/60 transition-colors hover:bg-white/10 hover:text-white"
                 >
                   删除照片
                 </button>
@@ -302,9 +298,7 @@ export function CoverStyleMenu({
           {/* 黑胶颜色：仅黑胶风格时有用 */}
           {coverStyle === "vinyl" && (
             <section className="space-y-2">
-              <h3 className="text-[11px] tracking-wider text-white/40">
-                黑胶颜色
-              </h3>
+              <h3 className="text-xs tracking-wider text-white/40">黑胶颜色</h3>
               <div className="flex flex-wrap items-center gap-2">
                 {VINYL_COLORS.map(({ value, label }) => {
                   const selected =
@@ -338,7 +332,7 @@ export function CoverStyleMenu({
                 })}
                 <label
                   title="自定义颜色"
-                  className="flex h-7 w-7 shrink-0 cursor-pointer items-center justify-center rounded-full border-2 border-dashed border-white/30 text-[10px] text-white/60"
+                  className="flex h-7 w-7 shrink-0 cursor-pointer items-center justify-center rounded-full border-2 border-dashed border-white/30 text-2xs text-white/60"
                 >
                   <span>+</span>
                   <input

@@ -51,6 +51,8 @@ import { useCoverWhiteBands } from "@/hooks/useCoverWhiteBands";
 import { useLandscapeMode } from "@/hooks/useLandscapeMode";
 import { usePlayerSwipeGestures } from "@/hooks/usePlayerSwipeGestures";
 import { useSystemBarsStyleOverride } from "@/hooks/useSystemBarsStyleOverride";
+import { useIsDarkTheme } from "@/hooks/useIsDarkTheme";
+import { t2s, t2sArtists } from "@/lib/utils/t2s";
 import { LandscapePlayer } from "@/components/LandscapePlayer";
 
 /**
@@ -77,12 +79,18 @@ const PLAYER_TRANSITION_MS = 420;
  */
 const BG_GLOW_STEPS = 64;
 const BG_DARK_MAX = 0.55;
+/** 浅色底只做极轻的底部压暗：压到 55% 会把浅色渐变直接拉成深色 */
+const BG_LIGHT_DARK_MAX = 0.05;
 
 function clampByte(v: number) {
   return v < 0 ? 0 : v > 255 ? 255 : Math.round(v);
 }
 
-function drawThemeBackground(canvas: HTMLCanvasElement, colors: SodaColors) {
+function drawThemeBackground(
+  canvas: HTMLCanvasElement,
+  colors: SodaColors,
+  darkenMax: number = BG_DARK_MAX
+) {
   const W = canvas.width;
   const H = canvas.height;
   if (W <= 0 || H <= 0) return;
@@ -123,8 +131,8 @@ function drawThemeBackground(canvas: HTMLCanvasElement, colors: SodaColors) {
       alphaTab[j] = glowAlpha * (1 - s);
     }
 
-    // 压暗：底部压到 BG_DARK_MAX，斜率恒定
-    const darken = 1 - BG_DARK_MAX * t;
+    // 压暗：底部压到 darkenMax，斜率恒定（浅色底几乎不压）
+    const darken = 1 - darkenMax * t;
 
     const rowOffset = y * W * 4;
     for (let x = 0; x < W; x++) {
@@ -186,11 +194,14 @@ const BackgroundLayer = memo(
     coverUrl,
     mode,
     photoUrl,
+    isLight = false,
   }: {
     colors: SodaColors | null;
     coverUrl: string | null;
     mode: FullScreenBackgroundMode;
     photoUrl: string | null;
+    /** 浅色主题下的浅色底：渐变已在取色阶段抬亮，这里不再压暗 */
+    isLight?: boolean;
   }) => {
     const showThemeColor = mode === "theme" && !!colors;
     const showCoverMask = mode === "cover" && coverUrl;
@@ -224,14 +235,23 @@ const BackgroundLayer = memo(
         }
         canvas.width = Math.round(cssW * dpr);
         canvas.height = Math.round(cssH * dpr);
-        drawThemeBackground(canvas, colors);
+        drawThemeBackground(
+          canvas,
+          colors,
+          isLight ? BG_LIGHT_DARK_MAX : BG_DARK_MAX
+        );
       };
       raf = requestAnimationFrame(paint);
       return () => cancelAnimationFrame(raf);
-    }, [colors, showThemeColor]);
+    }, [colors, showThemeColor, isLight]);
 
     return (
-      <div className="absolute inset-0 z-[-1] overflow-hidden bg-zinc-950">
+      <div
+        className={cn(
+          "absolute inset-0 z-[-1] overflow-hidden",
+          isLight ? "bg-[#eef2f5]" : "bg-zinc-950"
+        )}
+      >
         {/* 动态颜色层：主渐变 + 光晕 + 压暗 + dither 已合成在同一张图里 */}
         <div
           className={cn(
@@ -321,14 +341,6 @@ export function FullScreenPlayer({
   onClose,
 }: FullScreenPlayerProps) {
   const isMounted = useMounted();
-  /**
-   * 播放器背景恒为深色（封面主色 / zinc-950），系统栏必须用浅色图标。
-   * 否则浅色主题下会按主题设成深色图标，落在深色背景上就是黑底黑图标。
-   *
-   * 延后到展开动画结束再生效：否则点播放条的一瞬间状态栏就跳成浅色图标，
-   * 而此时页面还没铺满，观感是「颜色先变、页面后到」。
-   */
-  useSystemBarsStyleOverride(true, isFullScreen, PLAYER_TRANSITION_MS);
   /** 横屏沉浸模式：手动进入后锁定横屏，由独立的 LandscapePlayer 渲染 */
   const {
     isLandscapeMode,
@@ -377,6 +389,7 @@ export function FullScreenPlayer({
     coverUrl,
     customBackgroundImage,
     vinylColor,
+    lightThemeLightBackground,
   } = useMusicStore(
     useShallow((state) => ({
       queue: state.queue,
@@ -405,10 +418,41 @@ export function FullScreenPlayer({
       coverUrl: state.coverUrl,
       customBackgroundImage: state.customBackgroundImage,
       vinylColor: state.vinylColor,
+      lightThemeLightBackground: state.lightThemeLightBackground,
     }))
   );
 
   const currentTrack = queue[currentIndex] || null;
+
+  /**
+   * 切歌唱臂动画：切歌瞬间唱臂先荡开让出唱片，新封面滑入完成后再落回沟槽。
+   * 监听曲目 id 变化（而不是在按钮 handler 里埋点），这样上一首/下一首、横滑、
+   * 队列点选、播放结束自动续播四条路径都能覆盖。
+   * 组件常驻不重挂载，所以用 ref 记住上一首 id。
+   */
+  const prevTrackIdRef = useRef<string | null>(currentTrack?.id ?? null);
+  const [armAway, setArmAway] = useState(false);
+  useEffect(() => {
+    const id = currentTrack?.id ?? null;
+    const prev = prevTrackIdRef.current;
+    prevTrackIdRef.current = id;
+    // 首次挂载、清空队列、同一首歌都不触发
+    if (prev === null || id === null || prev === id) return;
+    if (window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) return;
+
+    // 推到下一帧再切状态：让新封面先渲染出来，唱臂随后荡开；
+    // 也避免在 effect 同步调用 setState 触发级联渲染。
+    let timer = 0;
+    const raf = requestAnimationFrame(() => {
+      setArmAway(true);
+      // 与封面滑入时长（320ms）对齐：新封面落位时唱臂开始回摆
+      timer = window.setTimeout(() => setArmAway(false), 320);
+    });
+    return () => {
+      cancelAnimationFrame(raf);
+      window.clearTimeout(timer);
+    };
+  }, [currentTrack?.id]);
 
   const [isCoverPreviewOpen, setIsCoverPreviewOpen] = useState(false);
   const [isStyleMenuOpen, setIsStyleMenuOpen] = useState(false);
@@ -449,9 +493,34 @@ export function FullScreenPlayer({
     consumeLongPressClick,
   } = usePlayerActions(currentTrack, currentAudioUrl, handleCoverLongPress);
 
+  const isDarkTheme = useIsDarkTheme();
+  const isLightTheme = !isDarkTheme;
+  // 「浅色主题显示浅色背景」关闭时，浅色主题也按深色区间取色、按深色排版。
+  const useLightColors = isLightTheme && lightThemeLightBackground;
   const { colors: backgroundColors } = useCoverColors(
-    coverUrl && fullScreenBackgroundMode === "theme" ? coverUrl : null
+    coverUrl && fullScreenBackgroundMode === "theme" ? coverUrl : null,
+    useLightColors ? "light" : "dark"
   );
+
+  /**
+   * 页面底色是浅色还是深色：
+   * 只有「浅色主题 + 允许浅色背景 + 封面主题色背景 + 颜色已算出」这些同时成立才是浅色底。
+   * 模糊封面 / 自定义照片两种背景叠了黑色遮罩，恒为深色；
+   * 取色未完成时兜底是深色，先按深色排版，避免白字压浅底。
+   */
+  const isLightTone =
+    fullScreenBackgroundMode === "theme" &&
+    useLightColors &&
+    !!backgroundColors;
+
+  /**
+   * 系统栏图标明暗跟随页面底色：深色底用浅色图标，浅色底用深色图标。
+   * 否则浅色主题下深色底会得到「黑底黑图标」，浅色底会得到「白底白图标」。
+   *
+   * 延后到展开动画结束再生效：否则点播放条的一瞬间状态栏就跳成另一套图标，
+   * 而此时页面还没铺满，观感是「颜色先变、页面后到」。
+   */
+  useSystemBarsStyleOverride(!isLightTone, isFullScreen, PLAYER_TRANSITION_MS);
 
   /** 封面原图如果自带纯白边（平台上传时就带了），按比例放大裁掉 */
   const coverZoom = useCoverWhiteBands(coverUrl);
@@ -486,6 +555,16 @@ export function FullScreenPlayer({
   }, [queue.length, currentIndex, setCurrentIndexAndPlay]);
 
   const gestureAreaRef = useRef<HTMLDivElement | null>(null);
+  /**
+   * 横滑跟手的 DOM 直写目标。位移直接写到这两个元素的 style 上，
+   * 不再每个 touchmove 都 setState 重渲染整页 —— 那是横滑卡顿的根因。
+   */
+  const coverTransformRef = useRef<HTMLDivElement | null>(null);
+  const tonearmTransformRef = useRef<HTMLDivElement | null>(null);
+  const dragRefs = useMemo(
+    () => ({ cover: coverTransformRef, tonearm: tonearmTransformRef }),
+    [coverTransformRef, tonearmTransformRef]
+  );
 
   /**
    * 上一次「点在唱臂骨架上」的触摸轻点时间。
@@ -574,6 +653,8 @@ export function FullScreenPlayer({
       setShowLyrics(!showLyrics);
     },
     containerRef: gestureAreaRef,
+    // 横滑位移走 DOM 直写，避免每个 touchmove 都重渲染整个播放页
+    dragRefs,
   });
 
   /** 下拉跟手位移只作用于整页容器；松手后交回 CSS transition 回弹或滑出 */
@@ -594,13 +675,29 @@ export function FullScreenPlayer({
    * 用独立的 `translate` 属性而不是改 transform —— 播放/暂停的 scale 走的是
    * Tailwind 的 `scale` 属性，两者互不覆盖，位移和缩放能同时生效。
    */
-  const coverOffsetX = swipe.isHorizDragging ? swipe.dragX : swipe.dragEntryX;
+  /**
+   * 这里只给 transition，位移本身由手势 hook 直接写到 DOM 节点上。
+   * 关键：JSX style 里不能出现 translate —— 否则 React 每次重渲染都会把
+   * 跟手写到 DOM 上的实时位移覆盖掉，既闪又卡。
+   */
   const coverSlideStyle: React.CSSProperties = {
-    translate: coverOffsetX ? `${coverOffsetX}px` : undefined,
     transition:
       swipe.isHorizDragging || swipe.slideSnap
         ? "none"
         : "translate 320ms cubic-bezier(0.22, 1, 0.36, 1), scale 500ms",
+  };
+
+  /**
+   * 横滑时唱臂固定在屏幕原位：唱臂在封面容器内部，会跟着封面一起平移。
+   * 手势 hook 给唱臂容器写了反向等量的 translate 抵消，让唱片从唱臂下方滑过，
+   * 只有唱片本身在滑动/旋转，唱臂不跟着左右晃。
+   * transition 与封面用同一套时序（跟手无过渡、松手 320ms），两者同步才不会错位。
+   */
+  const tonearmCounterStyle: React.CSSProperties = {
+    transition:
+      swipe.isHorizDragging || swipe.slideSnap
+        ? "none"
+        : "translate 320ms cubic-bezier(0.22, 1, 0.36, 1)",
   };
 
   if (!isMounted) return null;
@@ -620,7 +717,9 @@ export function FullScreenPlayer({
         // 420ms + easeOutQuint：展开/收起都走同一条曲线，起步快、末尾缓，
         // 原 500ms ease-in-out 在 Android WebView 上收尾会"顿"一下再停住
         "fixed inset-0 z-50 transition-transform duration-[420ms] ease-[cubic-bezier(0.22,1,0.36,1)] flex flex-col select-none will-change-transform",
-        isFullScreen ? "translate-y-0" : "translate-y-full"
+        isFullScreen ? "translate-y-0" : "translate-y-full",
+        // 浅色底时整页的 white 语义反转成深色（见 global.css）
+        isLightTone && "player-tone-light"
       )}
       // 整个播放页（含黑胶盘面空白区、歌词、歌名）长按都不弹 WebView 系统菜单/选中文字，
       // 否则系统会抢走触摸手势并派发 touchcancel，长按定时器被清掉，风格菜单弹不出来
@@ -633,6 +732,7 @@ export function FullScreenPlayer({
         coverUrl={coverUrl}
         mode={fullScreenBackgroundMode}
         photoUrl={customBackgroundImage}
+        isLight={isLightTone}
       />
 
       {/* 横屏沉浸模式：独立组件，覆盖于普通布局之上 */}
@@ -644,6 +744,7 @@ export function FullScreenPlayer({
               coverUrl={coverUrl}
               mode={fullScreenBackgroundMode}
               photoUrl={customBackgroundImage}
+              isLight={isLightTone}
             />
           }
           onExit={exitLandscapeMode}
@@ -765,6 +866,7 @@ export function FullScreenPlayer({
           </div>
         ) : showCover ? (
           <div
+            ref={coverTransformRef}
             title="长按修改播放风格"
             className={cn(
               "relative aspect-square transition-transform duration-500",
@@ -787,6 +889,9 @@ export function FullScreenPlayer({
                 src={coverUrl}
                 alt={currentTrack?.name}
                 isPlaying={isPlaying}
+                armState={armAway ? "away" : isPlaying ? "playing" : "paused"}
+                tonearmContainerStyle={tonearmCounterStyle}
+                tonearmContainerRef={tonearmTransformRef}
                 className="h-full w-full touch-none"
                 imgStyle={{
                   transform: `scale(${(1.02 * coverZoom).toFixed(4)})`,
@@ -837,10 +942,10 @@ export function FullScreenPlayer({
             title="长按复制歌曲信息"
           >
             <h2 className="truncate text-sm font-semibold text-white">
-              {currentTrack?.name || "未知歌曲"}
+              {t2s(currentTrack?.name) || "未知歌曲"}
             </h2>
             <p className="truncate text-xs text-white/60 mt-1">
-              {currentTrack?.artist?.join(", ") || "未知歌手"}
+              {t2sArtists(currentTrack?.artist).join(", ") || "未知歌手"}
             </p>
           </div>
           <div className="flex items-center gap-1 shrink-0">
@@ -941,9 +1046,19 @@ export function FullScreenPlayer({
           disabled={isLoading}
           aria-label={isPlaying ? "暂停" : "播放"}
         >
-          <span className="flex h-10 w-10 items-center justify-center rounded-full bg-white text-black shadow-lg transition-transform hover:scale-105 active:scale-95">
+          <span
+            className={cn(
+              "flex h-10 w-10 items-center justify-center rounded-full transition-transform hover:scale-105 active:scale-95",
+              // 浅色底：白底墨色图标 + 一圈淡投影浮起来。
+              // 不能沿用 bg-white text-black —— 那两个类走 --color-white/--color-black
+              // 变量，在浅色底会被反转成深底白箭头，观感太重。
+              isLightTone
+                ? "player-play-btn-light"
+                : "bg-white text-black shadow-lg"
+            )}
+          >
             {isLoading ? (
-              <Spinner className="h-6 w-6 text-black" />
+              <Spinner className="h-6 w-6 text-inherit" />
             ) : isPlaying ? (
               <Pause className="h-6 w-6 fill-current" />
             ) : (

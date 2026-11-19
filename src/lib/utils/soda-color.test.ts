@@ -110,4 +110,41 @@ describe("extractFromPixels", () => {
     // 基色色相应与主色色相一致（允许轻微偏差）
     expect(Math.abs(dominantHue - topHue)).toBeLessThan(0.15);
   });
+
+  describe("浅色模式", () => {
+    it("深色封面也取到高明度浅底（L ≥ 80）", () => {
+      for (const rgb of [
+        [12, 18, 30],
+        [60, 30, 40],
+        [122, 122, 94],
+      ] as RGB[]) {
+        const light = extractFromPixels(solidPixels(rgb), "light");
+        expect(srgbToLab(light.top)[0]).toBeGreaterThanOrEqual(80);
+        expect(srgbToLab(light.bottom)[0]).toBeGreaterThanOrEqual(74);
+      }
+    });
+
+    it("亮封面不会顶到纯白（L ≤ 93），保留可读的色相", () => {
+      const light = extractFromPixels(solidPixels([245, 240, 220]), "light");
+      const lab = srgbToLab(light.top);
+      expect(lab[0]).toBeLessThanOrEqual(93);
+      expect(Math.hypot(lab[1], lab[2])).toBeGreaterThan(0.5);
+    });
+
+    it("浅色模式保持色相、且不与深色模式取值相同", () => {
+      const rgb: RGB = [51, 85, 170];
+      const dark = extractFromPixels(solidPixels(rgb));
+      const light = extractFromPixels(solidPixels(rgb), "light");
+      const darkHue = Math.atan2(
+        srgbToLab(dark.top)[2],
+        srgbToLab(dark.top)[1]
+      );
+      const lightHue = Math.atan2(
+        srgbToLab(light.top)[2],
+        srgbToLab(light.top)[1]
+      );
+      expect(Math.abs(darkHue - lightHue)).toBeLessThan(0.15);
+      expect(light.top[0]).not.toBe(dark.top[0]);
+    });
+  });
 });

@@ -258,14 +258,14 @@ export function BackgroundImageCropper({
       </div>
 
       <div className="px-6 pb-[calc(env(safe-area-inset-bottom,0px)+16px)] pt-3">
-        <div className="mb-3 text-center text-[11px] text-white/40">
+        <div className="mb-3 text-center text-xs text-white/40">
           拖动调整位置 · 双指捏合缩放
         </div>
         <div className="flex gap-3">
           <button
             type="button"
             onClick={onCancel}
-            className="flex-1 rounded-xl bg-white/10 py-2.5 text-[13px] text-white/80 transition-colors hover:bg-white/15"
+            className="flex-1 rounded-xl bg-white/10 py-2.5 text-sm text-white/80 transition-colors hover:bg-white/15"
           >
             取消
           </button>
@@ -273,7 +273,7 @@ export function BackgroundImageCropper({
             type="button"
             onClick={handleConfirm}
             disabled={!ready}
-            className="flex-1 rounded-xl bg-primary py-2.5 text-[13px] font-medium text-primary-foreground transition-opacity disabled:opacity-40"
+            className="flex-1 rounded-xl bg-primary py-2.5 text-sm font-medium text-primary-foreground transition-opacity disabled:opacity-40"
           >
             确定
           </button>

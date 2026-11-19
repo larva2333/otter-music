@@ -1,7 +1,7 @@
 {
   "name": "otter-music",
   "private": true,
-  "version": "2.7.16",
+  "version": "2.7.20",
   "type": "module",
   "workspaces": [
     "shared",
@@ -37,6 +37,7 @@
     "@capacitor/core": "^8.1.0",
     "@capacitor/file-transfer": "^2.0.4",
     "@capacitor/filesystem": "^8.1.2",
+    "@capacitor/keyboard": "^8.0.6",
     "@capacitor/network": "^8.0.1",
     "@capacitor/screen-orientation": "^8.0.1",
     "@capacitor/status-bar": "^8.0.3",

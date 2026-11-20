@@ -55,6 +55,7 @@ export function QueuePage({
       title="播放列表"
       // 标题文字样式与「我的歌单」标题栏一致（text-base font-semibold）
       titleClassName="text-base font-semibold text-foreground"
+      compactHeader={embedded}
       tracks={queue}
       icon={<ListVideo className="h-8 w-8 text-primary/80" />}
       onPlay={onPlay}

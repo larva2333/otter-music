@@ -295,18 +295,17 @@ export function UpdateCheck() {
         icon={Milestone}
         title="版本更新"
         onClick={() => setShowDialog(true)}
+        // 有新版本时在版本号右上角点一个绿点，不再用占地方的「新版本」红标签
         action={
-          <div className="flex items-center gap-3">
-            <span className="text-sm text-muted-foreground">
-              {currentVersion}
-            </span>
-
+          <span className="relative inline-flex text-sm text-muted-foreground">
+            {currentVersion}
             {hasUpdate && (
-              <Badge variant="destructive" className="gap-1">
-                新版本
-              </Badge>
+              <span
+                aria-label="有新版本"
+                className="absolute -right-1.5 -top-0.5 h-1.5 w-1.5 rounded-full bg-green-500 ring-2 ring-background"
+              />
             )}
-          </div>
+          </span>
         }
         showChevron
       />

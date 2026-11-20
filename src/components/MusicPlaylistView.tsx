@@ -75,6 +75,11 @@ interface MusicPlaylistViewProps {
    * 「播放列表」这类需要与「我的歌单」标题对齐的页面可传入自己的样式。
    */
   titleClassName?: string;
+  /**
+   * 嵌入「歌单」tab 的子页用紧凑头部：不显示 80px 大图标，标题左对齐到
+   * 与「我的歌单」同一条基线（px-5 + px-1），操作按钮仍在标题行右侧。
+   */
+  compactHeader?: boolean;
 }
 
 export function MusicPlaylistView({
@@ -99,6 +104,7 @@ export function MusicPlaylistView({
   showTrackCover,
   headerRight,
   titleClassName = "text-base font-bold tracking-tight",
+  compactHeader = false,
 }: MusicPlaylistViewProps) {
   const [searchQuery, setSearchQuery] = useState("");
   const [isSearchFocused, setIsSearchFocused] = useState(false);
@@ -242,10 +248,21 @@ export function MusicPlaylistView({
       data-page-scroll=""
       className="flex flex-1 min-h-0 flex-col overflow-y-auto"
     >
-      {/* Header：尺寸/对齐与「喜欢」页保持一致 */}
+      {/* Header：默认与「喜欢」页一致；compactHeader 嵌在「歌单」tab 时去掉大图标，
+          标题左边缘与「我的歌单」对齐（px-6 = 外层 px-5 + 标题行 px-1） */}
       {hideHeader ? null : (
-        <div className="p-4 border-b flex gap-4 items-end bg-muted/10 relative">
-          <div className="h-20 w-20 bg-primary/10 rounded-lg flex items-center justify-center shadow-sm border overflow-hidden shrink-0 flex-[0_0_80px] min-w-20 min-h-20">
+        <div
+          className={cn(
+            "border-b bg-muted/10 relative",
+            compactHeader ? "px-6 pt-1 pb-3" : "p-4 flex gap-4 items-end"
+          )}
+        >
+          <div
+            className={cn(
+              "h-20 w-20 bg-primary/10 rounded-lg flex items-center justify-center shadow-sm border overflow-hidden shrink-0 flex-[0_0_80px] min-w-20 min-h-20",
+              compactHeader && "hidden"
+            )}
+          >
             {playlist ? (
               <PlaylistCover
                 playlist={playlist}
@@ -263,11 +280,18 @@ export function MusicPlaylistView({
               />
             )}
           </div>
-          <div className="flex-1 self-stretch flex flex-col justify-center gap-1">
+          <div
+            className={cn(
+              "flex-1 flex flex-col gap-1",
+              compactHeader ? "" : "self-stretch justify-center"
+            )}
+          >
             <h2
               className={cn(
                 titleClassName,
                 "line-clamp-1",
+                compactHeader &&
+                  "text-base font-bold tracking-wide text-foreground",
                 // 右上角有操作按钮时给标题让位，避免长标题压到按钮下面
                 headerRight && "pr-24"
               )}

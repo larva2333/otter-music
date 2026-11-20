@@ -1,15 +1,23 @@
 import { useEffect, useRef } from "react";
+import {
+  DIRECTION_RATIO,
+  isDragSelecting,
+  isInsideHorizontalScroller,
+  isTextInputTarget,
+  lockAxis,
+} from "./gesture-axis";
 
 /** 触发切换的最小水平位移（px） */
 const SWIPE_THRESHOLD = 56;
 /** 手势最长时长（ms），超过视为慢速拖动而不是「甩」 */
 const MAX_DURATION = 700;
-/** 判定主轴方向前需要越过的最小位移（px） */
-const AXIS_LOCK_DISTANCE = 10;
-/** 主轴相对副轴的最小倍数：斜着上下滚列表时不误触切换 */
-const DIRECTION_RATIO = 1.2;
-/** 横向可滚动容器的判定余量（px） */
-const SCROLLER_SLACK = 4;
+
+/** 跟手时页面位移相对手指位移的比例（阻尼，让页面略微滞后于手指） */
+const FOLLOW_RATIO = 0.55;
+/** 跟手最大位移占视口宽度的比例，避免露出过多空白 */
+const FOLLOW_MAX_VIEWPORT = 0.42;
+/** 松手后归位动画时长（ms） */
+const SETTLE_DURATION = 260;
 
 type Axis = "none" | "x" | "y";
 
@@ -29,40 +37,24 @@ interface UseSwipeCategoriesOptions {
    * 用于把内部分类滑动「落到」底部导航 tab 级的切换。
    */
   onEdge?: (dir: "next" | "prev") => void;
+  /**
+   * 跟手时实际平移的元素。默认平移 target 元素本身。
+   * 发现页传内容 wrapper（而不是滚动容器），避免跟手位移带动下拉刷新指示器。
+   */
+  followRef?: { current: HTMLElement | null };
+  /** 关闭跟手位移（只保留松手切换判定），默认开启 */
+  disableFollow?: boolean;
 }
 
 /**
- * 触摸点是否落在「内部可横向滚动」的元素里。
- * 例如横向滚动的卡片行、分类子 tab：这些地方的横滑应交给元素自己，
- * 不能拿来切分类。
- */
-function isInsideHorizontalScroller(
-  target: Element | null,
-  root: HTMLElement
-): boolean {
-  let node: Element | null = target;
-  while (node && node !== root) {
-    const overflowX = window.getComputedStyle(node).overflowX;
-    const scrollable = overflowX === "auto" || overflowX === "scroll";
-    if (scrollable && node.scrollWidth > node.clientWidth + SCROLLER_SLACK) {
-      return true;
-    }
-    node = node.parentElement;
-  }
-  return false;
-}
-
-/** 输入控件上的滑动留给系统（移动光标 / 选中文本），不参与切分类 */
-function isTextInputTarget(target: Element | null): boolean {
-  if (!target || typeof target.closest !== "function") return false;
-  return Boolean(target.closest("input, textarea, select"));
-}
-
-/**
- * 内容区左右滑动切换分类。
+ * 内容区左右滑动切换分类，滑动过程「跟手」。
+ *
+ * 跟手：锁定横向后，把 followRef 元素实时平移 dx * FOLLOW_RATIO（带阻尼），
+ * 手指拖动时页面跟着走；松手未达阈值则平滑归位，达阈值则清除位移并触发切换，
+ * 切换后的进入动画由调用方（根 tab 的 page-enter-* / 发现页的 Web Animations）接管。
  *
  * 与纵向滚动的共存方式：先锁定主轴——横向命中才 preventDefault 阻断纵向滚动，
- * 纵向命中后本次手势不再参与切换。因此上下滚列表不会误切分类。
+ * 纵向命中后本次手势不再参与切换、也不平移页面。上下滚列表不会误切分类。
  */
 export function useSwipeCategories(
   targetRef: { current: HTMLElement | null },
@@ -84,10 +76,48 @@ export function useSwipeCategories(
     let startAt = 0;
     let lastDx = 0;
     let lastDy = 0;
+    let settleTimer: ReturnType<typeof setTimeout> | null = null;
+
+    /** 当前跟手元素：显式 followRef 优先，否则用 target 本身 */
+    const followEl = () => latest.current.followRef?.current ?? el;
+
+    const clearSettleTimer = () => {
+      if (settleTimer) {
+        clearTimeout(settleTimer);
+        settleTimer = null;
+      }
+    };
+
+    /**
+     * 松手归位。animated=true 走 CSS 过渡平滑弹回；false 立即清除位移
+     * （用于马上要切换的场景，避免旧页位移和新页进入动画叠加）。
+     */
+    const settle = (animated: boolean) => {
+      clearSettleTimer();
+      const node = followEl();
+      if (!node) return;
+      if (animated && !latest.current.disableFollow) {
+        node.style.transition = `transform ${SETTLE_DURATION}ms cubic-bezier(0.32, 0.72, 0, 1)`;
+        node.style.transform = "translateX(0px)";
+        settleTimer = setTimeout(() => {
+          node.style.transition = "";
+          node.style.transform = "";
+          settleTimer = null;
+        }, SETTLE_DURATION + 20);
+      } else {
+        node.style.transition = "";
+        node.style.transform = "";
+      }
+    };
 
     const handleTouchStart = (event: TouchEvent) => {
       // enabled 省略时视为开启
       if (latest.current.enabled === false) {
+        tracking = false;
+        return;
+      }
+      // 长按多选笔刷期间整段手势都归多选，不切分类
+      if (isDragSelecting()) {
         tracking = false;
         return;
       }
@@ -106,6 +136,8 @@ export function useSwipeCategories(
         tracking = false;
         return;
       }
+      // 新手势开始：取消上一次的归位动画，从当前 transform 继续跟手
+      clearSettleTimer();
       tracking = true;
       axis = "none";
       startX = touch.clientX;
@@ -117,6 +149,12 @@ export function useSwipeCategories(
 
     const handleTouchMove = (event: TouchEvent) => {
       if (!tracking || event.touches.length !== 1) return;
+      // 长按在手势中途触发多选：之前可能已经跟手了一小段，先弹回再把手势交出去
+      if (isDragSelecting()) {
+        tracking = false;
+        if (axis === "x") settle(true);
+        return;
+      }
       const touch = event.touches[0];
       const dx = touch.clientX - startX;
       const dy = touch.clientY - startY;
@@ -124,18 +162,25 @@ export function useSwipeCategories(
       lastDy = dy;
 
       if (axis === "none") {
-        if (
-          Math.abs(dx) < AXIS_LOCK_DISTANCE &&
-          Math.abs(dy) < AXIS_LOCK_DISTANCE
-        ) {
-          return;
-        }
-        axis = Math.abs(dx) > Math.abs(dy) * DIRECTION_RATIO ? "x" : "y";
+        // 与下拉刷新共用同一套判定：锁定后整段手势不再改主轴。
+        // 横向占优才接管，纵向/上滑/斜滑一律放过，不跟手也不 preventDefault。
+        axis = lockAxis(dx, dy);
+        if (axis === "none") return;
       }
+      if (axis !== "x") return;
 
       // 锁定横向后阻止纵向滚动，否则斜着划会把列表带着上下跑
       if (axis === "x" && event.cancelable) {
         event.preventDefault();
+        if (!latest.current.disableFollow) {
+          const node = followEl();
+          if (node) {
+            const max = window.innerWidth * FOLLOW_MAX_VIEWPORT;
+            const offset = Math.max(-max, Math.min(max, dx * FOLLOW_RATIO));
+            node.style.transition = "none";
+            node.style.transform = `translateX(${offset}px)`;
+          }
+        }
       }
     };
 
@@ -143,31 +188,53 @@ export function useSwipeCategories(
       if (!tracking) return;
       tracking = false;
       if (axis !== "x") return;
+      if (isDragSelecting()) {
+        settle(true);
+        return;
+      }
 
       const touch = event.changedTouches[0];
       const dx = touch ? touch.clientX - startX : lastDx;
       const dy = touch ? touch.clientY - startY : lastDy;
 
       const threshold = latest.current.threshold ?? SWIPE_THRESHOLD;
-      if (Date.now() - startAt > MAX_DURATION) return;
-      if (Math.abs(dx) < threshold) return;
-      if (Math.abs(dy) > Math.abs(dx) * DIRECTION_RATIO) return;
+      if (Date.now() - startAt > MAX_DURATION) {
+        settle(true);
+        return;
+      }
+      if (Math.abs(dx) < threshold) {
+        settle(true);
+        return;
+      }
+      if (Math.abs(dy) > Math.abs(dx) * DIRECTION_RATIO) {
+        settle(true);
+        return;
+      }
 
       const { ids, activeId, onChange } = latest.current;
       const index = ids.indexOf(activeId);
-      if (index === -1) return;
+      if (index === -1) {
+        settle(true);
+        return;
+      }
 
       // 左滑（dx < 0）→ 下一个分类；右滑 → 上一个
       const nextIndex = dx < 0 ? index + 1 : index - 1;
       if (nextIndex < 0 || nextIndex >= ids.length) {
+        // 边界外：归位后交给 tab 级滑动处理
+        settle(true);
         latest.current.onEdge?.(dx < 0 ? "next" : "prev");
         return;
       }
+      // 有效切换：立即清除跟手位移，让调用方的进入动画接管
+      settle(false);
       onChange(ids[nextIndex]);
     };
 
     const handleTouchCancel = () => {
+      if (!tracking) return;
       tracking = false;
+      if (axis === "x") settle(true);
     };
 
     el.addEventListener("touchstart", handleTouchStart, { passive: true });
@@ -176,6 +243,7 @@ export function useSwipeCategories(
     el.addEventListener("touchcancel", handleTouchCancel, { passive: true });
 
     return () => {
+      clearSettleTimer();
       el.removeEventListener("touchstart", handleTouchStart);
       el.removeEventListener("touchmove", handleTouchMove);
       el.removeEventListener("touchend", handleTouchEnd);

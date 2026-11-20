@@ -6,6 +6,7 @@ import { PlaylistIcon } from "./PlaylistIcon";
 import { cn } from "@/lib/utils";
 import { Link, useLocation } from "react-router-dom";
 import { emitTabReclick } from "@/hooks/use-tab-reclick";
+import { useAppStore } from "@/store/app-store";
 
 export type TabId = "search" | "favorites" | "mine" | "settings";
 
@@ -28,6 +29,7 @@ const tabs: TabItem[] = [
 
 export function MusicTabBar() {
   const location = useLocation();
+  const hasUpdate = useAppStore((s) => s.hasUpdate);
 
   // Determine active tab based on current path
   const getActiveTab = (pathname: string): TabId => {
@@ -88,7 +90,7 @@ export function MusicTabBar() {
             data-state={isActive ? "active" : "inactive"}
             aria-label={tab.label}
           >
-            <div className="h-5 w-5 shrink-0 flex-[0_0_20px] min-w-5 min-h-5">
+            <div className="relative h-5 w-5 shrink-0 flex-[0_0_20px] min-w-5 min-h-5">
               <Icon
                 className={cn(
                   "h-full w-full transition-all",
@@ -98,6 +100,12 @@ export function MusicTabBar() {
                 )}
                 strokeWidth={2}
               />
+              {tab.id === "settings" && hasUpdate && (
+                <span
+                  aria-label="有新版本"
+                  className="absolute -right-1 -top-0.5 h-1.5 w-1.5 rounded-full bg-green-500 ring-1 ring-background"
+                />
+              )}
             </div>
             <span className="text-2xs font-medium">{tab.label}</span>
           </Link>

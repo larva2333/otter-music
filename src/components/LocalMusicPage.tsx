@@ -341,6 +341,7 @@ export function LocalMusicPage({
       ) : (
         <MusicPlaylistView
           title="本地音乐"
+          compactHeader={embedded}
           tracks={tracks}
           icon={<HardDriveDownload className="h-8 w-8 text-primary/80" />}
           onPlay={handlePlay}

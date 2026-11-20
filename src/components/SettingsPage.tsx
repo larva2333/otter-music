@@ -65,7 +65,7 @@ function SettingsSection({
 }) {
   const [open, setOpen] = useState(defaultOpen);
   return (
-    <div className="mb-5">
+    <div data-settings-group={title} className="mb-5">
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
@@ -102,10 +102,31 @@ export function SettingsPage({ onBack }: SettingsPageProps) {
     onEdge: useRootTabSwipe("settings"),
   });
 
-  // 再次点击底部「设置」tab：回到顶部
-  useTabReclick("settings", () =>
-    scrollRef.current?.scrollTo({ top: 0, behavior: "smooth" })
-  );
+  // 再次点击底部「设置」tab：依次滚到下一个分组，最后一组之后再点回到顶部
+  useTabReclick("settings", () => {
+    const container = scrollRef.current;
+    if (!container) return;
+    const groups = Array.from(
+      container.querySelectorAll<HTMLElement>("[data-settings-group]")
+    );
+    if (groups.length === 0) return;
+    // 分组相对容器的顶部偏移；最后几组滚不到顶（容器见底），
+    // 用 maxScroll 夹一下，否则「关于系统」这组永远判不得到达
+    const maxScroll = container.scrollHeight - container.clientHeight;
+    const tops = groups.map((g) =>
+      Math.min(g.offsetTop - container.offsetTop - 8, maxScroll)
+    );
+    // 当前所处分组：最后一个已滚过的；下一个就是目标
+    let current = 0;
+    for (let i = 0; i < tops.length; i++) {
+      if (tops[i] <= container.scrollTop + 20) current = i;
+    }
+    const next = current + 1;
+    container.scrollTo({
+      top: next >= tops.length ? 0 : tops[next],
+      behavior: "smooth",
+    });
+  });
   const {
     enableUpdateNotify,
     setEnableUpdateNotify,

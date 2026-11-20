@@ -208,6 +208,8 @@ export function RootLayout() {
   // 路径没变），如果每次都跟着 state 重算，动画类会从 forward 翻成 back 再播一遍，
   // 看起来就是页面「晃一下」。
   const pageAnimClass = useMemo(() => {
+    // 设置页是纯开关列表，没有数据加载，进出动画只是白等，直接跳过
+    if (location.pathname === "/settings") return "";
     const dir = (location.state as { pageDir?: string } | null)?.pageDir;
     if (dir === "forward") return "page-enter-forward";
     if (dir === "back") return "page-enter-back";

@@ -243,6 +243,10 @@ export function PlaylistMarket() {
     [barCategories]
   );
 
+  // 内容 wrapper：横滑跟手平移它（而不是滚动容器），避免带动下拉刷新指示器；
+  // 同时是切分类进入动画的载体，两者都在 transform 上、由 hook 先清位移再播动画
+  const contentRef = useRef<HTMLDivElement>(null);
+
   // 内容区左右滑动切换顶栏分类（页内筛选不影响滑动顺序）
   // 滑到最后一个分类再左滑 → 落到「喜欢」tab；第一个分类右滑不动（链头）
   const onRootEdge = useRootTabSwipe("search");
@@ -251,6 +255,7 @@ export function PlaylistMarket() {
     activeId: activeCategory,
     onChange: setActiveCategory,
     onEdge: onRootEdge,
+    followRef: contentRef,
   });
 
   /* 切分类的内容动效：以前点顶栏按钮或用横滑切分类时，内容是一帧硬切，
@@ -258,7 +263,6 @@ export function PlaylistMarket() {
      进入动画（与根 tab 的 page-enter-* 同参数），方向按分类在顶栏里的位置判断。
      不能给容器加 key 或切 className 来触发：每个分类的网格要留在 DOM 里
      （保留 <img> 节点和滚动状态），重挂载就白留了。 */
-  const contentRef = useRef<HTMLDivElement>(null);
   const categoryIndexRef = useRef(-1);
   useLayoutEffect(() => {
     const index = displayFilters.findIndex((f) => f.id === activeCategory);
@@ -301,29 +305,36 @@ export function PlaylistMarket() {
     enabled: isBrowseEnabled && !isKeySwitching && !ActiveSection,
   });
 
-  // 选中滑块位置：跟随当前分类平移（顶栏不再横向滚动，只按按钮在栏内的
-  // offsetLeft/offsetTop 定位；rAF 里测量，避免同步 setState 级联渲染）
-  useEffect(() => {
-    const raf = requestAnimationFrame(() => {
-      const bar = scrollContainerRef.current;
-      const btn = bar?.querySelector<HTMLElement>(
-        `[data-category-id="${activeCategory}"]`
-      );
-      if (!bar || !btn) {
-        setIndicator(null);
-        return;
-      }
-      setIndicator({
-        left: btn.offsetLeft,
-        top: btn.offsetTop,
-        width: btn.offsetWidth,
-      });
+  // 选中滑块位置：按按钮在栏内的 offsetLeft/offsetTop 定位（rAF 里测量，
+  // 避免同步 setState 级联渲染）。胶囊本身尺寸不变、只让间距随视口收缩；
+  // 极窄屏仍放不下时靠横滑兜底，并把选中项滚到可视区。
+  const measureIndicator = useCallback(() => {
+    const bar = scrollContainerRef.current;
+    const btn = bar?.querySelector<HTMLElement>(
+      `[data-category-id="${activeCategory}"]`
+    );
+    if (!bar || !btn) {
+      setIndicator(null);
+      return;
+    }
+    setIndicator({
+      left: btn.offsetLeft,
+      top: btn.offsetTop,
+      width: btn.offsetWidth,
     });
-    return () => cancelAnimationFrame(raf);
-  }, [activeCategory, displayFilters]);
+    // 只滚胶囊容器本身；不能用 scrollIntoView，否则会把外层页面一起带跑
+    const target = btn.offsetLeft - (bar.clientWidth - btn.offsetWidth) / 2;
+    bar.scrollLeft = Math.max(0, target);
+  }, [activeCategory]);
 
-  /* 顶栏分类一屏放得下，不再是横向滚动条：这里原本「把选中项滚进可视区」
-     的逻辑一并去掉，否则 scrollIntoView 会去滚外层滚动容器，把页面带跑。 */
+  useEffect(() => {
+    const raf = requestAnimationFrame(measureIndicator);
+    window.addEventListener("resize", measureIndicator);
+    return () => {
+      cancelAnimationFrame(raf);
+      window.removeEventListener("resize", measureIndicator);
+    };
+  }, [measureIndicator, displayFilters]);
 
   const active = browse;
 
@@ -401,10 +412,10 @@ export function PlaylistMarket() {
         className="sticky top-0 z-20 bg-background/90 backdrop-blur-xl border-b border-border/20 shadow-sm"
       >
         <div className="flex items-center px-3 py-1.5 gap-2">
-          <div className="flex-1 overflow-hidden relative">
+          <div className="flex-1 min-w-0 overflow-hidden relative">
             <div
               ref={scrollContainerRef}
-              className="relative flex flex-wrap items-center gap-1.5"
+              className="relative flex flex-nowrap items-center gap-[clamp(2px,1vw,6px)] overflow-x-auto scrollbar-hide"
             >
               {indicator && (
                 <div
@@ -478,6 +489,14 @@ export function PlaylistMarket() {
               <ActiveSection />
             ))}
           <div className={cn("p-4 pb-bottom-stack", ActiveSection && "hidden")}>
+            {/* 「排行榜」（网易云 toplist）独立区块，和歌手/雷达一样给个标题 */}
+            {!ActiveSection && effectiveCategory === "toplist" && (
+              <div className="flex items-center h-8 mb-4 px-1">
+                <h2 className="text-base font-bold text-foreground tracking-wide truncate">
+                  排行榜
+                </h2>
+              </div>
+            )}
             {/* 访问过的分类网格都留在 DOM 里（保留 <img> 节点和滚动状态），
               非当前分类用 display:none 移出渲染树。
               不能改成 absolute + visibility:hidden 叠放：定位元素会画在

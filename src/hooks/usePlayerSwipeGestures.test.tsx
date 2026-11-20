@@ -374,4 +374,60 @@ describe("usePlayerSwipeGestures 播放页手势", () => {
     act(() => root.unmount());
     container.remove();
   });
+
+  it("横滑唱片时唱臂跟着摆动，松手归零", () => {
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    const cover = document.createElement("div");
+    const tonearm = document.createElement("div");
+    const arm = document.createElementNS(
+      "http://www.w3.org/2000/svg",
+      "svg"
+    ) as SVGSVGElement;
+    const dragRefs = {
+      cover: { current: cover },
+      tonearm: { current: tonearm },
+      tonearmArm: { current: arm },
+    };
+
+    let latest: ReturnType<typeof usePlayerSwipeGestures> | undefined;
+
+    function TestHarness() {
+      const gestures = usePlayerSwipeGestures({
+        enabled: true,
+        onClose: vi.fn(),
+        onPrev: vi.fn(),
+        onNext: vi.fn(),
+        dragRefs,
+      });
+      useEffect(() => {
+        latest = gestures;
+      }, [gestures]);
+      return null;
+    }
+
+    act(() => {
+      root.render(<TestHarness />);
+    });
+
+    act(() => {
+      latest!.handlers.onTouchStart(touch(300, 300));
+      latest!.handlers.onTouchMove(touch(200, 305));
+    });
+
+    // 唱片左滑 → 唱头被带着向左摆（rotate 为正角度）
+    expect(parseFloat(arm.style.rotate)).toBeGreaterThan(0);
+
+    act(() => {
+      latest!.handlers.onTouchEnd();
+    });
+
+    // 松手后唱臂回正，并带上过渡
+    expect(arm.style.rotate).toBe("0deg");
+    expect(arm.style.transition).toContain("rotate");
+
+    act(() => root.unmount());
+    container.remove();
+  });
 });

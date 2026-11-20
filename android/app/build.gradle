@@ -18,8 +18,9 @@ android {
             minifyEnabled false
         }
         release {
-            minifyEnabled true
-            shrinkResources true
+            // 关闭 R8：CI 构建从 ~161 秒降到 ~70 秒。包体积从 3.1MB 涨到 5-7MB，个人使用无影响。
+            minifyEnabled false
+            shrinkResources false
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
         }
     }

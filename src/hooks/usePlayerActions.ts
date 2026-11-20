@@ -10,6 +10,20 @@ import toast from "react-hot-toast";
 const EMULATED_MOUSE_WINDOW = 700;
 /** 长按触发后拦截紧随 click 的时间窗口（ms）：超时自动失效，避免残留状态吞掉后续点击 */
 const LONG_PRESS_CLICK_WINDOW = 700;
+/** 长按后移动超过这个距离就算滑动（切歌/翻页），取消长按，与列表行的判定保持一致 */
+const LONG_PRESS_MOVE_TOLERANCE = 8;
+
+type PressEvent = React.TouchEvent | React.MouseEvent | undefined;
+
+/** 从 touch / mouse 事件取按下的坐标；兼容单测里不传事件的手工调用 */
+function pressPoint(e: PressEvent): { x: number; y: number } | null {
+  if (!e) return null;
+  if ("touches" in e) {
+    const touch = e.touches[0];
+    return touch ? { x: touch.clientX, y: touch.clientY } : null;
+  }
+  return { x: e.clientX, y: e.clientY };
+}
 
 export function usePlayerActions(
   currentTrack: MusicTrack | null,
@@ -17,7 +31,9 @@ export function usePlayerActions(
   onCoverLongPress?: () => void
 ) {
   const pressTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const trackPressStartRef = useRef<{ x: number; y: number } | null>(null);
   const coverPressTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const coverPressStartRef = useRef<{ x: number; y: number } | null>(null);
   /** 长按触发时间戳（0 = 无待拦截的 click），用于拦截长按后紧随的那次 click */
   const coverLongPressAtRef = useRef(0);
   /** 最近一次 touchend 时间，用于忽略浏览器补发的模拟鼠标事件 */
@@ -63,25 +79,50 @@ export function usePlayerActions(
     }
   }, [currentTrack, isFavorite, addToFavorites, removeFromFavorites]);
 
-  const handleTrackInfoPressStart = useCallback(() => {
-    if (!currentTrack) return;
+  const handleTrackInfoPressStart = useCallback(
+    (e?: React.TouchEvent | React.MouseEvent) => {
+      if (!currentTrack) return;
+      trackPressStartRef.current = pressPoint(e);
 
-    pressTimerRef.current = setTimeout(async () => {
-      const text = `${currentTrack.name} - ${currentTrack.artist.join(", ")}`;
-      const ok = await writeClipboardText(text);
-      if (ok) {
-        toast.success("已复制歌曲信息");
-      } else {
-        toast.error("复制失败，请重试");
+      pressTimerRef.current = setTimeout(async () => {
+        const text = `${currentTrack.name} - ${currentTrack.artist.join(", ")}`;
+        const ok = await writeClipboardText(text);
+        if (ok) {
+          toast.success("已复制歌曲信息");
+        } else {
+          toast.error("复制失败，请重试");
+        }
+      }, 500);
+    },
+    [currentTrack]
+  );
+
+  /** 歌名上滑动时取消长按，避免慢速拖动顺带弹出「已复制」 */
+  const handleTrackInfoPressMove = useCallback(
+    (e?: React.TouchEvent | React.MouseEvent) => {
+      const start = trackPressStartRef.current;
+      const point = pressPoint(e);
+      if (!start || !point) return;
+      if (
+        Math.hypot(point.x - start.x, point.y - start.y) >
+        LONG_PRESS_MOVE_TOLERANCE
+      ) {
+        if (pressTimerRef.current) {
+          clearTimeout(pressTimerRef.current);
+          pressTimerRef.current = null;
+        }
+        trackPressStartRef.current = null;
       }
-    }, 500);
-  }, [currentTrack]);
+    },
+    []
+  );
 
   const handleTrackInfoPressEnd = useCallback(() => {
     if (pressTimerRef.current) {
       clearTimeout(pressTimerRef.current);
       pressTimerRef.current = null;
     }
+    trackPressStartRef.current = null;
   }, []);
 
   // 卸载时清理所有长按定时器
@@ -100,32 +141,62 @@ export function usePlayerActions(
     }
   }, []);
 
-  /** 封面长按触发外部回调（例如预览大图） */
-  const handleCoverPressStart = useCallback(() => {
-    clearCoverPress();
-    // 新手势开始即解除上一次长按的 click 拦截，避免残留状态吞掉本次点击
-    coverLongPressAtRef.current = 0;
-    coverPressTimerRef.current = setTimeout(() => {
-      coverLongPressAtRef.current = Date.now();
-      onCoverLongPress?.();
-    }, 500);
-  }, [clearCoverPress, onCoverLongPress]);
+  /** 封面长按触发外部回调（修改播放风格面板） */
+  const handleCoverPressStart = useCallback(
+    (e?: React.TouchEvent | React.MouseEvent) => {
+      clearCoverPress();
+      // 新手势开始即解除上一次长按的 click 拦截，避免残留状态吞掉本次点击
+      coverLongPressAtRef.current = 0;
+      coverPressStartRef.current = pressPoint(e);
+      coverPressTimerRef.current = setTimeout(() => {
+        coverLongPressAtRef.current = Date.now();
+        onCoverLongPress?.();
+      }, 500);
+    },
+    [clearCoverPress, onCoverLongPress]
+  );
+
+  /**
+   * 横滑切歌期间不能弹播放风格面板：手指在封面上移动超过 8px 就取消长按计时。
+   * 慢速横滑（超过 500ms）以前会先触发长按、把播放页手势整个关掉。
+   */
+  const handleCoverPressMove = useCallback(
+    (e?: React.TouchEvent | React.MouseEvent) => {
+      const start = coverPressStartRef.current;
+      const point = pressPoint(e);
+      if (!start || !point) return;
+      if (
+        Math.hypot(point.x - start.x, point.y - start.y) >
+        LONG_PRESS_MOVE_TOLERANCE
+      ) {
+        clearCoverPress();
+        coverPressStartRef.current = null;
+      }
+    },
+    [clearCoverPress]
+  );
 
   const handleCoverPressEnd = useCallback(() => {
     clearCoverPress();
+    coverPressStartRef.current = null;
   }, [clearCoverPress]);
 
   /** 触摸结束：记录时间，供模拟鼠标事件过滤使用 */
   const handleCoverTouchEnd = useCallback(() => {
     coverTouchEndAtRef.current = Date.now();
     clearCoverPress();
+    coverPressStartRef.current = null;
   }, [clearCoverPress]);
 
   /** 鼠标按下：跳过触摸后补发的模拟事件，避免重置长按状态 */
-  const handleCoverMouseDown = useCallback(() => {
-    if (Date.now() - coverTouchEndAtRef.current < EMULATED_MOUSE_WINDOW) return;
-    handleCoverPressStart();
-  }, [handleCoverPressStart]);
+  const handleCoverMouseDown = useCallback(
+    (e?: React.MouseEvent) => {
+      if (Date.now() - coverTouchEndAtRef.current < EMULATED_MOUSE_WINDOW)
+        return;
+      handleCoverPressStart(e);
+    },
+    [handleCoverPressStart]
+  );
 
   /**
    * 长按事件若浏览器未补发 click（如 WebView 原生长按菜单接管手势），
@@ -156,16 +227,21 @@ export function usePlayerActions(
     consumeLongPressClick,
     trackInfoPressHandlers: {
       onMouseDown: handleTrackInfoPressStart,
+      onMouseMove: handleTrackInfoPressMove,
       onMouseUp: handleTrackInfoPressEnd,
       onMouseLeave: handleTrackInfoPressEnd,
       onTouchStart: handleTrackInfoPressStart,
+      onTouchMove: handleTrackInfoPressMove,
       onTouchEnd: handleTrackInfoPressEnd,
+      onTouchCancel: handleTrackInfoPressEnd,
     },
     coverPressHandlers: {
       onMouseDown: handleCoverMouseDown,
+      onMouseMove: handleCoverPressMove,
       onMouseUp: handleCoverPressEnd,
       onMouseLeave: handleCoverPressEnd,
       onTouchStart: handleCoverPressStart,
+      onTouchMove: handleCoverPressMove,
       onTouchEnd: handleCoverTouchEnd,
       onTouchCancel: handleCoverTouchEnd,
       onClick: handleCoverClick,

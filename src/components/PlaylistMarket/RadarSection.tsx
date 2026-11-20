@@ -87,6 +87,11 @@ export function RadarSection() {
   const navigate = useNavigate();
   return (
     <div className="p-4 pb-bottom-stack">
+      <div className="flex items-center h-8 mb-4 px-1">
+        <h2 className="text-base font-bold text-foreground tracking-wide truncate">
+          官方雷达
+        </h2>
+      </div>
       <PlaylistGrid
         list={RADAR_PLAYLISTS}
         onClick={(id) => navigate(`/netease-playlist/${id}`)}

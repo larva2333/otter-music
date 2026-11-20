@@ -46,6 +46,11 @@ interface VinylCoverProps {
   /** 唱臂容器节点引用：播放页横滑时直接写它的 translate 做反向抵消 */
   tonearmContainerRef?: React.RefObject<HTMLDivElement | null>;
   /**
+   * 唱臂 svg 节点引用：横滑唱片时直接写它的 rotate，
+   * 让唱头跟着唱片滑动的方向摆动（与容器的 translate 分工，互不覆盖）。
+   */
+  tonearmArmRef?: React.RefObject<SVGSVGElement | null>;
+  /**
    * 唱臂骨架被点击（鼠标 click 路径）。触摸端的轻点在 touchend 已处理，
    * 这里只兜住桌面端鼠标点击，并把 click 拦在骨架内不再冒泡到外层容器。
    */
@@ -80,6 +85,7 @@ export function VinylCover({
   showTonearm = true,
   tonearmContainerStyle,
   tonearmContainerRef,
+  tonearmArmRef,
   onControlActivate,
 }: VinylCoverProps) {
   const transparent = discColor.toLowerCase() === "transparent";
@@ -182,6 +188,7 @@ export function VinylCover({
             <div className="absolute inset-[38%] rounded-full bg-neutral-300" />
           </div>
           <svg
+            ref={tonearmArmRef}
             data-testid="vinyl-tonearm"
             viewBox="0 0 100 100"
             className="absolute inset-0 h-full w-full overflow-visible"

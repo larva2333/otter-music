@@ -28,6 +28,15 @@ const MAX_DRAG = 160;
 const DRAG_RESISTANCE = 0.9;
 /** 横滑跟手系数：横向翻页要跟得紧，太松会显得迟钝 */
 const HORIZONTAL_RESISTANCE = 0.95;
+/** 唱片横滑时唱臂跟随的最大摆角（度），再大就不像真唱臂了 */
+const ARM_FOLLOW_MAX = 16;
+/** 位移到摆角的换算：拖过约 1/3 屏宽到最大角度 */
+const ARM_FOLLOW_RATIO = 36;
+/** 唱臂跟手阶段的过渡：只留位移过渡，旋转必须一帧到位才跟手 */
+const ARM_FOLLOW_TRANSITION = "transform 350ms ease-out";
+/** 松手归位：旋转单独给 320ms 缓出，和唱片回弹一起收住 */
+const ARM_SETTLE_TRANSITION =
+  "transform 350ms ease-out, rotate 320ms cubic-bezier(0.22, 1, 0.36, 1)";
 /** 切歌入场动画的起始偏移，取屏宽的比例：整屏太重，太小又看不出是“滑进来”的 */
 const SLIDE_IN_RATIO = 0.5;
 
@@ -41,6 +50,17 @@ type Axis = "none" | "horizontal" | "vertical" | "ignored";
 /** 写单个元素的位移；抽成独立函数，避免把 hook 参数里的 ref 当成被修改的对象 */
 function writeTranslate(el: HTMLElement | null, x: number) {
   if (el) el.style.translate = x ? `${x}px` : "";
+}
+
+/** 写唱臂的旋转角；同样抽成独立函数，理由同上 */
+function writeArmRotate(
+  el: SVGSVGElement | null,
+  deg: number,
+  transition: string
+) {
+  if (!el) return;
+  el.style.transition = transition;
+  el.style.rotate = deg ? `${deg.toFixed(2)}deg` : "0deg";
 }
 
 function isInteractiveTarget(target: EventTarget | null): boolean {
@@ -72,6 +92,11 @@ export interface SwipeDragRefs {
   cover?: React.RefObject<HTMLElement | null>;
   /** 唱臂容器：写反向位移，抵消封面平移让唱臂固定在屏幕原位 */
   tonearm?: React.RefObject<HTMLElement | null>;
+  /**
+   * 唱臂 svg：除了固定在原位，还要跟着唱片滑动的方向摆头。
+   * 写在 `rotate` 属性上，与容器的 `translate` 分工，互不覆盖。
+   */
+  tonearmArm?: React.RefObject<SVGSVGElement | null>;
 }
 
 interface UsePlayerSwipeGesturesOptions {
@@ -188,6 +213,37 @@ export function usePlayerSwipeGestures({
   }, []);
 
   /**
+   * 唱臂跟手：唱片被横向拖走时，唱头被「带着」往同一方向摆。
+   * 只写 `rotate`（容器负责反向 translate 让轴心不动），跟手阶段不要过渡，
+   * 松手时再恢复 320ms 过渡归零。
+   */
+  const writeArmAngle = useCallback(
+    (x: number) => {
+      if (!dragRefs) return;
+      const width = window.innerWidth || 360;
+      const angle = Math.max(
+        -ARM_FOLLOW_MAX,
+        Math.min(ARM_FOLLOW_MAX, -(x / width) * ARM_FOLLOW_RATIO)
+      );
+      writeArmRotate(
+        dragRefs.tonearmArm?.current ?? null,
+        angle,
+        ARM_FOLLOW_TRANSITION
+      );
+    },
+    [dragRefs]
+  );
+
+  const settleArm = useCallback(() => {
+    if (!dragRefs) return;
+    writeArmRotate(
+      dragRefs.tonearmArm?.current ?? null,
+      0,
+      ARM_SETTLE_TRANSITION
+    );
+  }, [dragRefs]);
+
+  /**
    * 只靠 CSS `touch-action: none` 在部分 WebView 上并不够：
    * 上滑仍可能被识别成页面滚动手势，手指抬起后的惯性期内，
    * 紧接着的 tap 只会被用来「停止滚动」，click 根本不会派发，
@@ -219,8 +275,9 @@ export function usePlayerSwipeGestures({
       horizFlagRef.current = false;
       cancelDragFrame();
       writeDragX(0);
+      settleArm();
     }
-  }, [cancelDragFrame, writeDragX, dragRefs]);
+  }, [cancelDragFrame, writeDragX, settleArm, dragRefs]);
 
   const handleTouchStart = useCallback(
     (e: React.TouchEvent) => {
@@ -247,6 +304,7 @@ export function usePlayerSwipeGestures({
           horizFlagRef.current = false;
           cancelDragFrame();
           writeDragX(0);
+          settleArm();
         }
       }
 
@@ -272,7 +330,7 @@ export function usePlayerSwipeGestures({
         dy: 0,
       };
     },
-    [enabled, onTap, cancelDragFrame, writeDragX, dragRefs]
+    [enabled, onTap, cancelDragFrame, writeDragX, settleArm, dragRefs]
   );
 
   const handleTouchMove = useCallback(
@@ -321,13 +379,14 @@ export function usePlayerSwipeGestures({
             setIsHorizDragging(true);
           }
           scheduleDragX(x);
+          writeArmAngle(x);
         } else {
           setIsHorizDragging(true);
           setDragX(x);
         }
       }
     },
-    [enabled, scheduleDragX, dragRefs]
+    [enabled, scheduleDragX, writeArmAngle, dragRefs]
   );
 
   const handleTouchEnd = useCallback(
@@ -392,6 +451,8 @@ export function usePlayerSwipeGestures({
 
         // DOM 直写路径：位移不经过 state，松手时只需要一帧写回即可
         if (dragRefs) {
+          // 松手：唱头摆回原位（带过渡），与封面一起归位
+          settleArm();
           if (!shouldSwitch) {
             // 距离不够：归零，刚恢复的 CSS 过渡会把封面吸回原位
             scheduleDragX(0);
@@ -464,6 +525,7 @@ export function usePlayerSwipeGestures({
       cancelDragFrame,
       scheduleDragX,
       writeDragX,
+      settleArm,
       dragRefs,
     ]
   );

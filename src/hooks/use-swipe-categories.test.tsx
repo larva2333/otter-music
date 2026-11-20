@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, useRef } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { useSwipeCategories } from "./use-swipe-categories";
+import { setDragSelecting } from "./gesture-axis";
 
 interface TouchPoint {
   clientX: number;
@@ -28,9 +29,11 @@ describe("useSwipeCategories 首页分类左右滑动", () => {
     (
       globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }
     ).IS_REACT_ACT_ENVIRONMENT = true;
+    setDragSelecting(false);
   });
 
   afterEach(() => {
+    setDragSelecting(false);
     act(() => root?.unmount());
     container?.remove();
     container = null;
@@ -165,6 +168,42 @@ describe("useSwipeCategories 首页分类左右滑动", () => {
 
     expect(onChange).toHaveBeenCalledWith("华语");
     expect(onEdge).not.toHaveBeenCalled();
+  });
+
+  it("先锁定纵向再横滑不切分类", () => {
+    const onChange = vi.fn();
+    const surface = mountSurface(ids, "精选", onChange);
+
+    act(() => {
+      surface.dispatchEvent(
+        makeTouchEvent("touchstart", [
+          { clientX: 200, clientY: 200, target: surface },
+        ])
+      );
+      // 第一帧纵向占优 → 锁定为 y
+      surface.dispatchEvent(
+        makeTouchEvent("touchmove", [{ clientX: 196, clientY: 260 }])
+      );
+      // 后半段转成横滑也不能再切
+      surface.dispatchEvent(
+        makeTouchEvent("touchmove", [{ clientX: 60, clientY: 270 }])
+      );
+      surface.dispatchEvent(
+        makeTouchEvent("touchend", [], [{ clientX: 60, clientY: 270 }])
+      );
+    });
+
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it("长按多选笔刷期间的横滑不切分类", () => {
+    const onChange = vi.fn();
+    const surface = mountSurface(ids, "精选", onChange);
+    setDragSelecting(true);
+
+    swipe(surface, [300, 200], [160, 205]);
+
+    expect(onChange).not.toHaveBeenCalled();
   });
 
   it("内部横向滚动区域上的横滑交给该元素处理", () => {

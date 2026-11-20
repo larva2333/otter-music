@@ -67,6 +67,7 @@ import { downloadMusicTrackBatch } from "@/lib/utils/download";
 import { useMusicStore } from "@/store/music-store";
 import { useAutoLoadMore } from "@/hooks/use-auto-load-more";
 import { useExitLayerStore } from "@/hooks/useExitLayer";
+import { setDragSelecting } from "@/hooks/gesture-axis";
 import { MusicTrack } from "@/types/music";
 import toast from "react-hot-toast";
 import { processBatchCPU, cn } from "@/lib/utils";
@@ -286,6 +287,9 @@ export function MusicTrackList({
     (anchorId: string, paintSelected: boolean) => {
       lastDragIdRef.current = anchorId;
       if (stopDragSelectRef.current) return; // 上一次还没结束（理论上不会），别叠监听
+      // 挡住下拉刷新 / 分类横滑：笔刷手势的 touchmove 在 document 上才 preventDefault，
+      // 等它执行时滚动容器上的刷新监听已经把指示器拉出来了
+      setDragSelecting(true);
 
       const applyAt = (x: number, y: number) => {
         const el = document.elementFromPoint(x, y);
@@ -317,6 +321,7 @@ export function MusicTrackList({
         document.removeEventListener("touchcancel", finish);
         stopDragSelectRef.current = null;
         lastDragIdRef.current = null;
+        setDragSelecting(false);
       };
 
       document.addEventListener("touchmove", onMove, { passive: false });

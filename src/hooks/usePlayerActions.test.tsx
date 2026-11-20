@@ -49,6 +49,18 @@ describe("usePlayerActions 封面长按", () => {
     return {
       touchStart: () => act(() => get().onTouchStart()),
       touchEnd: () => act(() => get().onTouchEnd()),
+      touchStartAt: (x: number, y: number) =>
+        act(() =>
+          get().onTouchStart?.({
+            touches: [{ clientX: x, clientY: y }],
+          } as unknown as React.TouchEvent)
+        ),
+      touchMoveAt: (x: number, y: number) =>
+        act(() =>
+          get().onTouchMove?.({
+            touches: [{ clientX: x, clientY: y }],
+          } as unknown as React.TouchEvent)
+        ),
       mouseDown: () => act(() => get().onMouseDown()),
       mouseUp: () => act(() => get().onMouseUp()),
       click: () => {
@@ -169,6 +181,36 @@ describe("usePlayerActions 封面长按", () => {
     // 用户随后点菜单外的地方关菜单：这一次 click 必须放行，不再被吞
     expect(actions.consumeLongPressClick()).toBe(false);
 
+    actions.cleanup();
+  });
+
+  it("封面上横滑切歌时不弹播放风格面板", () => {
+    const onCoverLongPress = vi.fn();
+    const actions = renderActions(onCoverLongPress);
+
+    actions.touchStartAt(200, 200);
+    actions.advance(200);
+    // 慢速横滑：移动超过阈值就取消长按，即使总按住时间超过 500ms
+    actions.touchMoveAt(120, 204);
+    actions.advance(400);
+
+    expect(onCoverLongPress).not.toHaveBeenCalled();
+
+    actions.touchEnd();
+    actions.cleanup();
+  });
+
+  it("封面上微小抖动不影响长按弹菜单", () => {
+    const onCoverLongPress = vi.fn();
+    const actions = renderActions(onCoverLongPress);
+
+    actions.touchStartAt(200, 200);
+    actions.touchMoveAt(196, 201);
+    actions.advance(500);
+
+    expect(onCoverLongPress).toHaveBeenCalledTimes(1);
+
+    actions.touchEnd();
     actions.cleanup();
   });
 

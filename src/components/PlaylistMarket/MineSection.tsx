@@ -25,8 +25,6 @@ import { usePullToRefresh } from "@/hooks/use-pull-to-refresh";
 import { PullRefreshIndicator } from "@/components/PullRefreshIndicator";
 import { t2s } from "@/lib/utils/t2s";
 
-const SUB_TAB_HEIGHT = "h-8";
-
 interface MineTabConfig {
   id: MusicState["lastMineTab"];
   label: string;
@@ -348,12 +346,9 @@ export function MineSection({
       )}
     >
       <PullRefreshIndicator indicatorRef={indicatorRef} status={pullStatus} />
-      <div
-        className={cn(
-          "flex items-center justify-between mb-4 px-1 relative gap-4",
-          SUB_TAB_HEIGHT
-        )}
-      >
+      {/* 与「推荐」页 tab 行同构：外层 p-4 提供 16px 顶距、tab 行不再用
+          h-8 + items-center（会把文字再居中下移 4px），mb-3 对齐推荐的 pb-3 */}
+      <div className="flex items-center justify-between mb-3 px-1 relative gap-4">
         <div className="flex-1 min-w-0 overflow-x-auto no-scrollbar">
           <div className="flex items-center gap-6 w-max">
             {tabs.map((tab) => (
@@ -381,7 +376,7 @@ export function MineSection({
         </div>
       </div>
 
-      <div className="animate-in fade-in slide-in-from-bottom-2 duration-300">
+      <div>
         {loading && !isDataReady ? (
           <div className="h-60 flex items-center justify-center text-muted-foreground">
             <Loader2 className="h-6 w-6 animate-spin text-primary" />

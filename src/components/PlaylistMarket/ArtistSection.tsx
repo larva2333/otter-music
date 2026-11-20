@@ -84,20 +84,26 @@ function FilterGroup({
   options,
   value,
   onSelect,
-  grid = false,
+  cols,
 }: {
   title: string;
   options: readonly { id: string; name: string }[];
   value: string;
   onSelect: (id: string) => void;
-  /** 字母这类选项多、字数短的用等宽网格，避免一行挤爆 */
-  grid?: boolean;
+  /** 选项多、字数短的用等宽网格（地区 6 列、首字母 7 列），保证一排放得下 */
+  cols?: 6 | 7;
 }) {
   return (
     <div className="space-y-2.5">
       <p className="text-xs font-bold text-muted-foreground">{title}</p>
       <div
-        className={cn(grid ? "grid grid-cols-7 gap-2" : "flex flex-wrap gap-2")}
+        className={cn(
+          cols === 6
+            ? "grid grid-cols-6 gap-1.5"
+            : cols === 7
+              ? "grid grid-cols-7 gap-2"
+              : "flex flex-wrap gap-2"
+        )}
       >
         {options.map((opt) => {
           const active = opt.id === value;
@@ -108,7 +114,7 @@ function FilterGroup({
               onClick={() => onSelect(opt.id)}
               className={cn(
                 "h-8 rounded-full text-sm transition-colors shrink-0",
-                grid ? "px-0" : "px-3.5",
+                cols ? "px-0" : "px-3.5",
                 active
                   ? "bg-primary text-primary-foreground font-medium"
                   : "bg-secondary/60 text-foreground hover:bg-secondary"
@@ -125,7 +131,7 @@ function FilterGroup({
 
 /**
  * 发现页「歌手」分类：歌手榜 + 地区/类型筛选（单选）。
- * 圆形头像三列网格，点击进入歌手详情页 /netease-artist/:id。
+ * 圆形头像四列网格，点击进入歌手详情页 /netease-artist/:id。
  */
 export function ArtistSection() {
   const navigate = useNavigate();
@@ -133,6 +139,8 @@ export function ArtistSection() {
   const [type, setType] = useState("-1");
   const [initial, setInitial] = useState("-1");
   const [drawerOpen, setDrawerOpen] = useState(false);
+  // 抽屉内的临时筛选条件：选完不立即生效，点「确认」才写回上面三个状态
+  const [draft, setDraft] = useState({ area, type, initial });
   const [artists, setArtists] = useState<TopArtist[]>([]);
   const [loading, setLoading] = useState(true);
   const reqIdRef = useRef(0);
@@ -173,21 +181,30 @@ export function ArtistSection() {
     void load(area, type, initial);
   }, [area, type, initial, load]);
 
-  const handleSelect = (setter: (v: string) => void) => (id: string) => {
-    setter(id);
-    setDrawerOpen(false);
+  // 每次打开抽屉时，用当前生效条件初始化草稿（取消关闭不会留下半选状态）
+  useEffect(() => {
+    if (drawerOpen) setDraft({ area, type, initial });
+  }, [drawerOpen, area, type, initial]);
+
+  const handleSelect = (key: "area" | "type" | "initial") => (id: string) => {
+    setDraft((prev) => ({ ...prev, [key]: id }));
   };
 
-  /** 一键重置：地区/类型/首字母全部回到默认档位，并关闭抽屉刷新列表 */
+  /** 重置草稿：三组条件回到默认档位，不关闭抽屉，等用户点确认 */
   const handleReset = () => {
-    setDrawerOpen(false);
-    if (area === "-1" && type === "-1" && initial === "-1") return;
-    setArea("-1");
-    setType("-1");
-    setInitial("-1");
+    setDraft({ area: "-1", type: "-1", initial: "-1" });
   };
 
-  const isDefaultFilter = area === "-1" && type === "-1" && initial === "-1";
+  /** 确认：草稿写回生效状态，关抽屉并触发列表刷新 */
+  const handleConfirm = () => {
+    setArea(draft.area);
+    setType(draft.type);
+    setInitial(draft.initial);
+    setDrawerOpen(false);
+  };
+
+  const isDefaultDraft =
+    draft.area === "-1" && draft.type === "-1" && draft.initial === "-1";
 
   // 页内标题：默认「热门歌手」，选中筛选后跟随变为筛选标签（多条件用 · 连接）
   const titleLabel = useMemo(() => {
@@ -203,7 +220,7 @@ export function ArtistSection() {
 
   return (
     <div className="p-4 pb-bottom-stack">
-      {/* 标题行：标题与筛选按钮都可点击打开筛选抽屉（单选，选完自动收起并刷新） */}
+      {/* 标题行：标题与筛选按钮都可打开抽屉；抽屉内选完要点「确认」才筛选 */}
       <div className="flex items-center gap-2 mb-4 px-1 h-8">
         <Drawer open={drawerOpen} onOpenChange={setDrawerOpen}>
           <DrawerTrigger asChild>
@@ -223,14 +240,34 @@ export function ArtistSection() {
           <DrawerContent className="max-h-[70vh]">
             <ScrollArea className="px-6 pb-8 pt-3 overflow-y-auto">
               <div className="space-y-5">
-                {/* 一键重置：三组条件全回到「全部/热门」 */}
-                <div className="flex justify-end">
+                <FilterGroup
+                  title="地区"
+                  options={AREA_OPTIONS}
+                  value={draft.area}
+                  onSelect={handleSelect("area")}
+                  cols={6}
+                />
+                <FilterGroup
+                  title="类型"
+                  options={TYPE_OPTIONS}
+                  value={draft.type}
+                  onSelect={handleSelect("type")}
+                />
+                <FilterGroup
+                  title="首字母"
+                  options={INITIAL_OPTIONS}
+                  value={draft.initial}
+                  onSelect={handleSelect("initial")}
+                  cols={7}
+                />
+                {/* 底部操作：重置草稿 / 确认应用（要点确认才会筛选） */}
+                <div className="flex gap-2 pt-1">
                   <button
                     type="button"
                     onClick={handleReset}
                     className={cn(
-                      "h-8 px-3 rounded-full text-sm flex items-center gap-1.5 transition-colors",
-                      isDefaultFilter
+                      "h-9 flex-1 rounded-full text-sm flex items-center justify-center gap-1.5 transition-colors",
+                      isDefaultDraft
                         ? "text-muted-foreground/40 bg-secondary/30"
                         : "text-foreground bg-secondary/70 hover:bg-secondary"
                     )}
@@ -238,26 +275,14 @@ export function ArtistSection() {
                     <RotateCcw className="h-3.5 w-3.5" />
                     重置
                   </button>
+                  <button
+                    type="button"
+                    onClick={handleConfirm}
+                    className="h-9 flex-1 rounded-full text-sm font-medium bg-primary text-primary-foreground hover:bg-primary/90 transition-colors"
+                  >
+                    确认
+                  </button>
                 </div>
-                <FilterGroup
-                  title="地区"
-                  options={AREA_OPTIONS}
-                  value={area}
-                  onSelect={handleSelect(setArea)}
-                />
-                <FilterGroup
-                  title="类型"
-                  options={TYPE_OPTIONS}
-                  value={type}
-                  onSelect={handleSelect(setType)}
-                />
-                <FilterGroup
-                  title="首字母"
-                  options={INITIAL_OPTIONS}
-                  value={initial}
-                  onSelect={handleSelect(setInitial)}
-                  grid
-                />
               </div>
             </ScrollArea>
           </DrawerContent>
@@ -265,11 +290,11 @@ export function ArtistSection() {
       </div>
 
       {loading && artists.length === 0 ? (
-        <div className="grid grid-cols-3 gap-x-3 gap-y-5">
-          {Array.from({ length: 9 }).map((_, i) => (
+        <div className="grid grid-cols-4 gap-x-2.5 gap-y-4">
+          {Array.from({ length: 12 }).map((_, i) => (
             <div key={i} className="flex flex-col items-center gap-2">
               <div className="w-full aspect-square rounded-full bg-secondary animate-pulse" />
-              <div className="h-3 w-2/3 rounded bg-secondary animate-pulse" />
+              <div className="h-4 w-2/3 rounded bg-secondary animate-pulse" />
             </div>
           ))}
         </div>
@@ -280,7 +305,7 @@ export function ArtistSection() {
       ) : (
         <div
           className={cn(
-            "grid grid-cols-3 gap-x-3 gap-y-5",
+            "grid grid-cols-4 gap-x-2.5 gap-y-4",
             loading && "opacity-60"
           )}
         >
@@ -306,7 +331,7 @@ export function ArtistSection() {
                   </div>
                 )}
               </div>
-              <span className="text-xs text-foreground line-clamp-1 w-full text-center">
+              <span className="text-sm text-foreground line-clamp-1 w-full text-center">
                 {t2s(artist.name)}
               </span>
             </button>

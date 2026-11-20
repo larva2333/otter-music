@@ -561,9 +561,14 @@ export function FullScreenPlayer({
    */
   const coverTransformRef = useRef<HTMLDivElement | null>(null);
   const tonearmTransformRef = useRef<HTMLDivElement | null>(null);
+  const tonearmArmRef = useRef<SVGSVGElement | null>(null);
   const dragRefs = useMemo(
-    () => ({ cover: coverTransformRef, tonearm: tonearmTransformRef }),
-    [coverTransformRef, tonearmTransformRef]
+    () => ({
+      cover: coverTransformRef,
+      tonearm: tonearmTransformRef,
+      tonearmArm: tonearmArmRef,
+    }),
+    [coverTransformRef, tonearmTransformRef, tonearmArmRef]
   );
 
   /**
@@ -820,7 +825,12 @@ export function FullScreenPlayer({
         {...swipe.handlers}
         onTouchStart={(e) => {
           swipe.handlers.onTouchStart(e);
-          if (!showLyrics) coverPressHandlers.onTouchStart?.();
+          if (!showLyrics) coverPressHandlers.onTouchStart?.(e);
+        }}
+        onTouchMove={(e) => {
+          swipe.handlers.onTouchMove(e);
+          // 横滑切歌时移动超过阈值就取消「长按改风格」的计时器
+          if (!showLyrics) coverPressHandlers.onTouchMove?.(e);
         }}
         onTouchEnd={(e) => {
           swipe.handlers.onTouchEnd(e);
@@ -830,8 +840,11 @@ export function FullScreenPlayer({
           swipe.handlers.onTouchCancel();
           if (!showLyrics) coverPressHandlers.onTouchCancel?.();
         }}
-        onMouseDown={() => {
-          if (!showLyrics) coverPressHandlers.onMouseDown?.();
+        onMouseDown={(e) => {
+          if (!showLyrics) coverPressHandlers.onMouseDown?.(e);
+        }}
+        onMouseMove={(e) => {
+          if (!showLyrics) coverPressHandlers.onMouseMove?.(e);
         }}
         onMouseUp={() => {
           if (!showLyrics) coverPressHandlers.onMouseUp?.();
@@ -892,6 +905,7 @@ export function FullScreenPlayer({
                 armState={armAway ? "away" : isPlaying ? "playing" : "paused"}
                 tonearmContainerStyle={tonearmCounterStyle}
                 tonearmContainerRef={tonearmTransformRef}
+                tonearmArmRef={tonearmArmRef}
                 className="h-full w-full touch-none"
                 imgStyle={{
                   transform: `scale(${(1.02 * coverZoom).toFixed(4)})`,
@@ -935,10 +949,13 @@ export function FullScreenPlayer({
           <div
             className={cn("min-w-0 flex-1 cursor-pointer select-none")}
             onMouseDown={trackInfoPressHandlers.onMouseDown}
+            onMouseMove={trackInfoPressHandlers.onMouseMove}
             onMouseUp={trackInfoPressHandlers.onMouseUp}
             onMouseLeave={trackInfoPressHandlers.onMouseLeave}
             onTouchStart={trackInfoPressHandlers.onTouchStart}
+            onTouchMove={trackInfoPressHandlers.onTouchMove}
             onTouchEnd={trackInfoPressHandlers.onTouchEnd}
+            onTouchCancel={trackInfoPressHandlers.onTouchCancel}
             title="长按复制歌曲信息"
           >
             <h2 className="truncate text-sm font-semibold text-white">

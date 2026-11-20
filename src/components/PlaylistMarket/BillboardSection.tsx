@@ -19,6 +19,11 @@ export function BillboardSection() {
 
   return (
     <div className="p-4 pb-bottom-stack">
+      <div className="flex items-center h-8 mb-3 px-1">
+        <h2 className="text-base font-bold text-foreground tracking-wide truncate">
+          Billboard 榜单
+        </h2>
+      </div>
       <div className={cn("flex items-center gap-6 mb-4 px-1", SUB_TAB_HEIGHT)}>
         {BILLBOARD_GROUPS.map((g) => (
           <button

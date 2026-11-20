@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   installSystemScrollToTopBridge,
+  onPageScrollToTop,
   scrollPageToTop,
 } from "./scroll-to-top";
 
@@ -129,6 +130,31 @@ describe("scrollPageToTop 取消滚动惯性", () => {
     scrollPageToTop("smooth");
     expect(a.el.scrollTo).toHaveBeenCalledWith({ top: 0, behavior: "smooth" });
     expect(a.el.style.overflowY).toBe("");
+  });
+
+  it("回顶前先通知订阅方，此时还能读到旧的 scrollTop", () => {
+    const container = makeScrollContainer(720);
+    let seen: number | null = null;
+
+    const off = onPageScrollToTop(() => {
+      seen = container.getTop();
+    });
+
+    scrollPageToTop();
+
+    expect(seen).toBe(720);
+    expect(container.getTop()).toBe(0);
+
+    // 已经在顶部时不会再通知
+    let notified = 0;
+    const off2 = onPageScrollToTop(() => {
+      notified += 1;
+    });
+    scrollPageToTop();
+    expect(notified).toBe(0);
+
+    off();
+    off2();
   });
 });
 

@@ -34,6 +34,16 @@ const ARM_FOLLOW_MAX = 16;
 const ARM_FOLLOW_RATIO = 36;
 /** 唱臂跟手阶段的过渡：只留位移过渡，旋转必须一帧到位才跟手 */
 const ARM_FOLLOW_TRANSITION = "transform 350ms ease-out";
+/**
+ * 确认切歌时把唱臂推到切割位的过渡。
+ * 比跟手用的短，松手那一刻要有「甩到位置」的干脆感。
+ */
+const ARM_CUT_TRANSITION = "rotate 200ms ease-out";
+/**
+ * 唱臂停在切割位的时长：新封面从侧边滑进来大约 300ms，
+ * 等唱片落位再转回播放位，视觉上是「换好唱片再落针」。
+ */
+const ARM_READY_DELAY = 360;
 /** 松手归位：旋转单独给 320ms 缓出，和唱片回弹一起收住 */
 const ARM_SETTLE_TRANSITION =
   "transform 350ms ease-out, rotate 320ms cubic-bezier(0.22, 1, 0.36, 1)";
@@ -213,17 +223,18 @@ export function usePlayerSwipeGestures({
   }, []);
 
   /**
-   * 唱臂跟手：唱片被横向拖走时，唱头被「带着」往同一方向摆。
-   * 只写 `rotate`（容器负责反向 translate 让轴心不动），跟手阶段不要过渡，
-   * 松手时再恢复 320ms 过渡归零。
+   * 唱臂角度：只跟「滑了多远」有关，跟方向无关。
+   * 切割动作永远是抬臂（逆时针 = 负角度），所以左右滑都往同一个方向转，
+   * 幅度按位移线性增长，到 1/3 屏宽封顶 ±ARM_FOLLOW_MAX。
+   * 只写 `rotate`（容器负责反向 translate 让轴心不动）。
    */
   const writeArmAngle = useCallback(
     (x: number) => {
       if (!dragRefs) return;
       const width = window.innerWidth || 360;
-      const angle = Math.max(
-        -ARM_FOLLOW_MAX,
-        Math.min(ARM_FOLLOW_MAX, -(x / width) * ARM_FOLLOW_RATIO)
+      const angle = -Math.min(
+        ARM_FOLLOW_MAX,
+        (Math.abs(x) / width) * ARM_FOLLOW_RATIO
       );
       writeArmRotate(
         dragRefs.tonearmArm?.current ?? null,
@@ -242,6 +253,41 @@ export function usePlayerSwipeGestures({
       ARM_SETTLE_TRANSITION
     );
   }, [dragRefs]);
+
+  const armTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const clearArmTimer = useCallback(() => {
+    if (armTimerRef.current !== null) {
+      clearTimeout(armTimerRef.current);
+      armTimerRef.current = null;
+    }
+  }, []);
+
+  /**
+   * 确认切歌：唱臂先甩到切割位停住，等新唱片滑进来落位后再转回播放位。
+   * 不再像以前那样松手就立刻归零 —— 那看起来像「还没换片针就落下了」。
+   */
+  const cutArm = useCallback(() => {
+    if (!dragRefs) return;
+    writeArmRotate(
+      dragRefs.tonearmArm?.current ?? null,
+      -ARM_FOLLOW_MAX,
+      ARM_CUT_TRANSITION
+    );
+    clearArmTimer();
+    armTimerRef.current = setTimeout(() => {
+      armTimerRef.current = null;
+      settleArm();
+    }, ARM_READY_DELAY);
+  }, [dragRefs, clearArmTimer, settleArm]);
+
+  /** 收手：清掉延迟归位的定时器，把唱臂立刻放回播放位 */
+  const restArm = useCallback(() => {
+    clearArmTimer();
+    settleArm();
+  }, [clearArmTimer, settleArm]);
+
+  useEffect(() => clearArmTimer, [clearArmTimer]);
 
   /**
    * 只靠 CSS `touch-action: none` 在部分 WebView 上并不够：
@@ -275,9 +321,9 @@ export function usePlayerSwipeGestures({
       horizFlagRef.current = false;
       cancelDragFrame();
       writeDragX(0);
-      settleArm();
+      restArm();
     }
-  }, [cancelDragFrame, writeDragX, settleArm, dragRefs]);
+  }, [cancelDragFrame, writeDragX, restArm, dragRefs]);
 
   const handleTouchStart = useCallback(
     (e: React.TouchEvent) => {
@@ -304,7 +350,7 @@ export function usePlayerSwipeGestures({
           horizFlagRef.current = false;
           cancelDragFrame();
           writeDragX(0);
-          settleArm();
+          restArm();
         }
       }
 
@@ -330,7 +376,7 @@ export function usePlayerSwipeGestures({
         dy: 0,
       };
     },
-    [enabled, onTap, cancelDragFrame, writeDragX, settleArm, dragRefs]
+    [enabled, onTap, cancelDragFrame, writeDragX, restArm, dragRefs]
   );
 
   const handleTouchMove = useCallback(
@@ -451,13 +497,15 @@ export function usePlayerSwipeGestures({
 
         // DOM 直写路径：位移不经过 state，松手时只需要一帧写回即可
         if (dragRefs) {
-          // 松手：唱头摆回原位（带过渡），与封面一起归位
-          settleArm();
           if (!shouldSwitch) {
-            // 距离不够：归零，刚恢复的 CSS 过渡会把封面吸回原位
+            // 距离不够：唱臂立刻归位，刚恢复的 CSS 过渡会把封面吸回原位
+            restArm();
             scheduleDragX(0);
             return;
           }
+
+          // 确认切歌：唱臂甩到切割位停住，等新唱片落位后自己转回来
+          cutArm();
 
           markClickSuppression();
           // 自然方向：左滑看到下一首，右滑回到上一首。
@@ -525,7 +573,8 @@ export function usePlayerSwipeGestures({
       cancelDragFrame,
       scheduleDragX,
       writeDragX,
-      settleArm,
+      restArm,
+      cutArm,
       dragRefs,
     ]
   );

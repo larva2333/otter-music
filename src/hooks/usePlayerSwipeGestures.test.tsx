@@ -375,7 +375,7 @@ describe("usePlayerSwipeGestures 播放页手势", () => {
     container.remove();
   });
 
-  it("横滑唱片时唱臂跟着摆动，松手归零", () => {
+  const renderArmHarness = () => {
     const container = document.createElement("div");
     document.body.appendChild(container);
     const root = createRoot(container);
@@ -391,14 +391,16 @@ describe("usePlayerSwipeGestures 播放页手势", () => {
       tonearmArm: { current: arm },
     };
 
+    const onNext = vi.fn();
+    const onPrev = vi.fn();
     let latest: ReturnType<typeof usePlayerSwipeGestures> | undefined;
 
     function TestHarness() {
       const gestures = usePlayerSwipeGestures({
         enabled: true,
         onClose: vi.fn(),
-        onPrev: vi.fn(),
-        onNext: vi.fn(),
+        onPrev,
+        onNext,
         dragRefs,
       });
       useEffect(() => {
@@ -411,23 +413,86 @@ describe("usePlayerSwipeGestures 播放页手势", () => {
       root.render(<TestHarness />);
     });
 
+    const drag = (fromX: number, toX: number) => {
+      act(() => {
+        latest!.handlers.onTouchStart(touch(fromX, 300));
+        latest!.handlers.onTouchMove(touch(toX, 305));
+      });
+    };
+
+    const angle = () => parseFloat(arm.style.rotate || "0");
+
+    return {
+      root,
+      container,
+      arm,
+      onNext,
+      onPrev,
+      latest: () => latest!,
+      drag,
+      angle,
+    };
+  };
+
+  it("不论往哪边滑，唱臂都朝逆时针方向（负角度）切割，幅度随距离增大", () => {
+    const h = renderArmHarness();
+
+    // 左滑 100px
+    h.drag(400, 300);
+    const leftAngle = h.angle();
+    expect(leftAngle).toBeLessThan(0);
+
+    // 换一次手势：起手会把唱臂放回 0，再右滑 160px
+    h.drag(200, 360);
+    const rightAngle = h.angle();
+
+    // 右滑同样是逆时针，而且滑得更远、角度更大
+    expect(rightAngle).toBeLessThan(0);
+    expect(rightAngle).toBeLessThan(leftAngle);
+
+    act(() => h.root.unmount());
+    h.container.remove();
+  });
+
+  it("切歌时唱臂停在切割位，等下一张唱片就绪再转回播放位", () => {
+    const h = renderArmHarness();
+
+    h.drag(400, 150);
+    act(() => h.latest().handlers.onTouchEnd());
+
+    // 松手确认切歌：先甩到最大切割角，不立刻归零
+    expect(h.onNext).toHaveBeenCalled();
+    expect(h.angle()).toBeLessThan(-15);
+
+    // 新唱片的入场过渡还没走完，唱臂继续停在切割位
     act(() => {
-      latest!.handlers.onTouchStart(touch(300, 300));
-      latest!.handlers.onTouchMove(touch(200, 305));
+      vi.advanceTimersByTime(300);
     });
+    expect(h.angle()).toBeLessThan(-15);
 
-    // 唱片左滑 → 唱头被带着向左摆（rotate 为正角度）
-    expect(parseFloat(arm.style.rotate)).toBeGreaterThan(0);
-
+    // 唱片落位后自己转回播放位
     act(() => {
-      latest!.handlers.onTouchEnd();
+      vi.advanceTimersByTime(80);
     });
+    expect(h.arm.style.rotate).toBe("0deg");
+    expect(h.arm.style.transition).toContain("rotate");
 
-    // 松手后唱臂回正，并带上过渡
-    expect(arm.style.rotate).toBe("0deg");
-    expect(arm.style.transition).toContain("rotate");
+    act(() => h.root.unmount());
+    h.container.remove();
+  });
 
-    act(() => root.unmount());
-    container.remove();
+  it("滑动距离不足时唱臂立刻回到播放位", () => {
+    const h = renderArmHarness();
+
+    h.drag(400, 370);
+    expect(h.angle()).toBeLessThan(0);
+
+    act(() => h.latest().handlers.onTouchEnd());
+
+    expect(h.onNext).not.toHaveBeenCalled();
+    expect(h.arm.style.rotate).toBe("0deg");
+
+    act(() => h.root.unmount());
+    h.container.remove();
   });
 });

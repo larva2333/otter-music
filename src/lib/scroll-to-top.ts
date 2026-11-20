@@ -13,6 +13,23 @@
 /** 主滚动容器标记属性名 */
 export const PAGE_SCROLL_SELECTOR = "[data-page-scroll]";
 
+/**
+ * 「回顶」发生前的通知钩子。
+ *
+ * 歌词页有自己的跟随逻辑：被回顶到开头的瞬间必须知道「这是用户主动回顶」，
+ * 才能暂停自动跟随，否则下一句歌词一到又会被拽回中间，回顶等于白按。
+ * 回调在真正滚动之前触发，此时还能读到旧的 scrollTop。
+ */
+const scrollToTopListeners = new Set<() => void>();
+
+/** 订阅「回顶」动作，返回取消订阅函数 */
+export function onPageScrollToTop(listener: () => void): () => void {
+  scrollToTopListeners.add(listener);
+  return () => {
+    scrollToTopListeners.delete(listener);
+  };
+}
+
 /** 取消惯性后锁住滚动的时间（ms），到点或用户按下时恢复 */
 const FLING_LOCK_MS = 1000;
 
@@ -97,6 +114,9 @@ export function scrollPageToTop(behavior: ScrollBehavior = "auto"): boolean {
   const windowMoved = typeof window !== "undefined" && window.scrollY > 0;
 
   if (targets.length === 0 && !windowMoved) return false;
+
+  // 先通知再滚动：订阅方此时读到的还是滚动前的 scrollTop
+  scrollToTopListeners.forEach((listener) => listener());
 
   targets.forEach((el) => el.scrollTo({ top: 0, behavior }));
 

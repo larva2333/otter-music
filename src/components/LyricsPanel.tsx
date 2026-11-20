@@ -25,6 +25,8 @@ import {
 } from "lucide-react";
 import { useMusicStore, type LyricAlign } from "@/store/music-store";
 import { useShallow } from "zustand/react/shallow";
+import { useScrimSystemBars } from "@/hooks/useScrimSystemBars";
+import { onPageScrollToTop } from "@/lib/scroll-to-top";
 import { findActiveLyricIndex, parseLrc, type LyricLine } from "@/lib/lyrics";
 
 interface LyricsPanelProps {
@@ -122,6 +124,10 @@ export function LyricsPanel({ track, active = true }: LyricsPanelProps) {
   const [baselineVisible, setBaselineVisible] = useState(false);
   // 长按歌词弹出的样式面板
   const [stylePanelOpen, setStylePanelOpen] = useState(false);
+  // 样式面板的黑色遮罩会铺到状态栏底下，弹出期间状态栏图标改成浅色
+  useScrimSystemBars(stylePanelOpen);
+  // 点了状态栏「回顶」之后暂停跟随播放进度，否则下一句一到就把视图拽回去
+  const [followPaused, setFollowPaused] = useState(false);
   // 基准线只在「滚动最终停稳」那一刻算一次，滚动过程中完全不碰它。
   // 之前逐帧跟随 + CSS transition，每帧都会重启一次过渡，缓动永远追不上，所以一路抖。
   const baselineRef = useRef<HTMLDivElement>(null);
@@ -238,6 +244,7 @@ export function LyricsPanel({ track, active = true }: LyricsPanelProps) {
       setIsUserScrolling(false);
       setCenterLineIndex(-1);
       setBaselineVisible(false);
+      setFollowPaused(false);
 
       isUserScrollingRef.current = false;
       centerIdxRef.current = -1;
@@ -318,11 +325,27 @@ export function LyricsPanel({ track, active = true }: LyricsPanelProps) {
   }, [measureLineCenters]);
 
   const handleScroll = useCallback(() => {
-    if (isAutoScrollingRef.current) return;
-
     const container = viewportRef.current;
 
-    if (!container || lyrics.length === 0) return;
+    if (!container) return;
+
+    if (isAutoScrollingRef.current) return;
+
+    if (lyrics.length === 0) return;
+
+    // 回顶后自己把列表滚回当前句附近：视为想继续跟着唱，恢复自动跟随
+    if (followPaused) {
+      const el = lineRefs.current[activeIndex];
+
+      if (el) {
+        const offset =
+          el.offsetTop - container.clientHeight / 2 + el.clientHeight / 2;
+
+        if (Math.abs(container.scrollTop - offset) < 240) {
+          setFollowPaused(false);
+        }
+      }
+    }
 
     // 滚动期间线钉在视口正中：给一个固定参照，能看清滑到哪儿了，
     // 但它不跟着动、也不算最近的行，等停稳了才吸附过去。
@@ -370,7 +393,7 @@ export function LyricsPanel({ track, active = true }: LyricsPanelProps) {
       setBaselineVisible(false);
       setCenterLineIndex(-1);
     }, AUTO_SCROLL_DELAY);
-  }, [lyrics.length, snapBaseline]);
+  }, [lyrics.length, snapBaseline, followPaused, activeIndex]);
 
   useEffect(() => {
     return () => {
@@ -416,6 +439,8 @@ export function LyricsPanel({ track, active = true }: LyricsPanelProps) {
     queueMicrotask(() => {
       setLoading(true);
       setError("");
+      // 换歌 = 换一份歌词：清掉上一首「回顶」带来的跟随暂停
+      setFollowPaused(false);
     });
 
     musicApi
@@ -450,7 +475,7 @@ export function LyricsPanel({ track, active = true }: LyricsPanelProps) {
   }, [track, trackId, lyricId, source, active]);
 
   useEffect(() => {
-    if (isUserScrolling) return;
+    if (isUserScrolling || followPaused) return;
 
     const container = viewportRef.current;
     const el = lineRefs.current[activeIndex];
@@ -479,13 +504,15 @@ export function LyricsPanel({ track, active = true }: LyricsPanelProps) {
       isAutoScrollingRef.current = false;
       container.removeEventListener("scrollend", onScrollEnd);
     };
-  }, [activeIndex, isUserScrolling]);
+  }, [activeIndex, isUserScrolling, followPaused]);
 
   useEffect(() => {
     flushSync(() => {
       setIsUserScrolling(false);
       setCenterLineIndex(-1);
       setBaselineVisible(false);
+      // 用户主动跳转后就该跟着新位置走，取消「回顶」带来的暂停
+      setFollowPaused(false);
     });
 
     isUserScrollingRef.current = false;
@@ -502,6 +529,26 @@ export function LyricsPanel({ track, active = true }: LyricsPanelProps) {
       settleTimerRef.current = null;
     }
   }, [seekTimestamp]);
+
+  /**
+   * 点状态栏「回顶」：歌词列表注册成主滚动容器，系统回顶会把它归零。
+   *
+   * 归零的同时必须暂停跟随，否则下一句一到又会被拉回中间 —— 回顶就等于白按。
+   * 恢复跟随有三种情况：点某句歌词（seek）、换歌、或者自己滚回当前句附近。
+   */
+  useEffect(() => {
+    const container = viewportRef.current;
+
+    if (!container) return;
+
+    container.setAttribute("data-page-scroll", "");
+
+    return onPageScrollToTop(() => {
+      // 回调在滚动之前触发，这里读到的还是旧位置
+      if (container.scrollTop <= 0) return;
+      setFollowPaused(true);
+    });
+  }, [trackId, lyrics.length]);
 
   useEffect(() => {
     return () => {

@@ -5,6 +5,7 @@ import { createPortal } from "react-dom";
 import { Disc3, Image as ImageIcon, ImagePlus, Palette, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useExitLayer } from "@/hooks/useExitLayer";
+import { useScrimSystemBars } from "@/hooks/useScrimSystemBars";
 import {
   useMusicStore,
   DEFAULT_VINYL_COLOR,
@@ -100,6 +101,8 @@ export function CoverStyleMenu({
   const vinylColor = useMusicStore((s) => s.vinylColor);
   const setVinylColor = useMusicStore((s) => s.setVinylColor);
   const { push, pop } = useExitLayer();
+  // 遮罩铺到状态栏底下：打开期间把状态栏图标切成浅色，否则深色图标会糊在黑色蒙层上
+  useScrimSystemBars(open);
   const fileInputRef = useRef<HTMLInputElement>(null);
   // 待裁剪的原图 dataUrl：选完图先进裁剪器，确定后才写进 store
   const [cropSrc, setCropSrc] = useState<string | null>(null);

@@ -4,6 +4,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { LyricsPanel } from "./LyricsPanel";
 import { musicApi } from "@/lib/music-api";
 import type { MusicTrack } from "@/types/music";
+import { scrollPageToTop } from "@/lib/scroll-to-top";
 
 vi.mock("@/lib/music-api", () => ({
   musicApi: {
@@ -322,6 +323,46 @@ describe("LyricsPanel", () => {
     });
 
     expect(mockSetLyricFontSize).toHaveBeenCalledWith(19);
+
+    cleanup();
+  });
+
+  it("点状态栏回顶会把歌词列表滚回顶部", async () => {
+    vi.mocked(musicApi.getLyric).mockResolvedValue({
+      lyric: "[00:00.00]第一句歌词\n[00:10.00]第二句歌词",
+      tlyric: "",
+    });
+
+    renderPanel(neteaseTrack);
+
+    await act(async () => {
+      await Promise.resolve();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+
+    const viewport = container!.querySelector(
+      '[data-slot="scroll-area-viewport"]'
+    ) as HTMLElement;
+
+    // 歌词列表已注册成主滚动容器，系统的「点状态栏回顶」才认得它
+    expect(viewport.hasAttribute("data-page-scroll")).toBe(true);
+
+    // jsdom 不做布局，scrollTop 靠手写模拟
+    viewport.scrollTop = 800;
+
+    const scrollToSpy = vi.fn();
+    Element.prototype.scrollTo = scrollToSpy;
+
+    const moved = scrollPageToTop();
+
+    expect(moved).toBe(true);
+    expect(scrollToSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ top: 0 })
+    );
+
+    // 已经在顶部时不再重复滚动
+    viewport.scrollTop = 0;
+    expect(scrollPageToTop()).toBe(false);
 
     cleanup();
   });

@@ -66,8 +66,9 @@ export function RootLayout() {
     );
   const { handleExit: handleExitLayer, push, pop } = useExitLayer();
 
-  // 点顶栏回到列表顶部（全屏播放器有自己的滚动区，那里不接管）
-  useTapTopToScrollTop(!isFullScreenPlayer);
+  // 点顶栏 / 点系统状态栏回到滚动区顶部。
+  // 全屏播放器里也要接管：歌词页的列表同样是 data-page-scroll 容器。
+  useTapTopToScrollTop();
 
   // 返回二级页时恢复上次的滚动位置（回收站 → 设置页等），前进/新开页面仍从顶部
   useScrollRestoration(location.pathname, navigationType);

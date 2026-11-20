@@ -96,14 +96,14 @@ function cancelFling(el: HTMLElement): void {
 /**
  * 把当前页面所有主滚动容器滚回顶部。
  *
- * 默认用 `auto`（瞬时归零）而不是 `smooth`：浏览器自带的平滑滚动跑完一次要
- * 600~700ms，点完顶部后要等半秒多才看到列表动，手感就是「点了没反应」。
- * 系统「点状态栏回顶」本身还有一次 loadUrl 注入的固定延迟，再叠加动画就更慢。
+ * 默认用 `smooth`：回顶是一段「往上滑」的动画，而不是瞬间闪回顶部——
+ * 长列表（歌词、歌单）瞬移会让人分不清是回顶了还是页面重绘。
+ * 只有明确不在乎过程的场景（例如惯性还没停、要立刻归零）才传 `auto`。
  *
- * @param behavior 滚动行为，默认 `auto`；需要动画时显式传 `smooth`
+ * @param behavior 滚动行为，默认 `smooth`；需要瞬时归零时显式传 `auto`
  * @returns 是否真的发生了滚动（已经在顶部时返回 false）
  */
-export function scrollPageToTop(behavior: ScrollBehavior = "auto"): boolean {
+export function scrollPageToTop(behavior: ScrollBehavior = "smooth"): boolean {
   if (typeof document === "undefined") return false;
 
   const targets: HTMLElement[] = [];

@@ -1,7 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, useEffect } from "react";
 import { createRoot } from "react-dom/client";
-import { usePlayerSwipeGestures } from "./usePlayerSwipeGestures";
+import {
+  consumeSwipeArmCut,
+  usePlayerSwipeGestures,
+} from "./usePlayerSwipeGestures";
 
 describe("usePlayerSwipeGestures 播放页手势", () => {
   beforeEach(() => {
@@ -460,15 +463,18 @@ describe("usePlayerSwipeGestures 播放页手势", () => {
     h.drag(400, 150);
     act(() => h.latest().handlers.onTouchEnd());
 
-    // 松手确认切歌：先甩到最大切割角，不立刻归零
+    // 松手确认切歌：先甩到与暂停同幅的切割角（svg 增量 36°），不立刻归零
     expect(h.onNext).toHaveBeenCalled();
-    expect(h.angle()).toBeLessThan(-15);
+    expect(h.angle()).toBeCloseTo(-36, 1);
+
+    // 横滑已经自己演完抬臂/回落，标记给播放页跳过它那套荡开补间
+    expect(consumeSwipeArmCut()).toBe(true);
 
     // 新唱片的入场过渡还没走完，唱臂继续停在切割位
     act(() => {
       vi.advanceTimersByTime(300);
     });
-    expect(h.angle()).toBeLessThan(-15);
+    expect(h.angle()).toBeCloseTo(-36, 1);
 
     // 唱片落位后自己转回播放位
     act(() => {
@@ -476,6 +482,38 @@ describe("usePlayerSwipeGestures 播放页手势", () => {
     });
     expect(h.arm.style.rotate).toBe("0deg");
     expect(h.arm.style.transition).toContain("rotate");
+
+    act(() => h.root.unmount());
+    h.container.remove();
+  });
+
+  it("暂停状态下唱臂已在暂停位，横滑不会再往上堆角度", () => {
+    const h = renderArmHarness();
+
+    // 暂停时 VinylCover 给的基准角是 -40°，与抬臂目标同一个位置
+    h.arm.style.transform = "rotate(-40deg)";
+
+    h.drag(400, 250);
+    expect(h.angle()).toBe(0);
+
+    act(() => h.latest().handlers.onTouchEnd());
+    // 切歌后停在同一个位置（不再有额外增量），随后自然落回播放位
+    expect(h.angle()).toBe(0);
+
+    act(() => h.root.unmount());
+    h.container.remove();
+  });
+
+  it("滑动距离不足时不留下「横滑切歌」标记", () => {
+    consumeSwipeArmCut();
+
+    const h = renderArmHarness();
+
+    h.drag(400, 370);
+    act(() => h.latest().handlers.onTouchEnd());
+
+    // 没切成歌：播放页该照常播自己的荡开补间
+    expect(consumeSwipeArmCut()).toBe(false);
 
     act(() => h.root.unmount());
     h.container.remove();

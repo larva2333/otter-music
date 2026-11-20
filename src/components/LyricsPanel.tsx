@@ -34,7 +34,15 @@ interface LyricsPanelProps {
   active?: boolean;
 }
 
-const AUTO_SCROLL_DELAY = 2000;
+/**
+ * 用户停手几秒后自动回到「正在播放的那一句」。
+ *
+ * 手动翻歌词、点状态栏回顶都只是「临时离开」，不是要脱离播放进度；
+ * 停手三四秒还没动作，就把视图交还给播放跟随，不用再手动点回来。
+ */
+const AUTO_RESUME_DELAY = 4000;
+// 回顶是一段上滑动画，动画期间不把它算成「用户手动滚动」（否则基准线会闪一下）
+const TOP_ANIMATION_LOCK = 700;
 // 滚动事件静默这么久，才算「最终停下来」
 const SCROLL_SETTLE_DELAY = 200;
 // 长按多久弹出歌词样式面板
@@ -174,6 +182,26 @@ export function LyricsPanel({ track, active = true }: LyricsPanelProps) {
   const viewportRef = useRef<HTMLDivElement>(null);
   const scrollTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isAutoScrollingRef = useRef(false);
+  // 回顶动画期间把自动滚动的锁临时打开，动画结束再交还
+  const topAnimTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  /** 停手几秒后恢复播放跟随：收起基准线、解掉「用户正在滚动」，回到当前句 */
+  const scheduleFollowResume = useCallback(() => {
+    if (scrollTimeoutRef.current) {
+      clearTimeout(scrollTimeoutRef.current);
+    }
+
+    scrollTimeoutRef.current = setTimeout(() => {
+      scrollTimeoutRef.current = null;
+      isUserScrollingRef.current = false;
+      centerIdxRef.current = -1;
+      baselineVisibleRef.current = false;
+      setIsUserScrolling(false);
+      setBaselineVisible(false);
+      setCenterLineIndex(-1);
+      setFollowPaused(false);
+    }, AUTO_RESUME_DELAY);
+  }, []);
 
   // 长按：按住 500ms 且没有明显位移才算，滑动/惯性滚动的 pointercancel 会取消它
   const longPressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -380,20 +408,15 @@ export function LyricsPanel({ track, active = true }: LyricsPanelProps) {
       snapBaseline();
     }, SCROLL_SETTLE_DELAY);
 
-    // 停稳后再过 2 秒仍无操作，收起基准线、恢复播放跟随
-    if (scrollTimeoutRef.current) {
-      clearTimeout(scrollTimeoutRef.current);
-    }
-
-    scrollTimeoutRef.current = setTimeout(() => {
-      isUserScrollingRef.current = false;
-      centerIdxRef.current = -1;
-      baselineVisibleRef.current = false;
-      setIsUserScrolling(false);
-      setBaselineVisible(false);
-      setCenterLineIndex(-1);
-    }, AUTO_SCROLL_DELAY);
-  }, [lyrics.length, snapBaseline, followPaused, activeIndex]);
+    // 停稳后再过几秒仍无操作，收起基准线、恢复播放跟随
+    scheduleFollowResume();
+  }, [
+    lyrics.length,
+    snapBaseline,
+    followPaused,
+    activeIndex,
+    scheduleFollowResume,
+  ]);
 
   useEffect(() => {
     return () => {
@@ -533,8 +556,12 @@ export function LyricsPanel({ track, active = true }: LyricsPanelProps) {
   /**
    * 点状态栏「回顶」：歌词列表注册成主滚动容器，系统回顶会把它归零。
    *
+   * 回顶是一段上滑动画（scrollPageToTop 默认 smooth），动画期间先把「自动滚动」
+   * 的锁临时打开，免得滚动事件被当成用户手滑、把基准线闪出来。
+   *
    * 归零的同时必须暂停跟随，否则下一句一到又会被拉回中间 —— 回顶就等于白按。
-   * 恢复跟随有三种情况：点某句歌词（seek）、换歌、或者自己滚回当前句附近。
+   * 但暂停只是临时的：停手 AUTO_RESUME_DELAY 之后自动回到正在唱的那一句。
+   * 点某句歌词（seek）、换歌、自己滚回当前句附近也会立刻恢复。
    */
   useEffect(() => {
     const container = viewportRef.current;
@@ -546,14 +573,31 @@ export function LyricsPanel({ track, active = true }: LyricsPanelProps) {
     return onPageScrollToTop(() => {
       // 回调在滚动之前触发，这里读到的还是旧位置
       if (container.scrollTop <= 0) return;
+
       setFollowPaused(true);
+      isAutoScrollingRef.current = true;
+
+      if (topAnimTimerRef.current) {
+        clearTimeout(topAnimTimerRef.current);
+      }
+
+      topAnimTimerRef.current = setTimeout(() => {
+        topAnimTimerRef.current = null;
+        isAutoScrollingRef.current = false;
+      }, TOP_ANIMATION_LOCK);
+
+      scheduleFollowResume();
     });
-  }, [trackId, lyrics.length]);
+  }, [trackId, lyrics.length, scheduleFollowResume]);
 
   useEffect(() => {
     return () => {
       if (scrollTimeoutRef.current) {
         clearTimeout(scrollTimeoutRef.current);
+      }
+
+      if (topAnimTimerRef.current) {
+        clearTimeout(topAnimTimerRef.current);
       }
     };
   }, []);
@@ -672,7 +716,10 @@ export function LyricsPanel({ track, active = true }: LyricsPanelProps) {
   ) : null;
 
   return (
-    <div className="relative h-full flex flex-col overflow-hidden">
+    <div
+      data-lyrics-panel=""
+      className="relative h-full flex flex-col overflow-hidden"
+    >
       <ScrollArea
         className={cn(
           "h-full w-full",

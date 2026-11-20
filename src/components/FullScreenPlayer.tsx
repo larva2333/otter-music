@@ -49,7 +49,11 @@ import toast from "react-hot-toast";
 import { useCoverColors } from "@/hooks/useCoverColors";
 import { useCoverWhiteBands } from "@/hooks/useCoverWhiteBands";
 import { useLandscapeMode } from "@/hooks/useLandscapeMode";
-import { usePlayerSwipeGestures } from "@/hooks/usePlayerSwipeGestures";
+import { handleLyricsBlankTap } from "@/lib/lyrics-tap";
+import {
+  consumeSwipeArmCut,
+  usePlayerSwipeGestures,
+} from "@/hooks/usePlayerSwipeGestures";
 import { useSystemBarsStyleOverride } from "@/hooks/useSystemBarsStyleOverride";
 import { useIsDarkTheme } from "@/hooks/useIsDarkTheme";
 import { t2s, t2sArtists } from "@/lib/utils/t2s";
@@ -426,9 +430,12 @@ export function FullScreenPlayer({
 
   /**
    * 切歌唱臂动画：切歌瞬间唱臂先荡开让出唱片，新封面滑入完成后再落回沟槽。
-   * 监听曲目 id 变化（而不是在按钮 handler 里埋点），这样上一首/下一首、横滑、
-   * 队列点选、播放结束自动续播四条路径都能覆盖。
+   * 监听曲目 id 变化（而不是在按钮 handler 里埋点），这样上一首/下一首、
+   * 队列点选、播放结束自动续播几条路径都能覆盖。
    * 组件常驻不重挂载，所以用 ref 记住上一首 id。
+   *
+   * 横滑切歌要排除：那条路径下唱臂已经跟着手指抬到切割位、并在新唱片落位后
+   * 自己转回去了（见 usePlayerSwipeGestures）。再来一遍荡开等于动画重播。
    */
   const prevTrackIdRef = useRef<string | null>(currentTrack?.id ?? null);
   const [armAway, setArmAway] = useState(false);
@@ -438,6 +445,9 @@ export function FullScreenPlayer({
     prevTrackIdRef.current = id;
     // 首次挂载、清空队列、同一首歌都不触发
     if (prev === null || id === null || prev === id) return;
+    // 横滑切歌：唱臂的抬臂/回落已由手势层演完，这里不再补一遍荡开动画。
+    // （残留的 armAway 状态自有 320ms 定时器收尾，effect 里不碰 state）
+    if (consumeSwipeArmCut()) return;
     if (window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) return;
 
     // 推到下一帧再切状态：让新封面先渲染出来，唱臂随后荡开；
@@ -649,6 +659,8 @@ export function FullScreenPlayer({
       // 刚关掉风格菜单的那次 tap 只用于关菜单，不要切页
       if (consumeMenuCloseClick()) return;
       if (isCoverPreviewOpen || isStyleMenuOpen) return;
+      // 歌词页的空白：点一下回顶，别当成「切回封面」
+      if (showLyrics && handleLyricsBlankTap(target)) return;
       // 只有唱臂骨架（基座/臂管/唱头）= 播放/暂停；点盘面与周围空白都是切歌词
       if (target instanceof Element && target.closest("[data-vinyl-control]")) {
         vinylTapAtRef.current = Date.now();
@@ -862,6 +874,8 @@ export function FullScreenPlayer({
           if (isCoverPreviewOpen || isStyleMenuOpen) return;
           // 滑动切歌/收起后浏览器还会补一次 click，这里吞掉，否则会顺带切到歌词页
           if (swipe.shouldSuppressClick()) return;
+          // 歌词页的空白：点一下回顶（Web 端鼠标点击走这里）
+          if (showLyrics && handleLyricsBlankTap(e.target)) return;
           // Web 端鼠标点击没有 touchend 的 onTap，在这里走同一套分流
           if (
             e.target instanceof Element &&

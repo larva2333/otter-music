@@ -2,6 +2,7 @@ import { describe, expect, it, vi, beforeEach } from "vitest";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { LyricsPanel } from "./LyricsPanel";
+import { handleLyricsBlankTap } from "@/lib/lyrics-tap";
 import { musicApi } from "@/lib/music-api";
 import type { MusicTrack } from "@/types/music";
 import { scrollPageToTop } from "@/lib/scroll-to-top";
@@ -365,5 +366,117 @@ describe("LyricsPanel", () => {
     expect(scrollPageToTop()).toBe(false);
 
     cleanup();
+  });
+
+  it("回顶后停手几秒会自动回到正在播放的歌词", async () => {
+    vi.mocked(musicApi.getLyric).mockResolvedValue({
+      lyric: "[00:00.00]第一句歌词\n[00:10.00]第二句歌词",
+      tlyric: "",
+    });
+
+    renderPanel(neteaseTrack);
+
+    await act(async () => {
+      await Promise.resolve();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+
+    const viewport = container!.querySelector(
+      '[data-slot="scroll-area-viewport"]'
+    ) as HTMLElement;
+
+    const scrollToSpy = vi.fn();
+    Element.prototype.scrollTo = scrollToSpy;
+
+    viewport.scrollTop = 800;
+
+    vi.useFakeTimers();
+
+    act(() => {
+      scrollPageToTop();
+    });
+
+    // 回顶把列表归零，此时暂停跟随（否则下一句一到又被拽回中间）
+    expect(scrollToSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ top: 0 })
+    );
+
+    const afterTop = scrollToSpy.mock.calls.length;
+
+    // 停手几秒：自动恢复跟随，重新把当前句滚到视口中间
+    act(() => {
+      vi.advanceTimersByTime(4200);
+    });
+
+    expect(scrollToSpy.mock.calls.length).toBeGreaterThan(afterTop);
+
+    vi.useRealTimers();
+    cleanup();
+  });
+});
+
+describe("handleLyricsBlankTap", () => {
+  beforeEach(() => {
+    document.body.innerHTML = "";
+  });
+
+  /** 造一个「滚动容器 > 歌词面板（空白 / 歌词行 / 按钮）」的最小结构 */
+  function setup() {
+    const scroller = document.createElement("div");
+    scroller.setAttribute("data-page-scroll", "");
+    let top = 600;
+    Object.defineProperty(scroller, "scrollTop", {
+      get: () => top,
+      set: (v: number) => {
+        top = v;
+      },
+      configurable: true,
+    });
+    const scrollTo = vi.fn((opts: ScrollToOptions) => {
+      top = opts.top ?? 0;
+    });
+    scroller.scrollTo = scrollTo as unknown as typeof scroller.scrollTo;
+
+    const panel = document.createElement("div");
+    panel.setAttribute("data-lyrics-panel", "");
+
+    const blank = document.createElement("div");
+    const lineRow = document.createElement("div");
+    lineRow.className = "lyric-line";
+    const lineText = document.createElement("p");
+    lineText.className = "lyric-main";
+    lineRow.appendChild(lineText);
+    const button = document.createElement("button");
+
+    panel.append(blank, lineRow, button);
+    scroller.appendChild(panel);
+    document.body.appendChild(scroller);
+
+    return { blank, lineText, button, scrollTo, getTop: () => top };
+  }
+
+  it("点第一句上方的空白就回顶", () => {
+    const { blank, scrollTo, getTop } = setup();
+
+    expect(handleLyricsBlankTap(blank)).toBe(true);
+    expect(scrollTo).toHaveBeenCalledWith(expect.objectContaining({ top: 0 }));
+    expect(getTop()).toBe(0);
+  });
+
+  it("点歌词行和按钮不消费，交给播放页原来的分流", () => {
+    const { lineText, button, scrollTo } = setup();
+
+    expect(handleLyricsBlankTap(lineText)).toBe(false);
+    expect(handleLyricsBlankTap(button)).toBe(false);
+    expect(scrollTo).not.toHaveBeenCalled();
+  });
+
+  it("不在歌词面板里的空白不消费", () => {
+    const { scrollTo } = setup();
+    const outside = document.createElement("div");
+    document.body.appendChild(outside);
+
+    expect(handleLyricsBlankTap(outside)).toBe(false);
+    expect(scrollTo).not.toHaveBeenCalled();
   });
 });

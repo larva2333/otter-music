@@ -100,7 +100,7 @@ describe("scrollPageToTop 取消滚动惯性", () => {
   it("用户在容器上按下时立刻解锁，避免列表被锁住", () => {
     const a = makeScrollContainer(800);
 
-    scrollPageToTop();
+    scrollPageToTop("auto");
     expect(a.el.style.overflowY).toBe("hidden");
 
     a.el.dispatchEvent(new Event("pointerdown", { bubbles: true }));
@@ -111,11 +111,11 @@ describe("scrollPageToTop 取消滚动惯性", () => {
     const a = makeScrollContainer(800);
     a.el.style.overflowY = "auto";
 
-    scrollPageToTop();
+    scrollPageToTop("auto");
     vi.advanceTimersByTime(600);
     // 模拟惯性还没结束、位移又被推了回去
     a.el.scrollTop = 300;
-    scrollPageToTop();
+    scrollPageToTop("auto");
 
     vi.advanceTimersByTime(999);
     expect(a.el.style.overflowY).toBe("hidden");
@@ -124,10 +124,10 @@ describe("scrollPageToTop 取消滚动惯性", () => {
     expect(a.el.style.overflowY).toBe("auto");
   });
 
-  it("smooth 滚动不锁 overflowY", () => {
+  it("默认 smooth：回顶是动画而不是瞬移，且不锁 overflowY", () => {
     const a = makeScrollContainer(800);
 
-    scrollPageToTop("smooth");
+    scrollPageToTop();
     expect(a.el.scrollTo).toHaveBeenCalledWith({ top: 0, behavior: "smooth" });
     expect(a.el.style.overflowY).toBe("");
   });

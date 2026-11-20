@@ -28,10 +28,21 @@ const MAX_DRAG = 160;
 const DRAG_RESISTANCE = 0.9;
 /** 横滑跟手系数：横向翻页要跟得紧，太松会显得迟钝 */
 const HORIZONTAL_RESISTANCE = 0.95;
-/** 唱片横滑时唱臂跟随的最大摆角（度），再大就不像真唱臂了 */
-const ARM_FOLLOW_MAX = 16;
-/** 位移到摆角的换算：拖过约 1/3 屏宽到最大角度 */
-const ARM_FOLLOW_RATIO = 36;
+/**
+ * 唱臂的抬臂幅度。
+ *
+ * svg 上同时有两层旋转：React 写的 `transform: rotate(播放角)` 决定基准位
+ * （播放 -4°，暂停 -40°，见 VinylCover 的 TONEARM_ANGLE），这里写的 `rotate`
+ * 是叠加在上面的增量。所以「抬到跟暂停一样大」= 增量 36°，视觉总角 -40°。
+ */
+const ARM_LIFT_DELTA = 36;
+/**
+ * 抬臂的目标总角度：与 VinylCover 里「暂停」位的 -40° 一致。
+ * 播放位是 -4°，需要补 36°；暂停时唱臂已经抬到这儿了，就不该再往上堆。
+ */
+const ARM_LIFT_TARGET = -40;
+/** 位移到增量的换算：拖过约 45% 屏宽就抬到满幅，滑一小段也能看出唱臂在动 */
+const ARM_FOLLOW_RATIO = ARM_LIFT_DELTA / 0.45;
 /** 唱臂跟手阶段的过渡：只留位移过渡，旋转必须一帧到位才跟手 */
 const ARM_FOLLOW_TRANSITION = "transform 350ms ease-out";
 /**
@@ -62,6 +73,26 @@ function writeTranslate(el: HTMLElement | null, x: number) {
   if (el) el.style.translate = x ? `${x}px` : "";
 }
 
+/**
+ * 读唱臂当前的基础角（VinylCover 用 transform 写的播放 -4° / 暂停 -40°）。
+ * 横滑时要把「再抬多少才等于暂停位」算出来，否则暂停状态下再叠 36° 就冲过头了。
+ */
+function readArmBaseAngle(el: SVGSVGElement | null): number {
+  if (!el || typeof getComputedStyle !== "function") return -4;
+  const value = getComputedStyle(el).transform;
+  const matrix = value.match(/matrix\(([^)]+)\)/);
+  if (matrix) {
+    const [a, b] = matrix[1].split(",").map(Number);
+    if (Number.isFinite(a) && Number.isFinite(b) && (a !== 0 || b !== 0)) {
+      return (Math.atan2(b, a) * 180) / Math.PI;
+    }
+    return -4;
+  }
+  // 有些环境（jsdom）不做矩阵展开，直接把 rotate(-40deg) 原样返回
+  const rotated = value.match(/rotate\((-?\d+(?:\.\d+)?)deg\)/);
+  return rotated ? Number(rotated[1]) : -4;
+}
+
 /** 写唱臂的旋转角；同样抽成独立函数，理由同上 */
 function writeArmRotate(
   el: SVGSVGElement | null,
@@ -79,6 +110,31 @@ function isInteractiveTarget(target: EventTarget | null): boolean {
   return Boolean(
     element.closest("button, a, input, textarea, select, [data-no-tap]")
   );
+}
+
+/**
+ * 横滑切歌时唱臂已经自己演完了「抬臂 → 回落」。
+ *
+ * 播放页还有一套「曲目 id 变化就把唱臂荡到 away 再落回」的补间动画（按钮、
+ * 队列点选、自动续播都靠它）。如果横滑也走那条路，唱臂就会先被我们抬起来、
+ * 紧接着又被荡开一次再落回 —— 看起来像动画重播了一遍。
+ *
+ * 所以横滑切歌时留一个很短的有效期标记，播放页的切歌 effect 见到就跳过自己的
+ * 补间，让唱臂顺着横滑的动势自然落回。带过期时间是为了「滑了但没切成歌」
+ * （例如接口失败）时不会误吞掉下一次正常切歌的动画。
+ */
+const SWIPE_ARM_CUT_TTL = 1200;
+let swipeArmCutAt = 0;
+
+function markSwipeArmCut(): void {
+  swipeArmCutAt = Date.now();
+}
+
+/** 消费「本次切歌来自横滑」的标记；非横滑切歌返回 false */
+export function consumeSwipeArmCut(): boolean {
+  if (Date.now() - swipeArmCutAt > SWIPE_ARM_CUT_TTL) return false;
+  swipeArmCutAt = 0;
+  return true;
 }
 
 interface GestureState {
@@ -222,10 +278,13 @@ export function usePlayerSwipeGestures({
     }
   }, []);
 
+  /** 本次手势里唱臂还能抬多少（到暂停位为止） */
+  const armRoomRef = useRef(ARM_LIFT_DELTA);
+
   /**
    * 唱臂角度：只跟「滑了多远」有关，跟方向无关。
    * 切割动作永远是抬臂（逆时针 = 负角度），所以左右滑都往同一个方向转，
-   * 幅度按位移线性增长，到 1/3 屏宽封顶 ±ARM_FOLLOW_MAX。
+   * 幅度按位移线性增长，最多抬到与暂停相同的 -40°（播放位 -4° 起补 36°）。
    * 只写 `rotate`（容器负责反向 translate 让轴心不动）。
    */
   const writeArmAngle = useCallback(
@@ -233,7 +292,7 @@ export function usePlayerSwipeGestures({
       if (!dragRefs) return;
       const width = window.innerWidth || 360;
       const angle = -Math.min(
-        ARM_FOLLOW_MAX,
+        armRoomRef.current,
         (Math.abs(x) / width) * ARM_FOLLOW_RATIO
       );
       writeArmRotate(
@@ -269,9 +328,10 @@ export function usePlayerSwipeGestures({
    */
   const cutArm = useCallback(() => {
     if (!dragRefs) return;
+    markSwipeArmCut();
     writeArmRotate(
       dragRefs.tonearmArm?.current ?? null,
-      -ARM_FOLLOW_MAX,
+      -armRoomRef.current,
       ARM_CUT_TRANSITION
     );
     clearArmTimer();
@@ -348,6 +408,13 @@ export function usePlayerSwipeGestures({
         setIsHorizDragging(false);
         if (dragRefs) {
           horizFlagRef.current = false;
+          // 记下这次手势里唱臂还能抬多少：暂停时唱臂已经在 -40°，
+          // 再叠 36° 就会冲过头，所以只补「到暂停位为止」的差值
+          const base = readArmBaseAngle(dragRefs.tonearmArm?.current ?? null);
+          armRoomRef.current = Math.max(
+            0,
+            Math.min(ARM_LIFT_DELTA, base - ARM_LIFT_TARGET)
+          );
           cancelDragFrame();
           writeDragX(0);
           restArm();

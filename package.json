@@ -13,7 +13,7 @@
     "build:release": "npm run build",
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",
-    "test": "vitest",
+    "test": "node scripts/run-vitest.mjs run",
     "ci-test": "node scripts/ci-test.js",
     "verify:car-lyric": "node scripts/verify-car-lyric.mjs",
     "preview": "vite preview",

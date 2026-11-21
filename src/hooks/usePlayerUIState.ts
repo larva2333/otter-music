@@ -5,8 +5,6 @@ export function usePlayerUIState(isFullScreen: boolean) {
   const [moreDrawerOpen, setMoreDrawerOpen] = useState(false);
   const [isAddToPlaylistOpen, setIsAddToPlaylistOpen] = useState(false);
   const [qualityDrawerOpen, setQualityDrawerOpen] = useState(false);
-  const [speedDrawerOpen, setSpeedDrawerOpen] = useState(false);
-  const [sleepDrawerOpen, setSleepDrawerOpen] = useState(false);
 
   useEffect(() => {
     if (!isFullScreen) {
@@ -24,9 +22,5 @@ export function usePlayerUIState(isFullScreen: boolean) {
     setIsAddToPlaylistOpen,
     qualityDrawerOpen,
     setQualityDrawerOpen,
-    speedDrawerOpen,
-    setSpeedDrawerOpen,
-    sleepDrawerOpen,
-    setSleepDrawerOpen,
   };
 }

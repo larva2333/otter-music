@@ -198,7 +198,9 @@ export function RecommendSection({
             />
           ) : (
             /* 单曲推荐：不要表头（封面 / 标题 / 播放 / 搜索都是多余的），
-               列表直接铺满整宽，每行前面带歌曲封面 */
+               列表直接铺满整宽，每行前面带歌曲封面。
+               externalScrollRef：复用外层页面的滚动容器 —— 否则这里会
+               嵌出一个几乎不可滚的内层滚动区，把触摸手势吃掉，页面划不动。 */
             <MusicPlaylistView
               title={dailyShuffled ? "换一批推荐" : "单曲推荐"}
               tracks={dailyTracks}
@@ -207,6 +209,9 @@ export function RecommendSection({
               isPlaying={isPlaying}
               hideHeader
               showTrackCover
+              externalScrollRef={
+                activeScrollRef as RefObject<HTMLElement | null>
+              }
             />
           )}
         </section>

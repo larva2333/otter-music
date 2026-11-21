@@ -4,7 +4,7 @@ import { storeKey } from "../store-keys";
 import { idbStorage } from "@/lib/storage-adapter";
 import { cleanTrack } from "@/lib/utils/music";
 import { cleanPlaylist } from "./shared";
-import { DEFAULT_SOURCE_CONFIGS } from "@/types/music";
+import { DEFAULT_SOURCE_CONFIGS, type MusicSource } from "@/types/music";
 
 import { createFavoritesSlice } from "./favorites-slice";
 import { createPlaylistSlice } from "./playlist-slice";
@@ -12,7 +12,6 @@ import { createPlaybackSlice } from "./playback-slice";
 import { createSearchSlice } from "./search-slice";
 import { createUiSlice, DEFAULT_BROWSE_POSITION } from "./ui-slice";
 import { createDownloadSettingsSlice } from "./download-settings-slice";
-import { createSleepTimerSlice } from "./sleep-timer-slice";
 
 import type { MusicState } from "./types";
 
@@ -31,7 +30,6 @@ export const useMusicStore = create<MusicState>()(
       ...createSearchSlice(...a),
       ...createUiSlice(...a),
       ...createDownloadSettingsSlice(...a),
-      ...createSleepTimerSlice(...a),
     }),
     {
       name: storeKey.MusicStore,
@@ -57,10 +55,19 @@ export const useMusicStore = create<MusicState>()(
         state.lastPlaylistCategory =
           DEFAULT_BROWSE_POSITION.lastPlaylistCategory;
         state.lastBillboardGroup = DEFAULT_BROWSE_POSITION.lastBillboardGroup;
-        // 合并 sourceConfigs：过滤已移除的音源，追加新增音源
+        // 合并 sourceConfigs：过滤已移除的音源，追加新增音源。
+        // 用户导入的音源（localStorage 独立存储）也要豁免过滤，否则重启就被删掉。
         const validSources = new Set(
           DEFAULT_SOURCE_CONFIGS.map((c) => c.source)
         );
+        try {
+          const imported = JSON.parse(
+            localStorage.getItem("otter_imported_sources") || "[]"
+          ) as { id: string }[];
+          imported.forEach((s) => validSources.add(s.id as MusicSource));
+        } catch {
+          // 解析失败就按默认白名单处理
+        }
         state.sourceConfigs = state.sourceConfigs.filter((c) =>
           validSources.has(c.source)
         );
@@ -72,6 +79,14 @@ export const useMusicStore = create<MusicState>()(
         );
         if (newConfigs.length > 0) {
           state.sourceConfigs = [...state.sourceConfigs, ...newConfigs];
+        }
+        // 老用户可能把搜索源选成了已移除的音源，Select 会显示空白；
+        // 不在保留列表里就回退到聚合搜索。
+        if (
+          state.searchSource !== "all" &&
+          !validSources.has(state.searchSource)
+        ) {
+          state.searchSource = "all";
         }
         return state;
       },
@@ -120,8 +135,6 @@ export const useMusicStore = create<MusicState>()(
         embedCover: state.embedCover,
         embedLyric: state.embedLyric,
         downloadDirectory: state.downloadDirectory,
-        sleepTimerDuration: state.sleepTimerDuration,
-        playbackSpeed: state.playbackSpeed,
       }),
     }
   )

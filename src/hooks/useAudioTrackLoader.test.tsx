@@ -109,7 +109,6 @@ describe("useAudioTrackLoader", () => {
       isPlaying: true,
       isLoading: false,
       currentAudioTime: 0,
-      playbackSpeed: 1,
       enableAutoMatch: false,
       enableProxyFallback: true,
       consecutiveFailures: 0,

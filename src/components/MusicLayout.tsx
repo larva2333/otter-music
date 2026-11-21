@@ -46,8 +46,11 @@ export function MusicLayout({
       {/* Header */}
       {header && <div className="shrink-0 px-5 pb-3">{header}</div>}
 
-      {/* Main Content */}
-      <div className="flex-1 min-h-0 relative">
+      {/* Main Content
+          键盘弹出时 tab bar 被 --kb-lift 移到键盘后面（屏幕外），但它在 flex 流里
+          仍占着自己那点高度，把内容区顶短、底部露出一条 window 背景色的白条。
+          用负 margin-bottom 把这段占位抵消掉，内容区就能一直铺到键盘上沿。 */}
+      <div className="flex-1 min-h-0 relative -mb-[var(--kb-bar-h,0px)]">
         <div
           data-page-scroll=""
           // overflow-x-clip：根 tab 切换时整页会横向平移 56px 做进入动画，
@@ -107,6 +110,7 @@ export function MusicLayout({
           羽化只发生在最上面那 48px，是纯透明→实色的遮罩，不做内容模糊。 */}
       {isTab && (
         <div
+          data-kb-tabbar=""
           className="relative flex-none z-40 translate-y-[var(--kb-lift,0px)] transition-transform"
           style={{ transitionDuration: "var(--kb-anim, 300ms)" }}
         >

@@ -1,9 +1,10 @@
 import { cn } from "@/lib/utils";
 import { downloadMusicTrack } from "@/lib/utils/download";
 import { useMusicStore } from "@/store/music-store";
-import { MusicTrack, sourceBadgeStyles, sourceLabels } from "@/types/music";
+import { MusicTrack, sourceBadgeStyles } from "@/types/music";
+import { getSourceLabel } from "@/lib/imported-sources/labels";
 import { Layers, Play } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { toastUtils } from "@/lib/utils/toast";
 import { t2s, t2sArtists } from "@/lib/utils/t2s";
 import toast from "react-hot-toast";
@@ -40,12 +41,36 @@ export function MusicTrackVariants({ variants }: MusicTrackVariantsProps) {
   const [isAddToPlaylistOpen, setIsAddToPlaylistOpen] = useState(false);
   const [activeTrack, setActiveTrack] = useState<MusicTrack | null>(null);
   const [mobileMenuOpenId, setMobileMenuOpenId] = useState<string | null>(null);
+  const [variantsOpen, setVariantsOpen] = useState(false);
+  const popoverContentRef = useRef<HTMLDivElement>(null);
+
+  // 列表一滚动就收起浮窗：它是定位到触发按钮的，不跟着列表走，
+  // 滚动后就会悬在错位的行旁边。浮窗内部自己滚动不算（按事件源排除）。
+  useEffect(() => {
+    if (!variantsOpen) return;
+    let attached = false;
+    const onScroll = (e: Event) => {
+      const target = e.target as Node | null;
+      if (target && popoverContentRef.current?.contains(target)) return;
+      setVariantsOpen(false);
+    };
+    // 打开瞬间 Radix 可能为了让触发器可见而滚动，直接挂监听会「刚点开就关」，
+    // 延迟一点再监听，把这次定位滚动放过去。
+    const timer = window.setTimeout(() => {
+      attached = true;
+      window.addEventListener("scroll", onScroll, true);
+    }, 300);
+    return () => {
+      window.clearTimeout(timer);
+      if (attached) window.removeEventListener("scroll", onScroll, true);
+    };
+  }, [variantsOpen]);
 
   if (!variants || variants.length === 0) return null;
 
   return (
     <>
-      <Popover>
+      <Popover open={variantsOpen} onOpenChange={setVariantsOpen}>
         <PopoverTrigger asChild>
           <Badge
             variant="secondary"
@@ -56,6 +81,7 @@ export function MusicTrackVariants({ variants }: MusicTrackVariantsProps) {
           </Badge>
         </PopoverTrigger>
         <PopoverContent
+          ref={popoverContentRef}
           className="w-80 p-0"
           align="start"
           onClick={(e) => e.stopPropagation()}
@@ -77,7 +103,7 @@ export function MusicTrackVariants({ variants }: MusicTrackVariantsProps) {
                       sourceBadgeStyles.default
                   )}
                 >
-                  {sourceLabels[variant.source] || variant.source}
+                  {getSourceLabel(variant.source)}
                 </Badge>
                 <div className="flex-1 min-w-0 flex flex-col">
                   <span

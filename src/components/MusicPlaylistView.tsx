@@ -80,6 +80,17 @@ interface MusicPlaylistViewProps {
    * 与「我的歌单」同一条基线（px-5 + px-1），操作按钮仍在标题行右侧。
    */
   compactHeader?: boolean;
+  /** 紧凑行距 + 列表底部收边线（播放列表这类纯队列视图用） */
+  dense?: boolean;
+  /**
+   * 外层滚动容器：传入后本组件不再自带滚动区（去掉 overflow-y-auto），
+   * 列表直接用外层容器做虚拟滚动的滚动源。嵌入别人家滚动页（如发现页
+   * 的推荐分类）时必须传，否则内层会出现一个几乎不可滚的滚动容器，
+   * 把触摸手势吃掉，外层页面划不动。
+   */
+  externalScrollRef?: React.RefObject<HTMLElement | null>;
+  /** 增量展示（上滑加载）：首屏只渲染前 N 行，滚动到底部附近再补一批 */
+  incrementalBatch?: number;
 }
 
 export function MusicPlaylistView({
@@ -105,6 +116,9 @@ export function MusicPlaylistView({
   headerRight,
   titleClassName = "text-base font-bold tracking-tight",
   compactHeader = false,
+  dense = true,
+  externalScrollRef,
+  incrementalBatch,
 }: MusicPlaylistViewProps) {
   const [searchQuery, setSearchQuery] = useState("");
   const [isSearchFocused, setIsSearchFocused] = useState(false);
@@ -245,8 +259,12 @@ export function MusicPlaylistView({
   return (
     <div
       ref={scrollContainerRef}
-      data-page-scroll=""
-      className="flex flex-1 min-h-0 flex-col overflow-y-auto"
+      data-page-scroll={externalScrollRef ? undefined : ""}
+      className={cn(
+        "flex flex-col",
+        // 有外层滚动容器时不再自己滚动（高度随内容生长），否则保持原有滚动区
+        externalScrollRef ? "w-full" : "flex-1 min-h-0 overflow-y-auto"
+      )}
     >
       {/* Header：默认与「喜欢」页一致；compactHeader 嵌在「歌单」tab 时去掉大图标，
           标题左边缘与「我的歌单」对齐（px-6 = 外层 px-5 + 标题行 px-1） */}
@@ -407,8 +425,10 @@ export function MusicPlaylistView({
       {/* List */}
       <div className={cn("flex-1 min-h-0", !hideHeader && "bg-background/50")}>
         <MusicTrackList
+          dense={dense}
           tracks={filteredTracks}
-          scrollContainerRef={scrollContainerRef}
+          scrollContainerRef={externalScrollRef ?? scrollContainerRef}
+          incrementalBatch={incrementalBatch}
           onPlay={(track) =>
             onPlay(
               track,

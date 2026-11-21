@@ -1,12 +1,7 @@
 import { cn } from "@/lib/utils";
 import { buildDownloadKey, downloadMusicTrack } from "@/lib/utils/download";
 import { useMusicStore } from "@/store/music-store";
-import {
-  MusicTrack,
-  MergedMusicTrack,
-  sourceBadgeStyles,
-  sourceLabels,
-} from "@/types/music";
+import { MusicTrack, MergedMusicTrack, sourceBadgeStyles } from "@/types/music";
 import { useEffect, useRef, useState } from "react";
 import { toastUtils } from "@/lib/utils/toast";
 import toast from "react-hot-toast";
@@ -14,6 +9,7 @@ import { useShallow } from "zustand/react/shallow";
 import { AddToPlaylistDrawer } from "./AddToPlaylistDrawer";
 import { MusicTrackMobileMenu } from "./MusicTrackMobileMenu";
 import { MusicTrackVariants } from "./MusicTrackVariants";
+import { TrackSourceLabel } from "./TrackSourceLabel";
 import { Checkbox } from "./ui/checkbox";
 import { Badge } from "./ui/badge";
 import {
@@ -336,7 +332,7 @@ export function MusicTrackItem({
                   sourceBadgeStyles[track.source] || sourceBadgeStyles.default
                 )}
               >
-                {sourceLabels[track.source] || track.source}
+                <TrackSourceLabel track={track} />
               </Badge>
             )}
 

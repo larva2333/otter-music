@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { confirmDialog } from "@/components/ui/confirm-dialog";
 import { cn } from "@/lib/utils";
 import { LyricsPanel } from "./LyricsPanel";
+import { AudioOriginLabel } from "./AudioOriginLabel";
 import { MusicCover } from "./MusicCover";
 import { VinylCover } from "./VinylCover";
 import { CoverStyleMenu } from "./CoverStyleMenu";
@@ -24,7 +25,6 @@ import {
   Play,
   Pause,
   SquareArrowOutUpRight,
-  ClockFading,
   Maximize2,
 } from "lucide-react";
 import { Spinner } from "@/components/ui/spinner";
@@ -35,11 +35,8 @@ import { PlayerQueueDrawer } from "./PlayerQueueDrawer";
 import { MusicTrackMobileMenu } from "./MusicTrackMobileMenu";
 import { AddToPlaylistDrawer } from "./AddToPlaylistDrawer";
 import { QualityDrawer } from "./settings/QualityDrawer";
-import { PlaybackSpeedDrawer } from "./settings/PlaybackSpeedDrawer";
-import { SleepTimerDrawer } from "./settings/SleepTimerDrawer";
 import { downloadMusicTrack } from "@/lib/utils/download";
 import { getQualityShortLabel } from "@/lib/utils/quality";
-import { formatTime } from "@/lib/utils/time";
 import {
   useMusicStore,
   type FullScreenBackgroundMode,
@@ -360,10 +357,6 @@ export function FullScreenPlayer({
     setIsAddToPlaylistOpen,
     qualityDrawerOpen,
     setQualityDrawerOpen,
-    speedDrawerOpen,
-    setSpeedDrawerOpen,
-    sleepDrawerOpen,
-    setSleepDrawerOpen,
   } = usePlayerUIState(isFullScreen);
 
   const {
@@ -380,9 +373,6 @@ export function FullScreenPlayer({
     coverSize,
     coverRadius,
     coverStyle,
-    playbackSpeed,
-    sleepTimerIsActive,
-    sleepTimerRemaining,
     isPlaying,
     isLoading,
     isRepeat,
@@ -409,9 +399,6 @@ export function FullScreenPlayer({
       coverSize: state.coverSize,
       coverRadius: state.coverRadius,
       coverStyle: state.coverStyle,
-      playbackSpeed: state.playbackSpeed,
-      sleepTimerIsActive: state.sleepTimerIsActive,
-      sleepTimerRemaining: state.sleepTimerRemaining,
       isPlaying: state.isPlaying,
       isLoading: state.isLoading,
       isRepeat: state.isRepeat,
@@ -452,15 +439,23 @@ export function FullScreenPlayer({
 
     // 推到下一帧再切状态：让新封面先渲染出来，唱臂随后荡开；
     // 也避免在 effect 同步调用 setState 触发级联渲染。
+    //
+    // 这里只负责给 VinylCover 一个「开始让位」的上升沿，抬臂→过冲→停住→落针
+    // 那一整条动画由 VinylCover 自己播（760ms，见 ARM_CUT_DURATION）。
+    // 320ms 后复位是因为下一次切歌还得再有一个上升沿；复位早于动画结束不影响
+    // 画面——动画期间 transform 由 WAAPI 覆盖，复位只是改了 style 上的稳态角。
     let timer = 0;
     const raf = requestAnimationFrame(() => {
       setArmAway(true);
-      // 与封面滑入时长（320ms）对齐：新封面落位时唱臂开始回摆
       timer = window.setTimeout(() => setArmAway(false), 320);
     });
     return () => {
       cancelAnimationFrame(raf);
       window.clearTimeout(timer);
+      // 连续切歌时上一次的定时器会被清掉，armAway 会停在 true：
+      // 新一次 setArmAway(true) 就不构成状态变化，VinylCover 收不到信号，
+      // 表现是「连点下一首，唱臂只在第一下荡开」。所以清理时必须先复位。
+      setArmAway(false);
     };
   }, [currentTrack?.id]);
 
@@ -896,10 +891,9 @@ export function FullScreenPlayer({
             ref={coverTransformRef}
             title="长按修改播放风格"
             className={cn(
-              "relative aspect-square transition-transform duration-500",
+              "relative aspect-square",
               // 黑胶的唱臂基座在盘外上方，不能被裁；盘面/封面各自已 rounded-full
-              coverStyle === "vinyl" ? "overflow-visible" : "overflow-hidden",
-              isPlaying ? "scale-100" : "scale-[0.95]"
+              coverStyle === "vinyl" ? "overflow-visible" : "overflow-hidden"
             )}
             style={{
               width: coverPx
@@ -916,7 +910,16 @@ export function FullScreenPlayer({
                 src={coverUrl}
                 alt={currentTrack?.name}
                 isPlaying={isPlaying}
-                armState={armAway ? "away" : isPlaying ? "playing" : "paused"}
+                // 切歌加载期间旧音轨暂停会把 isPlaying 翻成 false，如果这时把稳态角
+                // 当「暂停」处理（-40°），唱臂会在落针动画结束的一瞬间被拽到半空。
+                // 加载中仍然算「在放这张唱片」，稳住 -4°，让动画自己演完。
+                armState={
+                  armAway
+                    ? "away"
+                    : isPlaying || isLoading
+                      ? "playing"
+                      : "paused"
+                }
                 tonearmContainerStyle={tonearmCounterStyle}
                 tonearmContainerRef={tonearmTransformRef}
                 tonearmArmRef={tonearmArmRef}
@@ -927,6 +930,7 @@ export function FullScreenPlayer({
                 iconClassName="h-16 w-16 text-white/30"
                 previewOpen={isCoverPreviewOpen}
                 onPreviewOpenChange={setIsCoverPreviewOpen}
+                crossfade
                 discColor={vinylColor}
                 onControlActivate={() => {
                   // 骨架自己吞掉了 click（不再冒泡到内容区的分流里），
@@ -952,6 +956,7 @@ export function FullScreenPlayer({
                 iconClassName="h-16 w-16 text-white/30"
                 previewOpen={isCoverPreviewOpen}
                 onPreviewOpenChange={setIsCoverPreviewOpen}
+                crossfade
               />
             )}
           </div>
@@ -975,8 +980,11 @@ export function FullScreenPlayer({
             <h2 className="truncate text-sm font-semibold text-white">
               {t2s(currentTrack?.name) || "未知歌曲"}
             </h2>
-            <p className="truncate text-xs text-white/60 mt-1">
-              {t2sArtists(currentTrack?.artist).join(", ") || "未知歌手"}
+            <p className="truncate text-xs text-white/60 mt-1 flex items-center gap-1.5">
+              <span className="truncate">
+                {t2sArtists(currentTrack?.artist).join(", ") || "未知歌手"}
+              </span>
+              <AudioOriginLabel className="shrink-0 text-white/45" />
             </p>
           </div>
           <div className="flex items-center gap-1 shrink-0">
@@ -1029,27 +1037,7 @@ export function FullScreenPlayer({
       </div>
 
       <div className="shrink-0 px-8 relative z-10">
-        <PlayerProgressBar
-          className="relative"
-          leftTimeSuffix={
-            playbackSpeed !== 1.0 ? (
-              <span className="ml-1 text-[0.7em] align-sub opacity-70">
-                x{playbackSpeed.toFixed(1)}
-              </span>
-            ) : null
-          }
-          centerContent={
-            sleepTimerIsActive ? (
-              <span className="flex items-center gap-1 text-[0.85em]">
-                <ClockFading className="w-2.5 h-2.5" />
-                {formatTime(sleepTimerRemaining)}
-              </span>
-            ) : null
-          }
-          onLeftTimeClick={() => setSpeedDrawerOpen(true)}
-          onRightTimeClick={() => setSleepDrawerOpen(true)}
-          onCenterClick={() => setSleepDrawerOpen(true)}
-        />
+        <PlayerProgressBar className="relative" />
       </div>
 
       <div className="shrink-0 flex items-center justify-between px-8 py-6 pb-[calc(2rem+var(--safe-area-bottom))] relative z-10">
@@ -1130,14 +1118,6 @@ export function FullScreenPlayer({
       <QualityDrawer
         open={qualityDrawerOpen}
         onOpenChange={setQualityDrawerOpen}
-      />
-      <PlaybackSpeedDrawer
-        open={speedDrawerOpen}
-        onOpenChange={setSpeedDrawerOpen}
-      />
-      <SleepTimerDrawer
-        open={sleepDrawerOpen}
-        onOpenChange={setSleepDrawerOpen}
       />
     </div>,
     document.body

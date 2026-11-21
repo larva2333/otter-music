@@ -1,5 +1,6 @@
 import type { MusicSource } from "@/types/music";
 import { MusicProviderFactory } from "./factory";
+import { isLxPlaybackSource } from "@/lib/imported-sources/lx-playback";
 
 /** 默认回退音源：其它音源不可搜索时兜底（曲库最全）。 */
 export const DEFAULT_FALLBACK_SEARCH_SOURCE: MusicSource = "netease";
@@ -12,7 +13,8 @@ export const DEFAULT_FALLBACK_SEARCH_SOURCE: MusicSource = "netease";
  * 用户仍可在搜索页下拉切换为其它音源或聚合搜索。
  */
 export function resolveFallbackSearchSource(source?: MusicSource): MusicSource {
-  if (source && source !== "all") {
+  // 洛雪脚本没有搜索能力，不能用来兜底搜索
+  if (source && source !== "all" && !isLxPlaybackSource(source)) {
     try {
       if (MusicProviderFactory.getProvider(source).searchArtist) return source;
     } catch {

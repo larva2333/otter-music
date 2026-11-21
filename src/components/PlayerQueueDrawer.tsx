@@ -81,7 +81,8 @@ function QueueTrackItem({
       tabIndex={0}
       aria-label={`播放 ${t2s(track.name)}`}
       className={cn(
-        "grid grid-cols-[40px_1fr_auto] items-center gap-3 rounded-xl px-3 py-2 transition-colors hover:bg-muted/60 active:bg-muted",
+        // 紧凑行：封面 36 + 上下各 6，两行文字自然撑到 48 左右
+        "grid grid-cols-[36px_1fr_auto] items-center gap-3 rounded-lg px-2.5 py-1.5 transition-colors hover:bg-muted/60 active:bg-muted",
         isCurrent && highlightCurrentTrack && "bg-primary/10"
       )}
       onClick={onSelect}
@@ -91,7 +92,7 @@ function QueueTrackItem({
         onSelect();
       }}
     >
-      <div className="relative h-10 w-10 shrink-0 overflow-hidden rounded-lg">
+      <div className="relative h-9 w-9 shrink-0 overflow-hidden rounded-lg">
         <MusicCover
           src={coverUrl}
           alt=""
@@ -320,42 +321,45 @@ export function PlayerQueueDrawer({
           </div>
         </DrawerHeader>
 
-        <div className="min-h-0 flex-1">
-          <ScrollArea className="h-full" viewportRef={viewportRef}>
-            <div className="px-4 pb-[calc(2rem+var(--safe-area-bottom))] flex flex-col gap-1">
-              {activeTab === "queue"
-                ? queue.map((track, i) => (
-                    <QueueTrackItem
-                      key={`${track.id}-${i}`}
-                      track={track}
-                      isCurrent={i === currentIndex}
-                      isPlaying={isPlaying}
-                      onSelect={() => {
-                        onPlay(i);
-                        setOpen(false);
-                      }}
-                      onRemove={() => onRemove(track)}
-                      itemRef={i === currentIndex ? setCurrentRef : undefined}
-                    />
-                  ))
-                : history.map((track, i) => (
-                    <QueueTrackItem
-                      key={`${track.id}-${i}`}
-                      track={track}
-                      isCurrent={track.id === queue[currentIndex]?.id}
-                      isPlaying={
-                        isPlaying && track.id === queue[currentIndex]?.id
-                      }
-                      onSelect={() => {
-                        // 将历史歌曲加入队列并播放
-                        onPlayTrack?.(track);
-                        setOpen(false);
-                      }}
-                      onRemove={() => removeFromHistory(track.id)}
-                    />
-                  ))}
-            </div>
-          </ScrollArea>
+        {/* 列表区：上下各一条分隔线，把歌单夹在标题栏和抽屉底部之间 */}
+        <div className="min-h-0 flex-1 px-3 pb-[calc(0.75rem+var(--safe-area-bottom))]">
+          <div className="h-full border-y border-border">
+            <ScrollArea className="h-full" viewportRef={viewportRef}>
+              <div className="px-1 pt-1 pb-2 flex flex-col gap-0.5">
+                {activeTab === "queue"
+                  ? queue.map((track, i) => (
+                      <QueueTrackItem
+                        key={`${track.id}-${i}`}
+                        track={track}
+                        isCurrent={i === currentIndex}
+                        isPlaying={isPlaying}
+                        onSelect={() => {
+                          onPlay(i);
+                          setOpen(false);
+                        }}
+                        onRemove={() => onRemove(track)}
+                        itemRef={i === currentIndex ? setCurrentRef : undefined}
+                      />
+                    ))
+                  : history.map((track, i) => (
+                      <QueueTrackItem
+                        key={`${track.id}-${i}`}
+                        track={track}
+                        isCurrent={track.id === queue[currentIndex]?.id}
+                        isPlaying={
+                          isPlaying && track.id === queue[currentIndex]?.id
+                        }
+                        onSelect={() => {
+                          // 将历史歌曲加入队列并播放
+                          onPlayTrack?.(track);
+                          setOpen(false);
+                        }}
+                        onRemove={() => removeFromHistory(track.id)}
+                      />
+                    ))}
+              </div>
+            </ScrollArea>
+          </div>
         </div>
       </DrawerContent>
     </Drawer>

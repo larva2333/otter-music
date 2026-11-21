@@ -1,10 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { forceHttps } from "@otter-music/shared";
-import {
-  extractFromPixels,
-  type ColorMode,
-  type SodaColors,
-} from "@/lib/utils/soda-color";
+import type { ColorMode, SodaColors } from "@/lib/utils/soda-color";
+import { extractColorsOffThread } from "@/lib/cover-color-client";
 
 /** 取色降采样尺寸（与算法标定时使用的 96×96 输入一致） */
 const SAMPLE_SIZE = 96;
@@ -57,7 +54,7 @@ function loadImage(url: string): Promise<HTMLImageElement> {
   });
 }
 
-/** 绘制降采样 canvas 并执行取色算法 */
+/** 绘制降采样 canvas 并执行取色算法（k-means 在 worker 里跑，见 cover-color-client） */
 async function extract(imageUrl: string, mode: ColorMode): Promise<SodaColors> {
   const img = await loadImage(imageUrl);
   const canvas = document.createElement("canvas");
@@ -67,7 +64,7 @@ async function extract(imageUrl: string, mode: ColorMode): Promise<SodaColors> {
   if (!ctx) throw new Error("Canvas 2D 上下文不可用");
   ctx.drawImage(img, 0, 0, SAMPLE_SIZE, SAMPLE_SIZE);
   const data = ctx.getImageData(0, 0, SAMPLE_SIZE, SAMPLE_SIZE).data;
-  return extractFromPixels(data, mode);
+  return extractColorsOffThread(data, mode);
 }
 
 /**

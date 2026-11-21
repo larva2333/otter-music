@@ -60,41 +60,20 @@ export const aggregatedSourceOptions: {
   description: string;
 }[] = [
   {
-    value: "joox",
-    label: "Joox",
-    description: "QQ音乐海外版（GD Studio）",
-  },
-  {
-    value: "netease",
-    label: "网易云音乐",
-    description: "音源稳定，小众资源多（GD Studio）",
+    value: "higequ",
+    label: "Higequ",
+    description: "Hi歌曲音乐网（仅标准音质）",
   },
   { value: "_netease", label: "Netease", description: "网易云官方，稳定高速" },
-  {
-    value: "kuwo",
-    label: "酷我音乐",
-    description: "版权丰富，但稳定性一般（GD Studio）",
-  },
-  {
-    value: "bilibili",
-    label: "B站",
-    description: "Bilibili官方, 用户上传资源丰富",
-  },
-  { value: "migu", label: "Migu", description: "咪咕音乐官方" },
   {
     value: "qq",
     label: "QQ音乐",
     description: "QQ音乐官方",
   },
   {
-    value: "higequ",
-    label: "Higequ",
-    description: "Hi歌曲音乐网（仅标准音质）",
-  },
-  {
-    value: "jamendo",
-    label: "Jamendo",
-    description: "国外独立音乐人授权平台",
+    value: "bilibili",
+    label: "B站",
+    description: "Bilibili官方, 用户上传资源丰富",
   },
 ];
 
@@ -122,18 +101,17 @@ export interface SourceConfig {
   source: MusicSource;
   enabled: boolean;
   visible: boolean;
+  /** 用户自定义的显示名（留空则用内置名/导入脚本里的名字） */
+  alias?: string;
+  /** 被「一键检测」判定不可用后自动停用；检测恢复正常会自动重新启用 */
+  healthDisabled?: boolean;
 }
 
 export const DEFAULT_SOURCE_CONFIGS: SourceConfig[] = [
-  { source: "netease", enabled: true, visible: true },
-  { source: "_netease", enabled: false, visible: true },
-  { source: "joox", enabled: true, visible: true },
+  { source: "higequ", enabled: true, visible: true },
+  { source: "_netease", enabled: true, visible: true },
+  { source: "qq", enabled: true, visible: true },
   { source: "bilibili", enabled: true, visible: true },
-  { source: "kuwo", enabled: false, visible: true },
-  { source: "migu", enabled: false, visible: true },
-  { source: "qq", enabled: false, visible: true },
-  { source: "higequ", enabled: false, visible: true },
-  { source: "jamendo", enabled: false, visible: false },
 ];
 
 export type MusicSource =

@@ -166,7 +166,7 @@ describe("VinylCover", () => {
     expect(arm().style.transform).toBe("rotate(-40deg)");
   });
 
-  it("切歌受控状态 away 让唱臂荡到 -62°，且根部轴心始终固定在基座中心", async () => {
+  it("切歌受控状态 away 只写稳态角，让位量走增量通道，根部轴心始终固定", async () => {
     await render(true);
     const arm = () =>
       document.body.querySelector(
@@ -184,8 +184,11 @@ describe("VinylCover", () => {
         />
       );
     });
-    expect(arm().style.transform).toBe("rotate(-62deg)");
-    // 荡开后根部轴心不变
+    // 关键：away 不写 -62° 到 transform 上。写了的话 350ms transition 会先
+    // 往让位角滑一段，再被 WAAPI 动画接管 —— 视觉上闪一下。
+    // 稳态角保持播放位，让位量（-62 - (-4) = -58）走在 style.rotate 增量上。
+    expect(arm().style.transform).toBe("rotate(-4deg)");
+    expect(arm().style.rotate).toBe("-58deg");
     expect(arm().style.transformOrigin).toBe("50% -6%");
     // 基座是独立节点、不参与旋转，所以根部视觉上完全不动
     const base = document.body.querySelector(
@@ -202,8 +205,48 @@ describe("VinylCover", () => {
         />
       );
     });
-    // 新歌切入后唱臂落回沟槽
+    // 新歌切入后唱臂落回沟槽，增量写回 0
     expect(arm().style.transform).toBe("rotate(-4deg)");
+    expect(arm().style.rotate).toBe("0deg");
     expect(arm().style.transformOrigin).toBe("50% -6%");
+  });
+
+  it("away 时走 WAAPI：760ms 五帧、过冲到 -67 再落回增量 0", async () => {
+    const animate = vi.fn(() => ({
+      cancel: vi.fn(),
+      finished: Promise.resolve(),
+    }));
+    // jsdom 的 SVGElement 没有 Web Animations API，手动补一个
+    (SVGElement.prototype as unknown as { animate: unknown }).animate = animate;
+
+    try {
+      await render(true);
+      await act(async () => {
+        root?.render(
+          <VinylCover
+            src="https://example.com/cover.jpg"
+            isPlaying={true}
+            armState="away"
+          />
+        );
+      });
+
+      expect(animate).toHaveBeenCalledTimes(1);
+      const [keyframes, options] = animate.mock.calls[0] as unknown as [
+        Array<{ rotate: string; offset: number }>,
+        { duration: number },
+      ];
+      expect(options.duration).toBe(760);
+      expect(keyframes.map((k) => k.offset)).toEqual([0, 0.33, 0.45, 0.59, 1]);
+      // 起手接当前位置 → 过冲（增量 -63，视觉总角 -67，比让位角再多 5 度）
+      // → 顶点停留 -58（视觉 -62）→ 增量回 0
+      expect(keyframes[0].rotate).toBe("0deg");
+      expect(keyframes[1].rotate).toBe("-63deg");
+      expect(keyframes[2].rotate).toBe("-58deg");
+      expect(keyframes[3].rotate).toBe("-58deg");
+      expect(keyframes[4].rotate).toBe("0deg");
+    } finally {
+      delete (SVGElement.prototype as unknown as { animate?: unknown }).animate;
+    }
   });
 });

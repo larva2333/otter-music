@@ -26,15 +26,33 @@ export function buildUrlCacheKey(
   return `${source}:${id}:${quality}`;
 }
 
-/** 远端播放 URL 的缓存时长：签名直链时效不一，仅作会话内加速，过期即重新解析 */
-const URL_CACHE_TTL = 15 * 60 * 1000;
+/**
+ * 远端播放 URL 的缓存时长。
+ *
+ * 平台签名直链一般是小时级（QQ 的 vkey、网易的 auth 都在 1~2 小时内有效），
+ * 之前只留 15 分钟，导致「刚放过的歌过一会儿再切回来」又要重新取链一次。
+ * 真过期了不会卡死：播放错误恢复会带 forceRefresh 绕过缓存重新解析。
+ */
+const URL_CACHE_TTL = 2 * 60 * 60 * 1000;
 
 /** 本地/blob 资源不会失效，不参与 TTL */
 const NON_EXPIRING_URL_PREFIXES = ["blob:", "capacitor:", "file:", "content:"];
 
-interface UrlCacheEntry {
+/** 这条链接是谁给的：平台官方接口，还是洛雪脚本 */
+export type UrlCacheVia = "official" | "lx";
+
+export interface UrlCacheEntry {
   url: string;
   cachedAt: number;
+  /** 取链来源。旧版本条目没有这个字段 */
+  via?: UrlCacheVia;
+  /** via=lx 时，具体是哪个洛雪脚本给的链接（用于播放时显示音源） */
+  lxName?: string;
+}
+
+export interface UrlCacheMeta {
+  via?: UrlCacheVia;
+  lxName?: string;
 }
 
 const isNonExpiringUrl = (url: string) =>
@@ -54,8 +72,11 @@ interface UrlCacheState {
   /** 获取指定 key 的缓存 URL（超过 TTL 或旧格式条目视为过期并清除） */
   get: (key: string) => string | undefined;
 
+  /** 获取完整缓存条目（含取链来源），过期条目同样会被清除 */
+  getEntry: (key: string) => UrlCacheEntry | undefined;
+
   /** 缓存并持久化 URL；若覆盖旧 blob URL 则先释放 */
-  set: (key: string, value: string) => void;
+  set: (key: string, value: string, meta?: UrlCacheMeta) => void;
 
   /** 删除缓存 URL；若为 blob URL 则先释放 */
   delete: (key: string) => void;
@@ -69,7 +90,7 @@ export const useUrlCacheStore = create<UrlCacheState>()(
     (set, storeGet) => ({
       urlMap: {},
 
-      get: (key) => {
+      getEntry: (key) => {
         const entry = storeGet().urlMap[key] as
           | UrlCacheEntry
           | string
@@ -78,18 +99,20 @@ export const useUrlCacheStore = create<UrlCacheState>()(
         const url = entryUrl(entry);
         if (!url) return undefined;
 
-        // 旧版本条目无时间戳视为过期；本地/blob 资源永不失效
+        // 旧版本条目无时间戳、也无取链来源，视为过期：重新解析一次就能写回新格式
         const expired =
           typeof entry === "string" ||
           (!isNonExpiringUrl(url) &&
             Date.now() - entry.cachedAt > URL_CACHE_TTL);
-        if (!expired) return url;
+        if (!expired) return entry as UrlCacheEntry;
 
         storeGet().delete(key);
         return undefined;
       },
 
-      set: (key, value) => {
+      get: (key) => storeGet().getEntry(key)?.url,
+
+      set: (key, value, meta) => {
         set((state) => {
           const oldUrl = entryUrl(state.urlMap[key]);
           if (oldUrl && oldUrl !== value && oldUrl.startsWith("blob:")) {
@@ -98,7 +121,7 @@ export const useUrlCacheStore = create<UrlCacheState>()(
           return {
             urlMap: {
               ...state.urlMap,
-              [key]: { url: value, cachedAt: Date.now() },
+              [key]: { url: value, cachedAt: Date.now(), ...meta },
             },
           };
         });
@@ -142,4 +165,30 @@ export function purgeDeadBlobEntries() {
   for (const key of Object.keys(urlMap)) {
     if (entryUrl(urlMap[key])?.startsWith("blob:")) del(key);
   }
+}
+
+/**
+ * 等 URL 缓存从 IndexedDB 恢复完成。
+ *
+ * persist 的 rehydrate 是异步的：冷启动后立即点播放时，store 还是空的，
+ * 于是「明明上次解析过」的歌照样重新取链。这里等它读完（最多 timeoutMs），
+ * 超时也放行，不影响正常解析。
+ */
+export function whenUrlCacheReady(timeoutMs = 1500): Promise<void> {
+  if (useUrlCacheStore.persist.hasHydrated()) return Promise.resolve();
+  return new Promise((resolve) => {
+    let settled = false;
+    // 订阅的回调有可能早于赋值返回，先声明再用可选调用
+    // eslint-disable-next-line prefer-const
+    let unsub: (() => void) | undefined;
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      unsub?.();
+      resolve();
+    };
+    const timer = setTimeout(finish, timeoutMs);
+    unsub = useUrlCacheStore.persist.onFinishHydration(finish);
+  });
 }

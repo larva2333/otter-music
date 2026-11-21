@@ -54,6 +54,8 @@ import {
   searchOptions,
 } from "@/types/music";
 import { logger } from "@/lib/logger";
+import { useImportedSourcesStore } from "@/lib/imported-sources/store";
+import { isLxPlaybackSource } from "@/lib/imported-sources/lx-playback";
 
 interface MusicSearchViewProps {
   onPlay: (track: MusicTrack, list: MusicTrack[], contextId?: string) => void;
@@ -135,15 +137,40 @@ export function MusicSearchView({
   const navigate = useNavigate();
 
   const visibleSourceOptions = useMemo(() => {
-    const visible = sourceConfigs.filter((c) => c.visible);
+    // 洛雪脚本没有搜索能力，不能出现在搜索源下拉里
+    const visible = sourceConfigs.filter(
+      (c) => c.enabled && c.visible && !isLxPlaybackSource(c.source)
+    );
+    const imported = useImportedSourcesStore.getState().sources;
     return [
       { value: "all", label: "聚合搜索" },
       ...visible.map((c) => {
         const opt = searchOptions[c.source];
-        return { value: c.source, label: opt || c.source };
+        const custom = imported.find((s) => s.id === c.source)?.name;
+        return {
+          value: c.source,
+          label: c.alias?.trim() || opt || custom || c.source,
+        };
       }),
     ];
   }, [sourceConfigs]);
+
+  // 已持久化的搜索源若当前不可见（例如刚在设置里把它隐藏了），回退到聚合搜索，
+  // 避免下拉框拿不到选项、直接把 imp_xxx 这种内部 id 显示出来。
+  useEffect(() => {
+    if (source === "all") return;
+    if (
+      !sourceConfigs.some(
+        (c) =>
+          c.source === source &&
+          c.enabled &&
+          c.visible &&
+          !isLxPlaybackSource(c.source)
+      )
+    ) {
+      setSource("all");
+    }
+  }, [source, sourceConfigs, setSource]);
 
   /* ---------------- 搜索建议 ---------------- */
   const [suggestions, setSuggestions] = useState<SearchSuggestionItem[]>([]);

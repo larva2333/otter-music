@@ -3,6 +3,7 @@ package com.otterhub.music;
 import static androidx.core.view.WindowCompat.enableEdgeToEdge;
 
 import android.content.pm.ActivityInfo;
+import android.webkit.WebSettings;
 import android.content.res.Configuration;
 import android.graphics.drawable.ColorDrawable;
 import android.os.Build;
@@ -38,6 +39,7 @@ public class MainActivity extends BridgeActivity {
         super.onCreate(savedInstanceState);
         useTransientSystemBars();
         applyWebViewBackground();
+        allowMixedContentAudio();
     }
 
     /**
@@ -52,6 +54,18 @@ public class MainActivity extends BridgeActivity {
      * 同时给 WebView 的**父容器**刷同色：Android 15 edge-to-edge 下内容延伸到系统栏后面，
      * 导航栏周边的原生层需要和主题色一致，避免露底。
      */
+    /**
+     * 第三方音源（尤其是导入的洛雪脚本）经常返回 http 直链。
+     * 页面本身跑在 https://localhost 下，默认混合内容策略会直接把 http 音频
+     * 拦成 MEDIA_ERR_SRC_NOT_SUPPORTED，表现为「有链接但播不了」。
+     * 这里放开混合内容，只影响本机 WebView，不涉及对外请求。
+     */
+    private void allowMixedContentAudio() {
+        if (getBridge() == null || getBridge().getWebView() == null) return;
+        getBridge().getWebView().getSettings()
+            .setMixedContentMode(WebSettings.MIXED_CONTENT_ALWAYS_ALLOW);
+    }
+
     private void applyWebViewBackground() {
         if (getBridge() == null || getBridge().getWebView() == null) return;
         View webView = getBridge().getWebView();

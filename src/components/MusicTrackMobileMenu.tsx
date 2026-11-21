@@ -20,16 +20,14 @@ import {
   Link2,
   Check,
   Folder,
+  Zap,
 } from "lucide-react";
-import { ReactNode, useState, useMemo } from "react";
+import { ReactNode, useEffect, useState, useMemo } from "react";
 import { MusicCover } from "./MusicCover";
+import { TrackSourceLabel } from "./TrackSourceLabel";
 import { useMusicCover } from "@/hooks/useMusicCover";
-import {
-  MusicTrack,
-  SearchIntent,
-  sourceLabels,
-  searchOptions,
-} from "@/types/music";
+import { MusicTrack, SearchIntent } from "@/types/music";
+import { getSourceLabel } from "@/lib/imported-sources/labels";
 import { useNavigate, useLocation } from "react-router-dom";
 import { useMusicStore } from "@/store/music-store";
 import {
@@ -58,6 +56,16 @@ import {
 } from "@otter-music/shared";
 import { logger } from "@/lib/logger";
 import { t2s, t2sArtists } from "@/lib/utils/t2s";
+import { toast } from "react-hot-toast";
+import { useExitLayer } from "@/hooks/useExitLayer";
+import { useImportedSourcesStore } from "@/lib/imported-sources/store";
+import type { ImportedSource } from "@/lib/imported-sources/types";
+import {
+  getLxPlatformForSource,
+  getLxSourcePlatforms,
+  resolveViaSpecificLxSource,
+  setLxUrlOverride,
+} from "@/lib/imported-sources/lx-playback";
 
 interface MusicTrackMobileMenuProps {
   track: MusicTrack;
@@ -120,6 +128,102 @@ export function MusicTrackMobileMenu({
   const [showArtistSelection, setShowArtistSelection] = useState(false);
   const [showComments, setShowComments] = useState(false);
   const [showSourceSwitch, setShowSourceSwitch] = useState(false);
+  const { push: pushExitLayer, pop: popExitLayer } = useExitLayer();
+
+  // 「切换音源」是套在菜单里的二级弹窗：Android 返回键走的是 Capacitor
+  // 原生事件（RootLayout 的层级栈），弹窗自己收不到。给它单独挂一层，
+  // 返回时先关它，而不是把菜单或页面一起关掉。
+  useEffect(() => {
+    if (!showSourceSwitch) return;
+    const id = pushExitLayer({ close: () => setShowSourceSwitch(false) });
+    return () => popExitLayer(id);
+  }, [showSourceSwitch, pushExitLayer, popExitLayer]);
+
+  // 菜单整体关掉时清掉子弹窗状态，避免这一层残留在返回键层级栈上
+  const handleMenuOpenChange = (next: boolean) => {
+    if (!next) setShowSourceSwitch(false);
+    onOpenChange(next);
+  };
+  /** 脚本 inited 是异步的，回来后再算一次平台，避免首次渲染把多平台脚本误标为不支持 */
+  const [lxTick, setLxTick] = useState(0);
+
+  const sourceConfigs = useMusicStore((s) => s.sourceConfigs);
+  const quality = useMusicStore((s) => s.quality);
+  const importedSources = useImportedSourcesStore((s) => s.sources);
+
+  const trackLxPlatform = useMemo(
+    () => getLxPlatformForSource(track.source),
+    [track.source]
+  );
+
+  /**
+   * 能接管当前曲目平台的洛雪源。
+   * 洛雪协议没有 search，所以它不出现在「切换音源」的搜索列表里，
+   * 只能在这里按平台手动选来给当前这首换一条直链。
+   * 列出全部已启用的洛雪源：平台不匹配的置灰，避免用户以为「开关开了却没生效」。
+   */
+  const lxSwitchTargets = useMemo(() => {
+    void lxTick;
+    const isOn = (id: string) => {
+      const cfg = sourceConfigs.find((c) => c.source === id);
+      if (!cfg) {
+        // 配置里还没补上条目时，用导入记录自身的开关兜底
+        const s = importedSources.find((x) => x.id === id);
+        return Boolean(s?.enabled && s?.visible);
+      }
+      return cfg.enabled && cfg.visible;
+    };
+    return importedSources
+      .filter((s) => s.kind === "lx" && !!s.script && isOn(s.id))
+      .map((source) => ({
+        source,
+        supported:
+          Boolean(trackLxPlatform) &&
+          getLxSourcePlatforms(source).includes(trackLxPlatform as string),
+      }))
+      .sort((a, b) => Number(b.supported) - Number(a.supported));
+  }, [trackLxPlatform, sourceConfigs, importedSources, lxTick]);
+
+  // 打开菜单时预热洛雪运行时（脚本会异步 send inited），回来后重算平台
+  useEffect(() => {
+    if (!open) return;
+    const lxSources = importedSources.filter(
+      (s) => s.kind === "lx" && !!s.script
+    );
+    if (lxSources.length === 0) return;
+    lxSources.forEach((s) => getLxSourcePlatforms(s));
+    const timer = setTimeout(() => setLxTick((v) => v + 1), 1500);
+    return () => clearTimeout(timer);
+  }, [open, importedSources]);
+
+  const playWithLxSource = async (source: ImportedSource) => {
+    const br = parseInt(quality, 10) || 320;
+    toast.loading(`正在用「${source.name}」取链…`, { id: "lx-switch" });
+    try {
+      const url = await Promise.race([
+        resolveViaSpecificLxSource(source, track, br),
+        new Promise<null>((resolve) => setTimeout(() => resolve(null), 12_000)),
+      ]);
+      if (!url) {
+        toast.error(`「${source.name}」取不到播放链接`, { id: "lx-switch" });
+        return;
+      }
+      // 先落直链再让加载器重载：resolveTrackUrl 会优先用这条，
+      // 避免它又走官方接口、又失败、又自动跳下一首
+      setLxUrlOverride({
+        trackId: track.id,
+        trackSource: track.source,
+        sourceId: source.id,
+        url,
+      });
+      setShowSourceSwitch(false);
+      onOpenChange(false);
+      useMusicStore.getState().incrementUrlRecoveryKey();
+      toast.success(`已用「${source.name}」取链播放`, { id: "lx-switch" });
+    } catch {
+      toast.error("洛雪源取链失败", { id: "lx-switch" });
+    }
+  };
 
   // Zustand Store
   const setSearchQuery = useMusicStore((s) => s.setSearchQuery);
@@ -279,7 +383,7 @@ export function MusicTrackMobileMenu({
 
   return (
     <div>
-      <Drawer open={open} onOpenChange={onOpenChange}>
+      <Drawer open={open} onOpenChange={handleMenuOpenChange}>
         <DrawerTrigger asChild>
           <Button
             size="icon"
@@ -443,8 +547,9 @@ export function MusicTrackMobileMenu({
               onClick={() => setShowSourceSwitch(true)}
             >
               <Link2 className="mr-2 h-4 w-4 shrink-0" />
-              <span className="truncate">
-                音源：{sourceLabels[track.source] || track.source}
+              <span className="flex min-w-0 items-center gap-1 truncate">
+                音源：
+                <TrackSourceLabel track={track} />
               </span>
             </Button>
 
@@ -540,10 +645,43 @@ export function MusicTrackMobileMenu({
                   ) : (
                     <Link2 className="mr-2 h-4 w-4" />
                   )}
-                  {searchOptions[source] || sourceLabels[source] || source}
+                  {getSourceLabel(source)}
                 </Button>
               );
             })}
+
+            {lxSwitchTargets.length > 0 && (
+              <>
+                <div className="pt-2 text-xs text-muted-foreground">
+                  洛雪源取链 · 给当前这首换一条直链
+                </div>
+                {!trackLxPlatform && (
+                  <div className="px-1 pb-1 text-xs text-muted-foreground">
+                    当前曲目来源（{getSourceLabel(track.source)}
+                    ）没有对应的洛雪平台
+                  </div>
+                )}
+                {lxSwitchTargets.map(({ source, supported }) => (
+                  <Button
+                    key={source.id}
+                    variant="ghost"
+                    className="justify-start w-full"
+                    disabled={!supported}
+                    onClick={() => playWithLxSource(source)}
+                  >
+                    <Zap className="mr-2 h-4 w-4 shrink-0" />
+                    <span className="truncate">
+                      {getSourceLabel(source.id)}
+                    </span>
+                    {!supported && (
+                      <span className="ml-auto shrink-0 text-xs text-muted-foreground">
+                        不支持当前平台
+                      </span>
+                    )}
+                  </Button>
+                ))}
+              </>
+            )}
           </div>
         </DialogContent>
       </Dialog>

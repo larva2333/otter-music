@@ -45,6 +45,7 @@ import { PlaylistImportDrawer } from "./PlaylistImportDrawer";
 import { getPlayAllStartIndex, usePlayHelper } from "@/hooks/usePlayHelper";
 import { usePlayContextHandler } from "@/hooks/usePlayContextHandler";
 import { usePagerSwipe } from "@/hooks/use-pager-swipe";
+import { useAutoLoadMore } from "@/hooks/use-auto-load-more";
 import { useTabReclick } from "@/hooks/use-tab-reclick";
 import { MineEdgePreview } from "./MineEdgePreview";
 import { cn } from "@/lib/utils";
@@ -57,6 +58,9 @@ interface MinePageProps {
 
 /** 「歌单」页的 4 个 type */
 type MineTab = "mine" | "queue" | "history" | "local";
+
+/** 歌单页各列表「上滑加载」每批的条数 */
+const MINE_LIST_PAGE_SIZE = 10;
 
 const MINE_TABS: { id: MineTab; label: string }[] = [
   { id: "mine", label: "我的歌单" },
@@ -140,6 +144,28 @@ export function MinePage({ onSelectPlaylist }: MinePageProps) {
   const historyOnPlay = usePlayContextHandler(history, "history");
   const queueOnPlay = usePlayContextHandler(queue, "queue");
   const activePlaylists = useActivePlaylists();
+
+  /* 我的歌单卡片列表「上滑加载」：首屏 10 个，滚动到底部附近再补一批 */
+  const minePaneRef = useRef<HTMLDivElement>(null);
+  const [mineVisible, setMineVisible] = useState(MINE_LIST_PAGE_SIZE);
+  // 歌单数据变化后回到第一批（渲染期比较引用，避免 effect 里 setState 级联渲染）
+  const [seenPlaylists, setSeenPlaylists] = useState(activePlaylists);
+  if (seenPlaylists !== activePlaylists) {
+    setSeenPlaylists(activePlaylists);
+    setMineVisible(MINE_LIST_PAGE_SIZE);
+  }
+  const mineHasMore = mineVisible < activePlaylists.length;
+  useAutoLoadMore({
+    containerRef: minePaneRef,
+    enabled: true,
+    hasMore: mineHasMore,
+    loading: false,
+    onLoadMore: () =>
+      setMineVisible((c) =>
+        Math.min(c + MINE_LIST_PAGE_SIZE, activePlaylists.length)
+      ),
+    contentKey: Math.min(mineVisible, activePlaylists.length),
+  });
 
   /* 切 type 的唯一入口：同时把目标面板标记为「已挂载」，两件事在同一次
      setState 批次里，面板不会晚一帧才出现。 */
@@ -330,6 +356,7 @@ export function MinePage({ onSelectPlaylist }: MinePageProps) {
             <div className="flex h-full w-full shrink-0 flex-col">
               {visitedTabs.has("mine") ? (
                 <div
+                  ref={minePaneRef}
                   data-mine-pane="mine"
                   // 只有当前可见的面板挂 data-page-scroll：回顶 / 滚动恢复都按这个标记
                   // 找容器，其余面板不参与。
@@ -404,7 +431,7 @@ export function MinePage({ onSelectPlaylist }: MinePageProps) {
                     </div>
                   ) : (
                     <div className="space-y-1">
-                      {activePlaylists.map((playlist) => (
+                      {activePlaylists.slice(0, mineVisible).map((playlist) => (
                         <div
                           key={playlist.id}
                           className="flex items-center gap-3 p-2 rounded-xl transition-colors cursor-pointer group"
@@ -507,6 +534,12 @@ export function MinePage({ onSelectPlaylist }: MinePageProps) {
                           </DropdownMenu>
                         </div>
                       ))}
+                      {/* 上滑加载提示（自动加载，无需点击） */}
+                      {activePlaylists.length > MINE_LIST_PAGE_SIZE && (
+                        <div className="flex h-8 items-center justify-center text-xs text-muted-foreground/60 tracking-wide">
+                          {mineHasMore ? "上滑加载更多" : "没有更多了"}
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>
@@ -554,6 +587,7 @@ export function MinePage({ onSelectPlaylist }: MinePageProps) {
                     tracks={history}
                     icon={<History className="h-8 w-8 text-primary/80" />}
                     onPlay={historyOnPlay}
+                    incrementalBatch={MINE_LIST_PAGE_SIZE}
                     onRemove={(track) =>
                       useHistoryStore.getState().removeFromHistory(track.id)
                     }

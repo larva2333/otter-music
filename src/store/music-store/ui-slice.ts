@@ -72,7 +72,6 @@ export interface UiSlice {
   desktopLyricFontSize: number;
   /** 桌面歌词字色（hex，如 "#FFFFFF"），默认与原生初始颜色一致 */
   desktopLyricColor: string;
-  playbackSpeed: number;
   isFullScreenPlayer: boolean;
   setQuality: (quality: string) => void;
   setSearchSource: (source: MusicSource) => void;
@@ -111,7 +110,6 @@ export interface UiSlice {
   setDesktopLyricEnabled: (enable: boolean) => void;
   setDesktopLyricFontSize: (size: number) => void;
   setDesktopLyricColor: (color: string) => void;
-  setPlaybackSpeed: (speed: number) => void;
   setIsFullScreenPlayer: (isFullScreen: boolean) => void;
 }
 
@@ -149,11 +147,23 @@ export const createUiSlice: StateCreator<MusicState, [], [], UiSlice> = (
   desktopLyricEnabled: false,
   desktopLyricFontSize: 15,
   desktopLyricColor: "#FFFFFF",
-  playbackSpeed: 1.0,
   isFullScreenPlayer: false,
   setQuality: (quality) => set({ quality }),
   setSearchSource: (searchSource) => set({ searchSource }),
-  setSourceConfigs: (sourceConfigs) => set({ sourceConfigs }),
+  setSourceConfigs: (sourceConfigs) =>
+    set((state) => {
+      // 当前选中的音源被隐藏/删除后要回退到聚合搜索，
+      // 否则下拉框找不到对应选项，会把内部 id（imp_xxx）当值显示出来。
+      const current = state.searchSource;
+      const keepCurrent =
+        current === "all" ||
+        sourceConfigs.some(
+          (c) => c.source === current && c.enabled && c.visible
+        );
+      return keepCurrent
+        ? { sourceConfigs }
+        : { sourceConfigs, searchSource: "all" };
+    }),
   setLastPlaylistCategory: (lastPlaylistCategory) =>
     set({ lastPlaylistCategory }),
   setLastMineTab: (lastMineTab) => set({ lastMineTab }),
@@ -196,6 +206,5 @@ export const createUiSlice: StateCreator<MusicState, [], [], UiSlice> = (
   setDesktopLyricFontSize: (desktopLyricFontSize) =>
     set({ desktopLyricFontSize }),
   setDesktopLyricColor: (desktopLyricColor) => set({ desktopLyricColor }),
-  setPlaybackSpeed: (playbackSpeed) => set({ playbackSpeed }),
   setIsFullScreenPlayer: (isFullScreenPlayer) => set({ isFullScreenPlayer }),
 });

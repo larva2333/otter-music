@@ -1,6 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { resolveTrackUrl } from "./audio-resolver";
+import {
+  setLxUrlOverride,
+  clearLxUrlOverride,
+} from "./imported-sources/lx-playback";
 import type { OfflineTrackRecord } from "@/store/offline-store";
 import type { MusicTrack } from "@/types/music";
 
@@ -30,17 +34,25 @@ vi.mock("@/store/download-store", () => ({
   useDownloadStore: { getState: () => ({ getUri: () => null }) },
 }));
 
-const { urlCacheMock, offlineMock } = vi.hoisted(() => ({
-  urlCacheMock: {
-    get: vi.fn<() => string | null>(() => null),
-    set: vi.fn(),
-    delete: vi.fn(),
-  },
-  offlineMock: {
-    records: {} as Record<string, unknown>,
-    addRecord: vi.fn(),
-  },
-}));
+const { urlCacheMock, offlineMock } = vi.hoisted(() => {
+  const get = vi.fn<() => string | null>(() => null);
+  return {
+    urlCacheMock: {
+      get,
+      // 测试统一用 get 的返回值模拟缓存命中，getEntry 由它派生
+      getEntry: vi.fn(() => {
+        const url = get();
+        return url ? { url, cachedAt: Date.now() } : undefined;
+      }),
+      set: vi.fn(),
+      delete: vi.fn(),
+    },
+    offlineMock: {
+      records: {} as Record<string, unknown>,
+      addRecord: vi.fn(),
+    },
+  };
+});
 
 vi.mock("@/store/offline-store", () => ({
   useOfflineStore: { getState: () => offlineMock },
@@ -48,6 +60,7 @@ vi.mock("@/store/offline-store", () => ({
 vi.mock("@/store/url-cache-store", () => ({
   useUrlCacheStore: { getState: () => urlCacheMock },
   buildUrlCacheKey: () => "key",
+  whenUrlCacheReady: () => Promise.resolve(),
 }));
 vi.mock("@/lib/music-api", () => ({
   musicApi: { getUrl: vi.fn() },
@@ -186,7 +199,8 @@ describe("resolveTrackUrl forceRefresh", () => {
     expect(urlCacheMock.delete).toHaveBeenCalledWith("key");
     expect(urlCacheMock.set).toHaveBeenCalledWith(
       "key",
-      "https://cdn.example.com/new.mp3"
+      "https://cdn.example.com/new.mp3",
+      { via: "official" }
     );
     expect(musicApi.getUrl).toHaveBeenCalledWith("netease-1", "netease", 192, {
       forceRefresh: true,
@@ -237,5 +251,88 @@ describe("resolveTrackUrl forceRefresh", () => {
 
     expect(result.url).toBe("https://cdn.example.com/stream-cached.mp3");
     expect(musicApi.getUrl).not.toHaveBeenCalled();
+  });
+});
+
+describe("手动指定洛雪源取链", () => {
+  it("有手动直链时直接用，不再请求官方接口", async () => {
+    const track: MusicTrack = {
+      ...localTrack,
+      id: "netease-9",
+      source: "netease",
+    };
+    setLxUrlOverride({
+      trackId: track.id,
+      trackSource: track.source,
+      sourceId: "imp_lx",
+      url: "https://lxs.example.com/song.mp3",
+    });
+
+    const result = await resolveTrackUrl(track, 320);
+
+    expect(result.url).toBe("https://lxs.example.com/song.mp3");
+    expect(musicApi.getUrl).not.toHaveBeenCalled();
+    clearLxUrlOverride();
+  });
+
+  it("换到别的曲目时不复用上一条手动直链", async () => {
+    const other: MusicTrack = {
+      ...localTrack,
+      id: "netease-10",
+      source: "netease",
+    };
+    setLxUrlOverride({
+      trackId: "netease-9",
+      trackSource: "netease",
+      sourceId: "imp_lx",
+      url: "https://lxs.example.com/old.mp3",
+    });
+    vi.mocked(musicApi.getUrl).mockResolvedValue(
+      "https://official.example.com/x.mp3"
+    );
+
+    const result = await resolveTrackUrl(other, 320);
+
+    expect(result.url).toBe("https://official.example.com/x.mp3");
+    clearLxUrlOverride();
+  });
+});
+
+describe("resolveTrackUrl 会员曲", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("无会员时不请求官方接口，直接判 VIP_NO_ACCESS", async () => {
+    const vip: MusicTrack = {
+      ...localTrack,
+      id: "qq_vip_1",
+      source: "qq",
+      url_id: "vipmid",
+      fee: 1,
+    };
+    vi.mocked(musicApi.getUrl).mockResolvedValue(
+      "https://official.example.com/vip.mp3" as never
+    );
+
+    await expect(resolveTrackUrl(vip, 320)).rejects.toThrow("VIP_NO_ACCESS");
+    expect(musicApi.getUrl).not.toHaveBeenCalled();
+  });
+
+  it("免费曲仍然走官方接口", async () => {
+    const free: MusicTrack = {
+      ...localTrack,
+      id: "qq_free_1",
+      source: "qq",
+      url_id: "freemid",
+    };
+    vi.mocked(musicApi.getUrl).mockResolvedValue(
+      "https://official.example.com/free.mp3" as never
+    );
+
+    const result = await resolveTrackUrl(free, 320);
+
+    expect(result.url).toBe("https://official.example.com/free.mp3");
+    expect(musicApi.getUrl).toHaveBeenCalled();
   });
 });

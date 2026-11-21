@@ -103,8 +103,6 @@ interface BackupPayload {
   embedCover: boolean;
   embedLyric: boolean;
   downloadDirectory: string;
-  sleepTimerDuration: number;
-  playbackSpeed: number;
   enableUpdateNotify: boolean;
   allowSimultaneousPlayback: boolean;
   rssSources: PodcastRssSource[];
@@ -176,8 +174,6 @@ export function serializeStoreData(): string {
     embedCover: state.embedCover,
     embedLyric: state.embedLyric,
     downloadDirectory: state.downloadDirectory,
-    sleepTimerDuration: state.sleepTimerDuration,
-    playbackSpeed: state.playbackSpeed,
     enableUpdateNotify: useAppStore.getState().enableUpdateNotify,
     allowSimultaneousPlayback: useAppStore.getState().allowSimultaneousPlayback,
     rssSources: usePodcastStore.getState().rssSources,
@@ -367,12 +363,10 @@ export function importStoreData(payload: BackupPayload): void {
     lyricAlign: payload.lyricAlign ?? "center",
     lyricFontSize: payload.lyricFontSize ?? 15,
     lyricOffset: payload.lyricOffset ?? -0.5,
-    playbackSpeed: payload.playbackSpeed ?? 1.0,
     downloadQuality: payload.downloadQuality ?? "320",
     embedCover: payload.embedCover ?? true,
     embedLyric: payload.embedLyric ?? true,
     downloadDirectory: payload.downloadDirectory ?? "",
-    sleepTimerDuration: payload.sleepTimerDuration ?? 30,
     enableProxyFallback: payload.enableProxyFallback ?? true,
   });
 

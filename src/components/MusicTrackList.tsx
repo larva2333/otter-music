@@ -1,6 +1,7 @@
 import React, {
   RefObject,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -77,7 +78,7 @@ import { useShallow } from "zustand/react/shallow";
 interface MusicTrackListProps {
   tracks: MusicTrack[];
   onPlay: (track: MusicTrack) => void;
-  scrollContainerRef?: RefObject<HTMLDivElement | null>;
+  scrollContainerRef?: RefObject<HTMLElement | null>;
   playlistId?: string;
   currentTrackId?: string;
   isPlaying?: boolean;
@@ -104,6 +105,14 @@ interface MusicTrackListProps {
    * 所以这个模式下一并禁用长按多选，用行尾菜单做单曲操作。
    */
   hideHeader?: boolean;
+  /** 紧凑行（播放列表这类纯队列视图用）：行内上下留白更小、估算行高更矮 */
+  dense?: boolean;
+  /**
+   * 增量展示（「上滑加载」分页）：首屏只渲染前 incrementalBatch 行，
+   * 滚动接近底部时再补一批。数据都在内存里的列表（播放历史/本地音乐等）
+   * 用它避免一次铺开全部行。传 0/undefined 表示一次渲染全部（虚拟滚动照常生效）。
+   */
+  incrementalBatch?: number;
 }
 
 const ROW_HEIGHT = 60;
@@ -168,6 +177,8 @@ export function MusicTrackList({
   onSelectionModeChange,
   showCover,
   hideHeader,
+  dense = true,
+  incrementalBatch,
 }: MusicTrackListProps) {
   const [isSelectionMode, setIsSelectionMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
@@ -227,6 +238,34 @@ export function MusicTrackList({
       `${sortState.field}-${sortState.dir}` as TrackSortKey
     );
   }, [tracks, sortState]);
+
+  /* --- 增量展示（上滑加载分页） --- */
+  const [visibleCount, setVisibleCount] = useState(
+    incrementalBatch && incrementalBatch > 0 ? incrementalBatch : Infinity
+  );
+  // 数据变化（切列表/重排/刷新）后回到第一批
+  useEffect(() => {
+    setVisibleCount(
+      incrementalBatch && incrementalBatch > 0 ? incrementalBatch : Infinity
+    );
+  }, [tracks, incrementalBatch]);
+  const limitedTracks = useMemo(
+    () =>
+      incrementalBatch && incrementalBatch > 0
+        ? displayTracks.slice(0, visibleCount)
+        : displayTracks,
+    [displayTracks, visibleCount, incrementalBatch]
+  );
+  const hasMoreLocal =
+    !!incrementalBatch &&
+    incrementalBatch > 0 &&
+    visibleCount < displayTracks.length;
+  const loadMoreLocal = useCallback(() => {
+    setVisibleCount((c) =>
+      Math.min(c + (incrementalBatch ?? 0), displayTracks.length)
+    );
+  }, [incrementalBatch, displayTracks.length]);
+
   const trackIds = useMemo(
     () => displayTracks.map((t) => t.id),
     [displayTracks]
@@ -453,22 +492,60 @@ export function MusicTrackList({
     }),
   };
 
+  /* --- 列表在滚动容器里的偏移（上方还有表头/标题等内容时需要） ---
+     不测量的话，virtualizer 会把 scrollTop 直接当列表内偏移用，
+     渲染的行窗口整体前移，滚得越深偏得越多。 */
+  const listContainerRef = useRef<HTMLDivElement | null>(null);
+  const [scrollMargin, setScrollMargin] = useState(0);
+  useLayoutEffect(() => {
+    if (!scrollContainerRef) return;
+    const measure = () => {
+      const sc = scrollContainerRef.current;
+      const lc = listContainerRef.current;
+      if (!sc || !lc) return;
+      const margin = Math.max(
+        0,
+        Math.round(
+          lc.getBoundingClientRect().top -
+            sc.getBoundingClientRect().top +
+            sc.scrollTop
+        )
+      );
+      setScrollMargin((prev) => (prev === margin ? prev : margin));
+    };
+    measure();
+    // 等一帧再补测一次：上方内容（标题/封面等）经常在首帧后才定型
+    const raf = requestAnimationFrame(measure);
+    const ro = new ResizeObserver(measure);
+    if (internalRef.current) ro.observe(internalRef.current);
+    return () => {
+      cancelAnimationFrame(raf);
+      ro.disconnect();
+    };
+  }, [scrollContainerRef, tracks.length, hideHeader, dense, sortState.field]);
+
   const virtualizer = useVirtualizer({
-    count: displayTracks.length + 1,
+    count: limitedTracks.length + 1,
     getScrollElement: () => scrollContainerRef?.current ?? internalRef.current,
-    estimateSize: () => ROW_HEIGHT,
+    estimateSize: () => (dense ? 52 : ROW_HEIGHT),
     overscan: 8,
+    scrollMargin,
   });
 
   /* ---------------- 上滑自动加载 ---------------- */
   useAutoLoadMore({
     containerRef: scrollContainerRef ?? internalRef,
-    enabled: autoLoadMore,
-    hasMore,
+    enabled: autoLoadMore || hasMoreLocal,
+    hasMore: hasMoreLocal || hasMore,
     loading,
-    onLoadMore,
-    contentKey: tracks.length,
+    onLoadMore: hasMoreLocal ? loadMoreLocal : onLoadMore,
+    contentKey: limitedTracks.length,
   });
+
+  // 底部状态行：增量展示用内部 loadMoreLocal，服务端分页用外部 onLoadMore
+  const footerLoadMore = hasMoreLocal ? loadMoreLocal : onLoadMore;
+  const footerAuto = autoLoadMore || hasMoreLocal;
+  const footerHasMore = hasMoreLocal || !!hasMore;
 
   if (tracks.length === 0 && !loading) {
     return (
@@ -480,7 +557,7 @@ export function MusicTrackList({
   }
 
   const renderHeader = () => (
-    <div className="sticky top-0 z-20 border-b bg-background/95 backdrop-blur supports-backdrop-filter:bg-background/60">
+    <div className="sticky top-0 z-20 border-b bg-background">
       <div className="grid items-center gap-4 px-4 h-10 text-sm font-bold text-muted-foreground grid-cols-[1.75rem_1fr_auto]">
         {!isSelectionMode ? (
           <>
@@ -655,11 +732,19 @@ export function MusicTrackList({
           disabled={!enableDnd}
         >
           <div
-            className="relative w-full"
-            style={{ height: virtualizer.getTotalSize() }}
+            ref={listContainerRef}
+            className={cn(
+              // 隐藏表头（推荐流这类纯内容列表）没有表头下边框可用，自己补一条上边框；
+              // 底部不再收边线（按需求去掉）
+              "relative w-full",
+              hideHeader && "border-t"
+            )}
+            style={{
+              height: Math.max(0, virtualizer.getTotalSize() - scrollMargin),
+            }}
           >
             {virtualizer.getVirtualItems().map((item) => {
-              const track = displayTracks[item.index];
+              const track = limitedTracks[item.index];
               const content = track ? (
                 <MusicTrackItem
                   track={track}
@@ -701,18 +786,19 @@ export function MusicTrackList({
                   showSourceBadge={
                     isSelectionMode || storeShowBadge || showSourceBadge
                   }
+                  className={dense ? "py-1.5" : undefined}
                 />
               ) : (
                 <div className="px-3 pb-20 pt-2 h-full">
-                  {onLoadMore ? (
-                    autoLoadMore ? (
+                  {footerLoadMore ? (
+                    footerAuto ? (
                       <div className="flex h-8 items-center justify-center gap-2 text-xs text-muted-foreground">
                         {loading ? (
                           <>
                             <Loader2 className="animate-spin w-3.5 h-3.5" />
                             <span>加载中...</span>
                           </>
-                        ) : hasMore ? (
+                        ) : footerHasMore ? (
                           <span className="tracking-wide">上滑加载更多</span>
                         ) : (
                           <span className="tracking-wide uppercase opacity-70">
@@ -725,12 +811,12 @@ export function MusicTrackList({
                         variant="ghost"
                         size="sm"
                         className="w-full text-xs text-muted-foreground h-8"
-                        onClick={onLoadMore}
-                        disabled={!hasMore || loading}
+                        onClick={footerLoadMore}
+                        disabled={!footerHasMore || loading}
                       >
                         {loading ? (
                           <Loader2 className="animate-spin w-3.5 h-3.5 mr-2" />
-                        ) : hasMore ? (
+                        ) : footerHasMore ? (
                           "加载更多"
                         ) : (
                           "没有更多了"
@@ -749,7 +835,9 @@ export function MusicTrackList({
                   data-index={item.index}
                   ref={virtualizer.measureElement}
                   className="absolute left-0 top-0 w-full"
-                  style={{ transform: `translateY(${item.start}px)` }}
+                  style={{
+                    transform: `translateY(${item.start - scrollMargin}px)`,
+                  }}
                 >
                   {track && onReorder ? (
                     <SortableTrackItem track={track} enabled={enableDnd}>

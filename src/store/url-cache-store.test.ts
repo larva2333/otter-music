@@ -138,12 +138,28 @@ describe("UrlCacheStore", () => {
       );
     });
 
+    // 签名直链是小时级的：一小时前缓存的链接不该被当成过期，
+    // 否则「刚放过的歌过一会儿切回来」又要重新取链
+    it("should still hit cache one hour later", () => {
+      useUrlCacheStore.setState({
+        urlMap: {
+          [key]: {
+            url: "https://example.com/hour.mp3",
+            cachedAt: Date.now() - 60 * 60 * 1000,
+          },
+        },
+      });
+      expect(useUrlCacheStore.getState().get(key)).toBe(
+        "https://example.com/hour.mp3"
+      );
+    });
+
     it("should treat expired entry as miss and remove it", () => {
       useUrlCacheStore.setState({
         urlMap: {
           [key]: {
             url: "https://example.com/expired.mp3",
-            cachedAt: Date.now() - 16 * 60 * 1000,
+            cachedAt: Date.now() - 3 * 60 * 60 * 1000,
           },
         },
       });

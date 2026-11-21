@@ -22,6 +22,13 @@ const TTL_LONG = 7 * 24 * 60 * 60 * 1000; // 7 days
 /** 签名直链时效不定，与 url-cache-store 的内存 TTL 保持一致，过期即重新解析 */
 const TTL_URL = 15 * 60 * 1000; // 15 minutes
 
+/**
+ * 自动换源时单个音源的搜索时限。
+ * 串行遍历里只要一个源不返回，后面的源就永远轮不到，
+ * 播放器会一直停在 loading。超时即跳到下一个源。
+ */
+const SEARCH_SOURCE_TIMEOUT = 6_000;
+
 export const musicApi = {
   /* ---------------- 搜索 ---------------- */
 
@@ -110,12 +117,36 @@ export const musicApi = {
           targetTrack && provider.getAutoMatchRanker
             ? provider.getAutoMatchRanker(targetTrack)
             : ranker;
-        const res = await provider.search(
-          effectiveQuery,
-          1,
-          effectiveCount,
-          signal
-        );
+        const res = await (() => {
+          let timer: ReturnType<typeof setTimeout> | null = null;
+          const timeout = new Promise<null>((resolve) => {
+            timer = setTimeout(() => {
+              logger.warn(
+                "music-api",
+                `Search timed out for source: ${source}`,
+                { timeout: SEARCH_SOURCE_TIMEOUT }
+              );
+              resolve(null);
+            }, SEARCH_SOURCE_TIMEOUT);
+          });
+          return Promise.race([
+            provider
+              .search(effectiveQuery, 1, effectiveCount, signal)
+              .catch((e) => {
+                if (isAbort(e)) throw e;
+                logger.warn(
+                  "music-api",
+                  `Search failed for source: ${source}`,
+                  e
+                );
+                return null;
+              }),
+            timeout,
+          ]).finally(() => {
+            if (timer) clearTimeout(timer);
+          });
+        })();
+        if (!res) continue;
         const match = effectiveRanker
           ? res.items
               .map((track, originalIndex) => ({ track, originalIndex }))

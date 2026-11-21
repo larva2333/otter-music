@@ -1,13 +1,8 @@
 import { useEffect, useRef } from "react";
-import { Capacitor } from "@capacitor/core";
-import { Keyboard } from "@capacitor/keyboard";
 import { useExitLayer } from "@/hooks/useExitLayer";
 
 /** 键盘弹出动画大致时长：等它跑完再挂返回键层，避免打断 insets 动画 */
 const KEYBOARD_POP_MS = 350;
-
-/** 键盘收起后再等一帧确认焦点，避免和 blur 抢时序 */
-const KEYBOARD_HIDE_SETTLE_MS = 60;
 
 interface UseSearchBackClearOptions {
   /** 输入框是否处于聚焦状态（键盘开着） */
@@ -24,13 +19,11 @@ interface UseSearchBackClearOptions {
  * 输入框聚焦时接管系统返回键，一次返回就把搜索态退干净：
  * 清空内容 + 收起键盘（失焦），不退出页面、不最小化应用。
  *
- * Android 上第一次返回键不一定到得了应用，所以两条路径都接：
- * 1. 应用收到返回键 → 走 useExitLayer 的层，直接清空 + 失焦；
- * 2. 输入法先把这次返回消费掉（只收键盘，WebView 里输入框并不会失焦）
- *    → 用原生 Keyboard 插件的 keyboardWillHide 补上「清空 + 失焦」。
- *
- * 之所以不用 visualViewport 判断：这个 WebView 里 innerHeight 与
- * visualViewport.height 在键盘弹出时都不变（实测均为 890），拿不到键盘高度。
+ * 只接「应用真正收到返回键」这一条路径（useExitLayer 的层）。
+ * 不再用 keyboardWillHide 兜底：点击输入法的收起按钮同样会派发该事件，
+ * 且 WebView 里输入框不会失焦，无法与「按返回键」区分，会把「收键盘看结果」
+ * 误判成清空搜索（表现为突然返回发现页）。收键盘就只收键盘，遵循 Android
+ * 标准交互：第一次返回收键盘，第二次返回才清空搜索。
  */
 export function useSearchBackClear({
   focused,
@@ -42,7 +35,6 @@ export function useSearchBackClear({
 
   // 用 ref 拿最新值：输入过程中不要反复 push/pop，否则返回键栈会抖动
   const valueRef = useRef(value);
-  const focusedRef = useRef(focused);
   const onClearRef = useRef(onClear);
   const onDismissRef = useRef(onDismiss);
 
@@ -51,25 +43,12 @@ export function useSearchBackClear({
   }, [value]);
 
   useEffect(() => {
-    focusedRef.current = focused;
-  }, [focused]);
-
-  useEffect(() => {
     onClearRef.current = onClear;
   }, [onClear]);
 
   useEffect(() => {
     onDismissRef.current = onDismiss;
   }, [onDismiss]);
-
-  // 聚焦时记下真实的 DOM 焦点元素：判断「键盘收起」是点了别处还是按了返回，
-  // 只看 document.activeElement 最准，不受 React 状态更新时序影响。
-  const focusElRef = useRef<Element | null>(null);
-  useEffect(() => {
-    if (!focused) return;
-    const el = document.activeElement;
-    if (el && el !== document.body) focusElRef.current = el;
-  }, [focused]);
 
   /** 一次返回：清空 + 失焦，然后把这一层移除 */
   const exitSearch = () => {
@@ -95,43 +74,4 @@ export function useSearchBackClear({
     };
     // exitSearch 只读 ref，引用变化不影响行为
   }, [focused, push, pop]);
-
-  // 兜底：输入法把返回键吃掉、只收起键盘时，应用收不到 onBackPressed。
-  // 原生 Keyboard 插件的 hide 事件是唯一可靠的信号（JS 侧拿不到键盘高度）。
-  // 收起后输入框仍握着焦点 → 是返回键；已经失焦 → 用户点了别处，内容保留。
-  useEffect(() => {
-    if (!focused) return;
-    if (!Capacitor.isNativePlatform()) return;
-
-    let settleTimer: number | null = null;
-    let handle: { remove: () => Promise<void> } | null = null;
-    let disposed = false;
-
-    Keyboard.addListener("keyboardWillHide", () => {
-      // 切到后台/其它应用导致的键盘收起不算「返回」，不要清空内容
-      if (document.visibilityState !== "visible") return;
-      if (settleTimer) window.clearTimeout(settleTimer);
-      settleTimer = window.setTimeout(() => {
-        settleTimer = null;
-        const el = focusElRef.current;
-        const stillFocused = el
-          ? document.activeElement === el
-          : focusedRef.current;
-        if (!stillFocused) return;
-        exitSearch();
-      }, KEYBOARD_HIDE_SETTLE_MS);
-    })
-      .then((h) => {
-        if (disposed) void h.remove();
-        else handle = h;
-      })
-      .catch(() => {});
-
-    return () => {
-      disposed = true;
-      if (settleTimer) window.clearTimeout(settleTimer);
-      if (handle) void handle.remove();
-    };
-    // exitSearch 只读 ref，引用变化不影响行为
-  }, [focused]);
 }

@@ -1,5 +1,6 @@
 "use client";
 
+import { useCallback, useEffect, useRef } from "react";
 import { cn } from "@/lib/utils";
 import { MusicCover } from "./MusicCover";
 
@@ -18,6 +19,36 @@ const TONEARM_ANGLE: Record<TonearmState, number> = {
   away: -62,
 };
 
+/**
+ * 切歌抬臂动画的总时长。
+ *
+ * 抬臂 → 顶点轻微过冲后回落 → 停住等新唱片落位 → 落针。
+ * 段边界与时长对齐：抬臂 250ms、回弹 90ms、停留 110ms、落臂 310ms，
+ * 落臂起点（450ms）晚于封面滑入（320ms），视觉上是「换好片再落针」。
+ */
+const ARM_CUT_DURATION = 760;
+/** 抬臂过冲量：到顶再甩出去一点，回落时才像有惯性的机械臂，而不是被按住的图形 */
+const ARM_CUT_OVERSHOOT = 5;
+
+/**
+ * 读唱臂当前的「附加旋转」（写在 CSS `rotate` 上的增量，手势层横滑抬臂用的就是它）。
+ *
+ * 稳态角（播放 -4° / 暂停 -40°）写在 `transform` 上，由 React 控制；
+ * 抬臂量写在 `rotate` 上，由动画/手势控制。两个属性在浏览器里是依次叠加的，
+ * 所以「视觉角度 = transform 角 + rotate 增量」。
+ *
+ * 切歌动画必须走增量通道：落点恒为 0°，等于稳态角本身。这样即使动画途中
+ * 播放状态变了（切歌时暂停/起播都会翻 isPlaying），也一定精确落回稳态位，
+ * 不会像绝对角那样落在一个已经过期的角度上、动画结束瞬间被 style 拽回去跳一下。
+ */
+function readDeltaDeg(el: SVGSVGElement): number {
+  if (typeof getComputedStyle !== "function") return 0;
+  const value = getComputedStyle(el).rotate;
+  if (!value || value === "none") return 0;
+  const matched = value.match(/^(-?\d+(?:\.\d+)?)deg/);
+  return matched ? Number(matched[1]) : 0;
+}
+
 interface VinylCoverProps {
   src?: string | null;
   alt?: string;
@@ -33,6 +64,11 @@ interface VinylCoverProps {
   imgStyle?: React.CSSProperties;
   previewOpen?: boolean;
   onPreviewOpenChange?: (open: boolean) => void;
+  /**
+   * 中心封面换图时是否交叉淡入（透传 MusicCover）。
+   * 播放页开启：切歌时唱片中心不该闪出底色，要跟唱臂一样是「换片」。
+   */
+  crossfade?: boolean;
   /** 盘面颜色；"transparent" 表示透明，透出播放器背景 */
   discColor?: string;
   /** 是否渲染唱臂骨架（基座+臂管+唱头）。播放条里的小黑胶不放骨架。 */
@@ -81,6 +117,7 @@ export function VinylCover({
   imgStyle,
   previewOpen,
   onPreviewOpenChange,
+  crossfade = false,
   discColor = DEFAULT_DISC_COLOR,
   showTonearm = true,
   tonearmContainerStyle,
@@ -89,6 +126,127 @@ export function VinylCover({
   onControlActivate,
 }: VinylCoverProps) {
   const transparent = discColor.toLowerCase() === "transparent";
+
+  /**
+   * 唱臂 svg 节点：既要交给调用方（横滑手势直接写 rotate），
+   * 组件自己也要拿它跑切歌动画，所以用 callback ref 同时写两处。
+   */
+  const armNodeRef = useRef<SVGSVGElement | null>(null);
+  const bindArmRef = useCallback(
+    (node: SVGSVGElement | null) => {
+      armNodeRef.current = node;
+      if (tonearmArmRef) tonearmArmRef.current = node;
+    },
+    [tonearmArmRef]
+  );
+
+  /** 稳态角只由播放/暂停决定；切歌让位角由动画临时接管 */
+  const restAngle = TONEARM_ANGLE[isPlaying ? "playing" : "paused"];
+  // 动画进行中用户点暂停：不能因为稳态角变了就重播整条抬臂动画，
+  // 所以效应里读 ref，依赖表里不放 restAngle。同步 effect 声明在动画 effect
+  // 之前，同一次 commit 内先更新 ref，动画读到的一定是最新角。
+  const restAngleRef = useRef(restAngle);
+  useEffect(() => {
+    restAngleRef.current = restAngle;
+  }, [restAngle]);
+
+  /** 正在跑的切歌动画：连续切歌时新的一段接管，旧的一段取消 */
+  const armAnimationRef = useRef<Animation | null>(null);
+  /** 降级分支（无 WAAPI）是否把让位增量写进了 style，复位时要清掉 */
+  const fallbackDeltaRef = useRef(false);
+
+  useEffect(() => {
+    if (!showTonearm) return;
+    const el = armNodeRef.current;
+    if (!el) return;
+
+    const hasWaapi = typeof el.animate === "function";
+
+    // 不在切歌让位：增量归零，稳态角交还给 React 的 transform。
+    if (armState !== "away") {
+      if (fallbackDeltaRef.current) {
+        fallbackDeltaRef.current = false;
+        el.style.rotate = "0deg";
+      }
+      return;
+    }
+
+    const reduced =
+      typeof window.matchMedia === "function" &&
+      window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+    // 让位量按「离稳态角还有多远」折算成增量，动画落点恒为 0°
+    const awayDelta = TONEARM_ANGLE.away - restAngleRef.current;
+
+    // 老 WebView / 测试环境没有 WAAPI：直接把增量定位到让位量
+    if (!hasWaapi || reduced) {
+      fallbackDeltaRef.current = true;
+      el.style.rotate = `${awayDelta}deg`;
+      return;
+    }
+
+    // 从唱臂当前位置起跑：连续切歌时上一段动画可能还没走完
+    const from = readDeltaDeg(el);
+    const overshoot = awayDelta - ARM_CUT_OVERSHOOT;
+    const previous = armAnimationRef.current;
+
+    /**
+     * 一条动画演完「抬臂 → 过冲回落 → 顶点停住 → 落针」。
+     *
+     * 之前是靠两次 transform 目标切换拼出来的，问题有两个：
+     * 1. 单段 ease-out 收尾速度趋于 0，到顶就是硬停；
+     * 2. 顶点保持时间（320ms）比过渡时长（350ms）还短，唱臂没走到位就被反向拽下来，
+     *    正对着「顿一下再下来」。
+     * 合成一条带过冲与回弹的曲线后，顶点是连续动作的一部分，不再有断层。
+     *
+     * 关键：动画作用在 `rotate`（增量）而不是 `transform`（稳态角）上。
+     * 切歌时旧音轨暂停会把 isPlaying 翻成 false、稳态角瞬间变成 -40°，
+     * 绝对角动画的末帧还停在创建时的 -4°，动画一结束就被 style 拽回 -40° ——
+     * 真机上看到的就是「唱臂猛地抬起来再落下去」。走增量通道后，
+     * 不论稳态角在动画期间怎么变，末帧 0° 都等于当时的稳态角，不会跳。
+     */
+    const animation = el.animate(
+      [
+        {
+          rotate: `${from}deg`,
+          offset: 0,
+          easing: "cubic-bezier(0.22, 0.9, 0.3, 1)",
+        },
+        {
+          rotate: `${overshoot}deg`,
+          offset: 0.33,
+          easing: "cubic-bezier(0.42, 0, 0.58, 1)",
+        },
+        {
+          rotate: `${awayDelta}deg`,
+          offset: 0.45,
+          easing: "linear",
+        },
+        {
+          rotate: `${awayDelta}deg`,
+          offset: 0.59,
+          easing: "cubic-bezier(0.33, 0, 0.25, 1)",
+        },
+        { rotate: "0deg", offset: 1 },
+      ],
+      { duration: ARM_CUT_DURATION, fill: "forwards" }
+    );
+    armAnimationRef.current = animation;
+    // 新动画已经接管，旧的那条可以收了
+    previous?.cancel();
+
+    animation.finished
+      .then(() => {
+        // 先把末帧写回 style 再取消：两者数值一致，取消动画不会闪
+        el.style.rotate = "0deg";
+        if (armAnimationRef.current === animation) {
+          armAnimationRef.current = null;
+        }
+        animation.cancel();
+      })
+      // 被下一次切歌顶掉的动画会 reject，接住它免得多一条未处理拒绝
+      .catch(() => {});
+  }, [armState, showTonearm]);
 
   /**
    * 骨架上的 click 一律就地消化。
@@ -155,6 +313,7 @@ export function VinylCover({
               iconClassName={iconClassName}
               previewOpen={previewOpen}
               onPreviewOpenChange={onPreviewOpenChange}
+              crossfade={crossfade}
             />
           </div>
         </div>
@@ -188,14 +347,14 @@ export function VinylCover({
             <div className="absolute inset-[38%] rounded-full bg-neutral-300" />
           </div>
           <svg
-            ref={tonearmArmRef}
+            ref={bindArmRef}
             data-testid="vinyl-tonearm"
             viewBox="0 0 100 100"
             className="absolute inset-0 h-full w-full overflow-visible"
             style={{
-              transform: `rotate(${
-                TONEARM_ANGLE[armState ?? (isPlaying ? "playing" : "paused")]
-              }deg)`,
+              // 只声明稳态角（播放 -4° / 暂停 -40°）。切歌让位由 WAAPI 动画临时覆盖，
+              // 这里不写 -62°，否则 transition 会先往让位角滑一段再被动画接管，闪一下。
+              transform: `rotate(${restAngle}deg)`,
               // 轴心固定在基座中心（基座 div 中心正是 50% / -6%），
               // 切歌荡开、落回都绕这一根轴，根部始终不动。
               transformOrigin: "50% -6%",

@@ -384,3 +384,100 @@ describe("MusicCover native save", () => {
     expect(toast.error).toHaveBeenCalledWith("保存失败，请重试");
   });
 });
+
+describe("MusicCover 切歌交叉淡入", () => {
+  let root: Root | undefined;
+  let container: HTMLDivElement | undefined;
+
+  beforeEach(() => {
+    (
+      globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }
+    ).IS_REACT_ACT_ENVIRONMENT = true;
+  });
+
+  afterEach(() => {
+    if (root) act(() => root?.unmount());
+    container?.remove();
+    root = undefined;
+    container = undefined;
+    vi.useRealTimers();
+  });
+
+  const render = async (src: string, crossfade: boolean) => {
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+    await act(async () => {
+      root?.render(
+        <MusicCover
+          src={src}
+          alt="cover"
+          crossfade={crossfade}
+          className="h-full w-full"
+        />
+      );
+    });
+    return {
+      rerender: async (next: string) => {
+        await act(async () => {
+          root?.render(
+            <MusicCover
+              src={next}
+              alt="cover"
+              crossfade={crossfade}
+              className="h-full w-full"
+            />
+          );
+        });
+      },
+      images: () => Array.from(container!.querySelectorAll("img")),
+    };
+  };
+
+  /** 触发图片加载完成（jsdom 不会真的解码） */
+  const fireLoad = async (img: HTMLImageElement) => {
+    await act(async () => {
+      img.dispatchEvent(new Event("load"));
+    });
+  };
+
+  it("默认关闭时不额外渲染底图，也不加淡入过渡", async () => {
+    const { rerender, images } = await render(SAMPLE_SRC, false);
+    await rerender("https://example.com/next.jpg");
+
+    expect(images()).toHaveLength(1);
+    expect(images()[0].style.transition).toBe("");
+  });
+
+  it("开启后换图：旧图垫底、新图从 0 淡入，加载完再摘掉底图", async () => {
+    vi.useFakeTimers();
+    const { rerender, images } = await render(SAMPLE_SRC, true);
+    // 首屏加载完成后才有「上一张」可垫
+    await fireLoad(images()[0]);
+
+    await rerender("https://example.com/next.jpg");
+
+    const afterSwitch = images();
+    expect(afterSwitch).toHaveLength(2);
+    // 旧图绝对定位垫底，新图还不可见
+    expect(afterSwitch[0].getAttribute("src")).toBe(SAMPLE_SRC);
+    expect(afterSwitch[0].className).toContain("absolute");
+    expect(afterSwitch[1].getAttribute("src")).toBe(
+      "https://example.com/next.jpg"
+    );
+    expect(afterSwitch[1].style.opacity).toBe("0");
+    expect(afterSwitch[1].style.transition).toContain("opacity 280ms");
+
+    await fireLoad(afterSwitch[1]);
+    expect(images()[1].style.opacity).toBe("1");
+
+    // 淡入走完后移除底图
+    await act(async () => {
+      vi.advanceTimersByTime(400);
+    });
+    expect(images()).toHaveLength(1);
+    expect(images()[0].getAttribute("src")).toBe(
+      "https://example.com/next.jpg"
+    );
+  });
+});

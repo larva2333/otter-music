@@ -336,8 +336,6 @@ export function PlaylistMarket() {
     };
   }, [measureIndicator, displayFilters]);
 
-  const active = browse;
-
   // 每个保留在 DOM 里的网格对应哪份数据：
   // 当前分类用分页状态（切 key 的那一帧还没 restore，就先看快照，保证 key 不变、DOM 不重建），
   // 其余分类用各自的快照。
@@ -355,6 +353,9 @@ export function PlaylistMarket() {
   }, [renderKeys, snapshotKey, isKeySwitching, listSnapshots, browse.items]);
 
   const currentGridList = gridLists.get(snapshotKey) ?? [];
+
+  const active = browse;
+
   const showGridSkeleton =
     currentGridList.length === 0 && (browse.loading || isKeySwitching);
 

@@ -15,6 +15,8 @@ import { BilibiliApiProvider } from "./providers/bilibili-api-provider";
 import { HigequProvider } from "./providers/higequ-provider";
 import { JamendoProvider } from "./providers/jamendo-provider";
 import { getAggregatedSourcesForSearch } from "@/hooks/use-aggregated-sources";
+import { getImportedSource } from "@/lib/imported-sources/store";
+import { createImportedProvider } from "@/lib/imported-sources/providers";
 
 export class MusicProviderFactory {
   private static instances = new Map<string, IMusicProvider>();
@@ -22,6 +24,14 @@ export class MusicProviderFactory {
   static getProvider(source: MusicSource): IMusicProvider {
     if (this.instances.has(source)) {
       return this.instances.get(source)!;
+    }
+
+    // 用户导入的动态音源：switch 未覆盖的 id 从 store 里找
+    const imported = getImportedSource(source as string);
+    if (imported) {
+      const provider = createImportedProvider(imported);
+      this.instances.set(source, provider);
+      return provider;
     }
 
     let provider: IMusicProvider;

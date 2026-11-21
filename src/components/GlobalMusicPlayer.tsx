@@ -9,7 +9,6 @@ import { useAudioPlaybackControl } from "@/hooks/useAudioPlaybackControl";
 import { useMediaSessionIntegration } from "@/hooks/useMediaSessionIntegration";
 import { useAudioEventHandlers } from "@/hooks/useAudioEventHandlers";
 import { useAudioTrackLoader } from "@/hooks/useAudioTrackLoader";
-import { useSleepTimer } from "@/hooks/useSleepTimer";
 import { useAudioPreloader } from "@/hooks/useAudioPreloader";
 import { useAudioRouteSafety } from "@/hooks/useAudioRouteSafety";
 import { useCarLyric } from "@/hooks/useCarLyric";
@@ -28,7 +27,6 @@ export function GlobalMusicPlayer() {
   const isSwitchingTrackRef = useRef(false);
   const hasRecordedRef = useRef(false);
 
-  useSleepTimer(audioRef);
   useSeekHandler(audioRef);
   useAudioTrackLoader(audioRef, isSwitchingTrackRef, hasRecordedRef);
   useAudioPlaybackControl(audioRef, isSwitchingTrackRef);

@@ -8,6 +8,7 @@ import { cn } from "@/lib/utils";
 import { PlayerQueueDrawer } from "./PlayerQueueDrawer";
 import { confirmDialog } from "./ui/confirm-dialog";
 import { MusicCover } from "./MusicCover";
+import { AudioOriginLabel } from "./AudioOriginLabel";
 import { VinylCover } from "./VinylCover";
 import { useCallback } from "react";
 import toast from "react-hot-toast";
@@ -203,6 +204,18 @@ export function MusicNowPlayingBar({
             >
               - {t2sArtists(currentTrack.artist).join(", ")}
             </span>
+            <AudioOriginLabel
+              className={cn(
+                // 这行是 items-baseline，音源必须按文字基线对齐，
+                // 不能单独 self-center（会比其他两项高约 1px）
+                "shrink-0 text-xs transition-all duration-300",
+                lightTint
+                  ? "text-foreground/50"
+                  : tinted
+                    ? "text-white/55"
+                    : "text-muted-foreground/80"
+              )}
+            />
           </p>
         </div>
 

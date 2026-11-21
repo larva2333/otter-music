@@ -52,6 +52,34 @@ function insertNext(
   };
 }
 
+/**
+ * 当前这一条音频是怎么来的，用于在播放界面显示「当前用的音源」。
+ * 不持久化：冷启动恢复播放时会重新解析并写回。
+ */
+export type AudioOriginVia =
+  | "official"
+  | "lx"
+  | "download"
+  | "offline"
+  | "local";
+
+export interface AudioOrigin {
+  via: AudioOriginVia;
+  /** 曲目所属音源 id（qq / _netease / 导入源 id …） */
+  source: string;
+  /** via === "lx" 时，实际接管播放的洛雪脚本名 */
+  lxName?: string;
+  /** 记录时间（运行期 map 用，避免旧记录一直沿用） */
+  at?: number;
+}
+
+/** 曲目唯一键：不同音源可能撞 id，必须带 source */
+export function trackOriginKey(
+  track: Pick<MusicTrack, "source" | "id">
+): string {
+  return `${track.source}:${track.id}`;
+}
+
 export interface PlaybackSlice {
   volume: number;
   isRepeat: boolean;
@@ -63,6 +91,16 @@ export interface PlaybackSlice {
   seekTargetTime: number;
   duration: number;
   currentAudioUrl: string | null;
+  currentAudioOrigin: AudioOrigin | null;
+  /**
+   * 每首曲目**上一次实际取到链的来源**（运行期，不持久化）。
+   *
+   * 播放条只能反映「当前这首」，而列表 / 「···」菜单要显示的是
+   * 各自那一首的实际供源。换源成功后曲目本身会被替换，
+   * 但洛雪脚本接管只换直链、不换曲目 —— 此时只有这份记录
+   * 才能让列表和菜单也标出「⚡ 实际供源的脚本」。
+   */
+  trackOrigins: Record<string, AudioOrigin>;
   hasUserGesture: boolean;
   consecutiveFailures: number;
   maxConsecutiveFailures: number;
@@ -79,6 +117,9 @@ export interface PlaybackSlice {
   seek: (time: number) => void;
   clearSeekTargetTime: () => void;
   setCurrentAudioUrl: (url: string | null) => void;
+  setCurrentAudioOrigin: (origin: AudioOrigin | null) => void;
+  /** 记录某首曲目实际用的供源（列表 / 菜单据此同步显示） */
+  recordTrackOrigin: (track: MusicTrack, origin: AudioOrigin | null) => void;
   setUserGesture: () => void;
   incrementFailures: () => number;
   resetFailures: () => void;
@@ -123,6 +164,8 @@ export const createPlaybackSlice: StateCreator<
   seekTargetTime: -1,
   duration: 0,
   currentAudioUrl: null,
+  currentAudioOrigin: null,
+  trackOrigins: {},
   hasUserGesture: false,
   consecutiveFailures: 0,
   maxConsecutiveFailures: 3,
@@ -145,6 +188,23 @@ export const createPlaybackSlice: StateCreator<
     }),
   clearSeekTargetTime: () => set({ seekTargetTime: -1 }),
   setCurrentAudioUrl: (currentAudioUrl) => set({ currentAudioUrl }),
+  setCurrentAudioOrigin: (currentAudioOrigin) => set({ currentAudioOrigin }),
+  recordTrackOrigin: (track, origin) =>
+    set((s) => {
+      const key = trackOriginKey(track);
+      if (!origin) {
+        if (!(key in s.trackOrigins)) return {};
+        const next = { ...s.trackOrigins };
+        delete next[key];
+        return { trackOrigins: next };
+      }
+      return {
+        trackOrigins: {
+          ...s.trackOrigins,
+          [key]: { ...origin, at: Date.now() },
+        },
+      };
+    }),
   setUserGesture: () => set({ hasUserGesture: true }),
   resetFailures: () => set({ consecutiveFailures: 0 }),
   setCoverUrl: (coverUrl) => set({ coverUrl }),
@@ -348,10 +408,21 @@ export const createPlaybackSlice: StateCreator<
     ),
 
   updateTrackInQueue: (tid, newTrack) =>
-    set((s) => ({
-      queue: s.queue.map((t) => (t.id === tid ? newTrack : t)),
-      originalQueue: s.originalQueue?.map((t) => (t.id === tid ? newTrack : t)),
-      currentAudioUrl:
-        s.queue[s.currentIndex]?.id === tid ? null : s.currentAudioUrl,
-    })),
+    set((s) =>
+      s.queue[s.currentIndex]?.id === tid
+        ? {
+            queue: s.queue.map((t) => (t.id === tid ? newTrack : t)),
+            originalQueue: s.originalQueue?.map((t) =>
+              t.id === tid ? newTrack : t
+            ),
+            currentAudioUrl: null,
+            currentAudioOrigin: null,
+          }
+        : {
+            queue: s.queue.map((t) => (t.id === tid ? newTrack : t)),
+            originalQueue: s.originalQueue?.map((t) =>
+              t.id === tid ? newTrack : t
+            ),
+          }
+    ),
 });

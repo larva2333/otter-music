@@ -40,7 +40,10 @@ import { convertToMusicTrack } from "@/lib/utils/download";
 import { useMusicStore } from "@/store/music-store";
 import { useShallow } from "zustand/react/shallow";
 import { getPlayAllStartIndex } from "@/hooks/usePlayHelper";
-import { useLocalMusicStore } from "@/store/local-music-store";
+import {
+  useLocalMusicStore,
+  whenLocalMusicHydrated,
+} from "@/store/local-music-store";
 import { LocalMusicPermissionDialog } from "./LocalMusicPermissionDialog";
 import { logger } from "@/lib/logger";
 import { useNavigate } from "react-router-dom";
@@ -161,12 +164,21 @@ export function LocalMusicPage({
     // 只在首次挂载时决定要不要自动扫描；后续列表被清空/替换不应再触发
     if (initRef.current) return;
     initRef.current = true;
-    if (files.length > 0) return;
-
-    performScan("quick").catch((err) => {
-      logger.error("LocalMusicPage", "Initial local music scan failed", err);
+    let cancelled = false;
+    // persist 的恢复是异步的：必须先等 IndexedDB 里的缓存列表恢复完，
+    // 再判断要不要扫描。否则冷启动时 store 还没水合就被误判成空的，
+    // 每次进页面都白白全量扫一遍 —— 这是本地音乐页打开慢的主因。
+    whenLocalMusicHydrated(1500).then(() => {
+      if (cancelled) return;
+      if (useLocalMusicStore.getState().files.length > 0) return;
+      performScan("quick").catch((err) => {
+        logger.error("LocalMusicPage", "Initial local music scan failed", err);
+      });
     });
-  }, [files.length, performScan]);
+    return () => {
+      cancelled = true;
+    };
+  }, [performScan]);
 
   // 列表里的曲名/歌手/专辑统一按简体显示。幂等：转换后没有变化就返回原引用，
   // 因此不会反复触发；持久化数据恢复（hydration）后会再补一次。
@@ -342,6 +354,7 @@ export function LocalMusicPage({
         <MusicPlaylistView
           title="本地音乐"
           compactHeader={embedded}
+          incrementalBatch={10}
           tracks={tracks}
           icon={<HardDriveDownload className="h-8 w-8 text-primary/80" />}
           onPlay={handlePlay}

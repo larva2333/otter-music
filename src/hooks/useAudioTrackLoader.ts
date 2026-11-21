@@ -11,10 +11,31 @@ import toast from "react-hot-toast";
 import { handleAutoMatch } from "@/lib/audio-match";
 import { logger } from "@/lib/logger";
 import { resolveTrackUrl } from "@/lib/audio-resolver";
+import { resolveViaLxPlayback } from "@/lib/imported-sources/lx-playback";
+import { isVipOnlyTrack } from "@/lib/playback-access";
+import { muteAndPause, restoreVolume } from "@/lib/audio-fade";
 import { IS_NATIVE } from "@/lib/api/config";
 
 const AUDIO_READY_TIMEOUT = 8000;
+/** 播放失败后给洛雪源重新取链的时限 */
+const LX_FALLBACK_TIMEOUT = 7000;
 type FallbackStage = "none" | "proxy" | "final";
+
+/** 带超时的 Promise：超时返回 null，不抛错 */
+function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T | null> {
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => resolve(null), ms);
+    promise
+      .then((value) => {
+        clearTimeout(timer);
+        resolve(value);
+      })
+      .catch(() => {
+        clearTimeout(timer);
+        resolve(null);
+      });
+  });
+}
 
 /** 校验歌曲在当前网络/缓存状态下是否可播 */
 function isTrackPlayable(
@@ -111,6 +132,10 @@ export function useAudioTrackLoader(
     quality?: string;
     recoveryKey?: number;
   }>({});
+  /** 本曲已经用洛雪源试过兜底，避免失败后无限重试 */
+  const lxFallbackTrackRef = useRef<string | null>(null);
+  /** 当前这次播放的直链是不是洛雪给的（是则不再重复走洛雪兜底） */
+  const fromLxRef = useRef(false);
 
   useEffect(() => {
     if (
@@ -165,18 +190,30 @@ export function useAudioTrackLoader(
 
       isSwitchingTrackRef.current = true;
       hasRecordedRef.current = false;
+      // 换歌 / 换音质 / 错误恢复时先清掉上一首的来源标记，
+      // 否则解析失败时播放界面会残留上一首的「音源」
+      getState().setCurrentAudioOrigin(null);
       getState().setIsLoading(true);
 
       const resumeTime = qualityChanged
         ? audio.currentTime
         : getState().currentAudioTime;
-      if (!qualityChanged) audio.pause();
+      // 切歌开始就**同步**静音并暂停，不等淡出阶梯。
+      //
+      // 阶梯靠定时器推进，而切歌这一帧主线程正被封面重建 / 歌词重算占满，
+      // tick 会被推迟几百毫秒 —— 这段时间旧歌仍按原音量在响，
+      // 用户听到的就是「上一首拖出来的尾音」。写 volume 是同步生效的：
+      // 增益先归零再暂停，解码中断时输出已是静音，不会留下爆音。
+      if (!qualityChanged) muteAndPause(audio);
 
       /** 核心播放器加载逻辑 */
       const play = async (audioUrl: string) => {
         if (isStale()) return;
         if (audio.src !== audioUrl) {
           getState().setCurrentAudioUrl(audioUrl);
+          // 换流前同步静音：淡出用的是定时器，切歌阻塞时可能还没走完，
+          // 此时直接换 src 会按原音量硬截断 —— 爆音 + 尾音。
+          muteAndPause(audio);
           // 先清空再赋值，强制 WebView 释放旧缓冲、重置 media element 状态
           audio.src = "";
           audio.src = audioUrl;
@@ -186,7 +223,12 @@ export function useAudioTrackLoader(
         // 等待就绪期间可能已被下一次切歌接管：旧请求不得写回进度或调 play
         if (isStale()) return;
         audio.currentTime = resumeTime;
-        audio.playbackRate = getState().playbackSpeed;
+        // 音量必须在起播前**同步**写回：切歌那一刻主线程会被封面重建 / 歌词重算
+        // 阻塞 300~600ms，任何延后恢复（setTimeout / rAF）都会让音乐开头静音半秒
+        // （真机实测 560ms）。起播时音频从第一个采样开始，不存在阶跃，不会出爆音。
+        // 走 restoreVolume 而不是裸写 volume：顺带作废可能还挂着的淡出阶梯，
+        // 否则它下一次 tick 会按自己的进度把音量再压下去。
+        restoreVolume(audio, getState().volume);
         await audio.play();
       };
 
@@ -202,6 +244,16 @@ export function useAudioTrackLoader(
           parseInt(quality, 10),
           { forceRefresh: isRecovery }
         );
+        // 记录本次是否是洛雪给的直链：它已经失败过一次的话，
+        // 再让脚本取一遍只会多等 7 秒拿到同样不可播的链接
+        fromLxRef.current = !!result.fromLx;
+        // 播放界面据此显示「当前用的音源」：官方 / 洛雪脚本 / 本地下载 / 离线
+        if (result.origin) {
+          getState().setCurrentAudioOrigin(result.origin);
+          // 同时写进曲目级记录：列表行和「···」菜单读这份，
+          // 否则洛雪接管时它们还标着曲目原本的平台
+          getState().recordTrackOrigin(currentTrack, result.origin);
+        }
         // 同步到 remoteUrlRef 以支持代理备用线路容灾（旧请求不得污染新歌的备用线路）
         if (result.url && !result.dlKey && !isStale()) {
           remoteUrlRef.current = result.url;
@@ -280,15 +332,72 @@ export function useAudioTrackLoader(
         if (requestId !== requestIdRef.current) return;
 
         const errorMsg = err instanceof Error ? err.message : String(err);
+        // mediaErrorCode: 2=网络 3=解码 4=源不支持。排查「链接能拉到但播不了」时
+        // 只有这个码能区分是混合内容拦截还是解码问题
+        const mediaErrorCode =
+          (err as { mediaErrorCode?: number | null })?.mediaErrorCode ?? null;
         logger.error(
           "useAudioTrackLoader",
-          `Audio load failed: ${errorMsg}`,
+          `Audio load failed: ${errorMsg} (media=${mediaErrorCode ?? "-"})`,
           err,
           { trackId, source, urlId }
         );
 
-        // 自动匹配容灾
-        if (getState().enableAutoMatch) {
+        // 官方直链取到了却播不出来（403 / vkey 失效 / 域名下线）：
+        // 先用洛雪脚本给同一首歌换一条直链。这是洛雪源唯一能做、也最对症的事，
+        // 不走「换源搜索」——那样会换掉 songmid，变成另一条曲目。
+        // 洛雪已经试过（fromLx）或这本来就是一只要跳过官方的会员曲，
+        // 都不该再花 7 秒重复取链，直接进入换源
+        const isVipSkip = errorMsg === "VIP_NO_ACCESS";
+        const skipLxFallback = fromLxRef.current || isVipSkip;
+        if (
+          source !== "local" &&
+          source !== "podcast" &&
+          !skipLxFallback &&
+          lxFallbackTrackRef.current !== trackKey
+        ) {
+          lxFallbackTrackRef.current = trackKey;
+          toast("官方链接不可播，正在用洛雪源重新取链…", {
+            id: "lx-fallback",
+            icon: "🎵",
+          });
+          const lxResult = await withTimeout(
+            resolveViaLxPlayback(currentTrack, parseInt(quality, 10)),
+            LX_FALLBACK_TIMEOUT
+          );
+          if (lxResult && !isStale() && lxResult.url !== remoteUrlRef.current) {
+            remoteUrlRef.current = lxResult.url;
+            fromLxRef.current = true;
+            getState().setCurrentAudioOrigin({
+              via: "lx",
+              source,
+              lxName: lxResult.sourceName,
+            });
+            getState().recordTrackOrigin(currentTrack, {
+              via: "lx",
+              source,
+              lxName: lxResult.sourceName,
+            });
+            try {
+              await play(lxResult.url);
+              toast.success("洛雪源已接管播放", { id: "lx-fallback" });
+              return;
+            } catch (lxError) {
+              logger.warn("useAudioTrackLoader", "洛雪源兜底播放仍失败", {
+                trackId,
+                source,
+                lxError,
+              });
+            }
+          } else {
+            toast.dismiss("lx-fallback");
+          }
+        }
+
+        // 自动匹配容灾：只给会员曲跨平台换源。
+        // 免费歌在 QQ / 网易自己的源上就能播，整条替换成别家平台
+        // 反而会把列表里的曲目和音源标记一起改掉。
+        if (getState().enableAutoMatch && isVipOnlyTrack(currentTrack)) {
           try {
             if (await handleAutoMatch(currentTrack)) return;
           } catch {
@@ -299,12 +408,15 @@ export function useAudioTrackLoader(
           }
         }
 
-        useSourceQualityStore.getState().recordFail(source);
+        // 会员曲被跳过不是「音源故障」，不该记进音源失败统计
+        if (!isVipSkip) useSourceQualityStore.getState().recordFail(source);
 
         fallbackStageRef.current.stage = "final";
         audio.src = "";
         getState().setCurrentAudioUrl(null);
-        toast.error("播放失败，已自动切到下一首");
+        toast.error(
+          isVipSkip ? "会员歌曲未找到可播源" : "播放失败，已自动切到下一首"
+        );
 
         const state = getState();
         if (state.incrementFailures() >= state.maxConsecutiveFailures) {

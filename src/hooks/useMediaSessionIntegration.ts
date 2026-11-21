@@ -198,7 +198,7 @@ export function useMediaSessionIntegration(
 
   // 播放进度同步：通知栏/锁屏/背屏（小米 17 Pro 等双屏机）卡片的进度条
   // 依赖 positionState（秒）。系统按 playbackRate 自行推算位置，
-  // 无需高频过桥，timeupdate 节流到 1 秒即可；seek/换曲/倍速变化立即刷新。
+  // 无需高频过桥，timeupdate 节流到 1 秒即可；seek/换曲立即刷新。
   useEffect(() => {
     const audio = audioRef.current;
     if (!audio) return;

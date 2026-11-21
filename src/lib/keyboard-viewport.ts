@@ -105,6 +105,13 @@ export function bindKeyboardViewport(shell: HTMLElement): () => void {
       "--kb-half",
       `${Math.round(keyboardInset / 2)}px`
     );
+    // tab bar 被 --kb-lift 移到键盘后面后，在 flex 流里仍占着自己的高度，
+    // 会把主内容区顶短、底部露出一条 window 背景色。把这段高度量出来给内容区
+    // 用负 margin 抵消；键盘收起时归零。
+    const tabBar = shell.querySelector<HTMLElement>("[data-kb-tabbar]");
+    const barH = patch && tabBar ? tabBar.offsetHeight : 0;
+    document.documentElement.style.setProperty("--kb-bar-h", `${barH}px`);
+
     if (!patch) {
       shell.style.height = "";
       shell.style.transform = "";
@@ -138,6 +145,7 @@ export function bindKeyboardViewport(shell: HTMLElement): () => void {
     document.documentElement.style.removeProperty("--kb-inset");
     document.documentElement.style.removeProperty("--kb-lift");
     document.documentElement.style.removeProperty("--kb-half");
+    document.documentElement.style.removeProperty("--kb-bar-h");
     document.documentElement.style.removeProperty("--kb-anim");
   };
 }

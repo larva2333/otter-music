@@ -195,7 +195,7 @@ const AlbumGrid = ({
   list: ArtistAlbum[];
   onClick: (id: string | number) => void;
 }) => (
-  <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 xl:grid-cols-7 gap-x-3 gap-y-4">
+  <div className="grid grid-cols-4 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 xl:grid-cols-7 gap-x-3 gap-y-4">
     {list.map((item) => (
       <div
         key={item.id}

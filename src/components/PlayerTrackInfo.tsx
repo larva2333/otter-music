@@ -6,6 +6,7 @@ import { cn } from "@/lib/utils";
 import { MusicTrack } from "@/types/music";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { MusicCover } from "./MusicCover";
+import { AudioOriginLabel } from "./AudioOriginLabel";
 import { t2s, t2sArtists } from "@/lib/utils/t2s";
 
 interface PlayerTrackInfoProps {
@@ -79,8 +80,13 @@ export function PlayerTrackInfo({
         <div className={`${textSize} font-semibold truncate`}>
           {t2s(track.name)}
         </div>
-        <div className={`${subTextSize} text-muted-foreground truncate`}>
-          {t2sArtists(track.artist).join(" / ")}
+        <div
+          className={`${subTextSize} text-muted-foreground truncate flex items-center gap-1.5`}
+        >
+          <span className="truncate">
+            {t2sArtists(track.artist).join(" / ")}
+          </span>
+          <AudioOriginLabel className="shrink-0 text-muted-foreground/70" />
         </div>
       </div>
 

@@ -9,20 +9,20 @@ interface PlaylistGridProps {
 }
 
 const GRID_CLASS =
-  "grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 xl:grid-cols-7 gap-x-3 gap-y-4";
+  "grid grid-cols-4 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 xl:grid-cols-7 gap-x-3 gap-y-4";
 
 /** 按「行 + 列」错开扫光延迟，整片网格看起来是一道斜向的波浪，而不是一起忽明忽暗 */
 const shimmerDelay = (index: number) =>
   ((index % 3) + Math.floor(index / 3)) * 70;
 
 /**
- * 卡片宽度：手机上 3 列、左右各 16px 内边距 + 12px 列间距 → 约 115 CSS px。
+ * 卡片宽度：手机上 4 列、左右各 16px 内边距 + 12px 列间距 → 约 82 CSS px。
  * 按屏幕像素比取图（上限 3x），6000px 的 4K 屏也不会去拉超大图。
  */
 const COVER_SIZE =
   typeof window === "undefined"
     ? 350
-    : Math.round(115 * Math.min(window.devicePixelRatio || 1, 3));
+    : Math.round(82 * Math.min(window.devicePixelRatio || 1, 3));
 
 /**
  * memo：首页会把访问过的分类网格都保留在 DOM 里（只切换可见性），

@@ -69,6 +69,8 @@ export function useAudioEventHandlers(
         state.setDuration(duration);
 
         // 检测网易云试听片段（音频时长可能是浮点型）
+        // 片段本身就是会员曲的实证（免费歌能放完整版），不再额外要求
+        // fee 元数据；非会员曲完整播放时不会进这个分支，不会被误替换
         if (
           state.enableAutoMatch &&
           track?.source === "_netease" &&
@@ -100,13 +102,7 @@ export function useAudioEventHandlers(
         syncPositionState(0);
         const state = getMusicState();
 
-        if (state.sleepTimerStopAfterCurrentTrack) {
-          state.setIsPlaying(false);
-          state.setSleepTimerIsActive(false);
-          state.setSleepTimerStopAfterCurrentTrack(false);
-          state.setSleepTimerRemaining(0);
-          state.setSleepTimerEndTime(0);
-        } else if (state.isRepeat) {
+        if (state.isRepeat) {
           audio.currentTime = 0;
           audio.play().catch(() => state.setIsPlaying(false));
         } else if (state.queue.length) {
@@ -182,6 +178,10 @@ export function useAudioEventHandlers(
 
       error: () => {
         clearPauseTimer();
+        // 出错必须先落 loading：waiting / loadstart 会把 loading 打开，
+        // 若 error 分支不关，第二次失败（recovery 已用尽）就会永远转圈，
+        // 既不报错也不跳歌 —— 表现就是「一直加载中」。
+        toggleLoading(false);
         const state = getMusicState();
 
         if (!recoveryAttemptedRef.current && state.queue.length > 0) {

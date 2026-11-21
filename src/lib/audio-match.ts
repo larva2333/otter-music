@@ -17,6 +17,15 @@ import { logger } from "@/lib/logger";
 import { useUrlCacheStore, buildUrlCacheKey } from "@/store/url-cache-store";
 
 /**
+ * 自动换源总时限。
+ *
+ * searchBestMatch 是**串行**遍历音源的，只要有一个源的搜索不返回，
+ * 整条链就会一直挂着 —— 播放器处于 loading 状态、既不报错也不跳歌。
+ * 超时后必须放行，让上层继续走「跳过下一首」。
+ */
+const AUTO_MATCH_TIMEOUT = 12_000;
+
+/**
  * 计算自动换源的单源内排序分数，优先保证歌名与歌手完全一致。
  */
 function scoreAutoMatchCandidate(
@@ -97,6 +106,7 @@ export async function handleAutoMatch(
       setAutoMatchContext,
       updateTrackInQueue,
       updateTrackInPlaylists,
+      updateTrackInSearch,
       contextId,
       autoMatchFavorites,
       autoMatchPlaylists,
@@ -121,20 +131,47 @@ export async function handleAutoMatch(
     if (aggregatedSources.length === 0) {
       return false;
     }
-    const match = await musicApi.searchBestMatch({
-      query: `${track.name} ${track.artist[0]}`,
-      sources: aggregatedSources,
-      predicate: (item: MusicTrack) => {
-        if (!isNameMatch(track.name, item.name)) return false;
-        return isArtistMatch(track.artist, item.artist);
-      },
-      ranker: (item, originalIndex) =>
-        scoreAutoMatchCandidate(track, item, originalIndex),
-      targetTrack: track,
+
+    // 超时控制：abort 让支持 signal 的 provider 立即收手，
+    // race 兜住那些不响应 abort 的原生请求（否则 await 永远不返回）
+    const controller = new AbortController();
+    let timedOut = false;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+
+    const timeoutPromise = new Promise<null>((resolve) => {
+      timer = setTimeout(() => {
+        timedOut = true;
+        controller.abort();
+        resolve(null);
+      }, AUTO_MATCH_TIMEOUT);
     });
 
+    const searchPromise = musicApi
+      .searchBestMatch({
+        query: `${track.name} ${track.artist[0]}`,
+        sources: aggregatedSources,
+        signal: controller.signal,
+        predicate: (item: MusicTrack) => {
+          if (!isNameMatch(track.name, item.name)) return false;
+          return isArtistMatch(track.artist, item.artist);
+        },
+        ranker: (item, originalIndex) =>
+          scoreAutoMatchCandidate(track, item, originalIndex),
+        targetTrack: track,
+      })
+      .catch((error) => {
+        // 超时后原请求才失败属于预期，不再当作异常抛出
+        if (timedOut) return null;
+        throw error;
+      });
+
+    const match = await Promise.race([searchPromise, timeoutPromise]);
+    if (timer) clearTimeout(timer);
+
     if (!match) {
-      toast.error("未找到可用音源", { id: toastId });
+      toast.error(timedOut ? "换源搜索超时，已跳过" : "未找到可用音源", {
+        id: toastId,
+      });
       return false;
     }
 
@@ -185,6 +222,14 @@ export async function handleAutoMatch(
         setCurrentIndexAndPlay(queuedIndex);
       }
     }
+
+    // 换源结果同步到搜索结果列表。列表行的音源标记、以及「···」菜单里
+    // 「音源：xx」都读这份数据 —— 不同步就会出现「已经在播新源，
+    // 列表和菜单还标着旧源」。
+    updateTrackInSearch(track.id, track.source, finalTrack);
+    // 旧曲目的「实际供源」记录随曲目一起作废，避免以后搜回同一首时
+    // 还挂着上一次的洛雪脚本标记
+    useMusicStore.getState().recordTrackOrigin(track, null);
 
     // 清除目标音源的 URL 缓存，强制重新获取音频 URL
     // 避免复用之前缓存中的试听片段（如 _netease 的 30 秒预览）

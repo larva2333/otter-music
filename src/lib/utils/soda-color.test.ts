@@ -146,5 +146,38 @@ describe("extractFromPixels", () => {
       expect(Math.abs(darkHue - lightHue)).toBeLessThan(0.15);
       expect(light.top[0]).not.toBe(dark.top[0]);
     });
+
+    it("黑/白/灰封面在浅色模式下不会退化成无彩色的灰白底", () => {
+      for (const gray of [
+        [0, 0, 0],
+        [20, 20, 20],
+        [128, 128, 128],
+        [255, 255, 255],
+      ] as RGB[]) {
+        const light = extractFromPixels(solidPixels(gray), "light");
+        const lab = srgbToLab(light.top);
+        // 仍是高明度浅底，但带可辨识的淡彩（不是纯灰）
+        expect(lab[0]).toBeGreaterThanOrEqual(80);
+        expect(Math.hypot(lab[1], lab[2])).toBeGreaterThan(8);
+      }
+    });
+
+    it("灰色封面里有一块鲜艳颜色时，浅底采用该块色相", () => {
+      // 大部分像素是灰，掺入一片明显的红色簇
+      const data = new Uint8ClampedArray(96 * 96 * 4);
+      for (let i = 0; i < data.length; i += 4) {
+        const isRed = i / 4 < 96 * 20; // 约 20% 的红色带
+        data[i] = isRed ? 210 : 120;
+        data[i + 1] = isRed ? 40 : 120;
+        data[i + 2] = isRed ? 40 : 120;
+        data[i + 3] = 255;
+      }
+      const light = extractFromPixels(data, "light");
+      const lab = srgbToLab(light.top);
+      const hue = Math.atan2(lab[2], lab[1]);
+      // 红色的 Lab a 分量为正：色相应偏向红/暖色，而不是中性灰
+      expect(lab[1]).toBeGreaterThan(0);
+      expect(hue).toBeLessThan(0.8);
+    });
   });
 });

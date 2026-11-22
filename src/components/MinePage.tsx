@@ -45,9 +45,8 @@ import { PlaylistImportDrawer } from "./PlaylistImportDrawer";
 import { getPlayAllStartIndex, usePlayHelper } from "@/hooks/usePlayHelper";
 import { usePlayContextHandler } from "@/hooks/usePlayContextHandler";
 import { usePagerSwipe } from "@/hooks/use-pager-swipe";
-import { useAutoLoadMore } from "@/hooks/use-auto-load-more";
+import { useLoadMoreOnVisible } from "@/hooks/use-load-more-on-visible";
 import { useTabReclick } from "@/hooks/use-tab-reclick";
-import { MineEdgePreview } from "./MineEdgePreview";
 import { cn } from "@/lib/utils";
 import type { MusicTrack } from "@/types/music";
 import { t2s } from "@/lib/utils/t2s";
@@ -155,16 +154,16 @@ export function MinePage({ onSelectPlaylist }: MinePageProps) {
     setMineVisible(MINE_LIST_PAGE_SIZE);
   }
   const mineHasMore = mineVisible < activePlaylists.length;
-  useAutoLoadMore({
-    containerRef: minePaneRef,
-    enabled: true,
-    hasMore: mineHasMore,
-    loading: false,
+  const mineSentinelRef = useRef<HTMLDivElement>(null);
+  // 用哨兵进入视口触发加载，绕开 scroll 事件在嵌套滚动容器里监听不到的问题
+  useLoadMoreOnVisible({
+    sentinelRef: mineSentinelRef,
+    rootRef: minePaneRef,
+    enabled: mineHasMore,
     onLoadMore: () =>
       setMineVisible((c) =>
         Math.min(c + MINE_LIST_PAGE_SIZE, activePlaylists.length)
       ),
-    contentKey: Math.min(mineVisible, activePlaylists.length),
   });
 
   /* 切 type 的唯一入口：同时把目标面板标记为「已挂载」，两件事在同一次
@@ -536,8 +535,11 @@ export function MinePage({ onSelectPlaylist }: MinePageProps) {
                       ))}
                       {/* 上滑加载提示（自动加载，无需点击） */}
                       {activePlaylists.length > MINE_LIST_PAGE_SIZE && (
-                        <div className="flex h-8 items-center justify-center text-xs text-muted-foreground/60 tracking-wide">
-                          {mineHasMore ? "上滑加载更多" : "没有更多了"}
+                        <div
+                          ref={mineSentinelRef}
+                          className="flex h-8 items-center justify-center text-xs text-muted-foreground/60 tracking-wide"
+                        >
+                          {mineHasMore ? "加载中..." : "没有更多了"}
                         </div>
                       )}
                     </div>
@@ -596,6 +598,7 @@ export function MinePage({ onSelectPlaylist }: MinePageProps) {
                     action={
                       history.length > 0 ? (
                         <button
+                          aria-label="清空播放历史"
                           onClick={async () => {
                             if (
                               await confirmDialog({
@@ -607,10 +610,9 @@ export function MinePage({ onSelectPlaylist }: MinePageProps) {
                               useHistoryStore.getState().clearHistory();
                             }
                           }}
-                          className="flex items-center gap-1.5 px-3 h-8 rounded-full text-xs text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors"
+                          className="flex items-center justify-center px-2.5 h-8 rounded-full text-xs text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors"
                         >
                           <Trash2 className="h-3.5 w-3.5" />
-                          清空
                         </button>
                       ) : undefined
                     }
@@ -643,10 +645,6 @@ export function MinePage({ onSelectPlaylist }: MinePageProps) {
           </div>
         </div>
       </div>
-
-      {/* 两端整页滑出时露出的相邻根 tab 骨架屏 */}
-      <MineEdgePreview side="prev" />
-      <MineEdgePreview side="next" />
     </div>
   );
 }

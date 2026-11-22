@@ -2,6 +2,8 @@ import { useEffect, useRef, useState } from "react";
 import { forceHttps } from "@otter-music/shared";
 import type { ColorMode, SodaColors } from "@/lib/utils/soda-color";
 import { extractColorsOffThread } from "@/lib/cover-color-client";
+import { logger } from "@/lib/logger";
+import { getProxyUrl, isProxyUrl } from "@/lib/api/config";
 
 /** 取色降采样尺寸（与算法标定时使用的 96×96 输入一致） */
 const SAMPLE_SIZE = 96;
@@ -55,7 +57,10 @@ function loadImage(url: string): Promise<HTMLImageElement> {
 }
 
 /** 绘制降采样 canvas 并执行取色算法（k-means 在 worker 里跑，见 cover-color-client） */
-async function extract(imageUrl: string, mode: ColorMode): Promise<SodaColors> {
+async function extractFromUrl(
+  imageUrl: string,
+  mode: ColorMode
+): Promise<SodaColors> {
   const img = await loadImage(imageUrl);
   const canvas = document.createElement("canvas");
   canvas.width = SAMPLE_SIZE;
@@ -65,6 +70,21 @@ async function extract(imageUrl: string, mode: ColorMode): Promise<SodaColors> {
   ctx.drawImage(img, 0, 0, SAMPLE_SIZE, SAMPLE_SIZE);
   const data = ctx.getImageData(0, 0, SAMPLE_SIZE, SAMPLE_SIZE).data;
   return extractColorsOffThread(data, mode);
+}
+
+async function extract(imageUrl: string, mode: ColorMode): Promise<SodaColors> {
+  try {
+    return await extractFromUrl(imageUrl, mode);
+  } catch (err) {
+    // 部分图床（非网易/QQ CDN）不给跨域头：<img src> 能显示封面，
+    // 但取色用的 crossOrigin 图片会让 canvas 被污染，getImageData 抛
+    // SecurityError，播放条就退回纯色底。走后端同源代理补上 CORS 再试一次。
+    if (isProxyUrl(imageUrl)) throw err;
+    logger.warn("useCoverColors", "直连取色失败，改用代理重试", err as Error, {
+      url: imageUrl,
+    });
+    return extractFromUrl(getProxyUrl(imageUrl), mode);
+  }
 }
 
 /**
@@ -130,6 +150,13 @@ export function useCoverColors(
         }
       })
       .catch((err) => {
+        // 取色失败会让播放条/播放页退回纯色底，之前这里静默吞掉错误，
+        // 只剩「背景又没了」的现象，排查时完全看不到原因（多为跨域图片
+        // 未带 CORS 头，canvas.getImageData 抛 SecurityError）。
+        logger.warn("useCoverColors", "封面取色失败", err as Error, {
+          url: safeUrl,
+          mode,
+        });
         if (!cancelled && latestKeyRef.current === key) {
           setState({
             key,

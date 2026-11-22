@@ -183,7 +183,7 @@ export function MusicNowPlayingBar({
           )}
 
           {/* 歌曲信息 - 单行 */}
-          <p className="flex-1 min-w-0 truncate flex items-baseline gap-1.5 ml-2">
+          <p className="flex-1 min-w-0 truncate flex items-center gap-1.5 ml-2">
             <span
               className={cn(
                 "font-medium transition-all duration-300 text-sm",
@@ -206,8 +206,8 @@ export function MusicNowPlayingBar({
             </span>
             <AudioOriginLabel
               className={cn(
-                // 这行是 items-baseline，音源必须按文字基线对齐，
-                // 不能单独 self-center（会比其他两项高约 1px）
+                // 整行 items-center，作者/音源与歌名按中线对齐；
+                // 单独 self-center 在这行会重复生效，别加
                 "shrink-0 text-xs transition-all duration-300",
                 lightTint
                   ? "text-foreground/50"

@@ -1,0 +1,24 @@
+diff --git a/node_modules/react-hot-toast/dist/index.js b/node_modules/react-hot-toast/dist/index.js
+index a479b8a..d69b8b4 100644
+--- a/node_modules/react-hot-toast/dist/index.js
++++ b/node_modules/react-hot-toast/dist/index.js
+@@ -175,5 +175,5 @@ to {
+   > * {
+     pointer-events: auto;
+   }
+-`,z=16,oe=({reverseOrder:e,position:t="top-center",toastOptions:o,gutter:s,children:a,toasterId:n,containerStyle:r,containerClassName:u})=>{let{toasts:x,handlers:y}=M(o,n);return b.createElement("div",{"data-rht-toaster":n||"",style:{position:"fixed",zIndex:9999,top:z,left:z,right:z,bottom:z,pointerEvents:"none",...r},className:u,onMouseEnter:y.startPause,onMouseLeave:y.endPause},x.map(d=>{let c=d.position||t,m=y.calculateOffset(d,{reverseOrder:e,gutter:s,defaultPosition:t}),p=Ce(c,m);return b.createElement(Me,{id:d.id,key:d.id,onHeightUpdate:y.updateHeight,className:d.visible?Fe:"",style:p},d.type==="custom"?g(d.message,d):a?a(d):b.createElement(N,{toast:d,position:c}))}))};var Le=i;0&&(module.exports={CheckmarkIcon,ErrorIcon,LoaderIcon,ToastBar,ToastIcon,Toaster,resolveValue,toast,useToaster,useToasterStore});
++`,z=16,oe=({reverseOrder:e,position:t="top-center",toastOptions:o,gutter:s,children:a,toasterId:n,containerStyle:r,containerClassName:u})=>{let{toasts:x,handlers:y}=M(o,n);return b.createElement("div",{"data-rht-toaster":n||"",style:{position:"fixed",zIndex:9999,top:z,left:z,right:z,bottom:z,pointerEvents:"none",...r},className:u,onMouseEnter:void 0,onMouseLeave:void 0},x.map(d=>{let c=d.position||t,m=y.calculateOffset(d,{reverseOrder:e,gutter:s,defaultPosition:t}),p=Ce(c,m);return b.createElement(Me,{id:d.id,key:d.id,onHeightUpdate:y.updateHeight,className:d.visible?Fe:"",style:p},d.type==="custom"?g(d.message,d):a?a(d):b.createElement(N,{toast:d,position:c}))}))};var Le=i;0&&(module.exports={CheckmarkIcon,ErrorIcon,LoaderIcon,ToastBar,ToastIcon,Toaster,resolveValue,toast,useToaster,useToasterStore});
+ //# sourceMappingURL=index.js.map
+\ No newline at end of file
+diff --git a/node_modules/react-hot-toast/dist/index.mjs b/node_modules/react-hot-toast/dist/index.mjs
+index cd025b0..4c79bee 100644
+--- a/node_modules/react-hot-toast/dist/index.mjs
++++ b/node_modules/react-hot-toast/dist/index.mjs
+@@ -175,5 +175,5 @@ to {
+   > * {
+     pointer-events: auto;
+   }
+-`,D=16,Fe=({reverseOrder:e,position:t="top-center",toastOptions:o,gutter:s,children:a,toasterId:i,containerStyle:r,containerClassName:l})=>{let{toasts:g,handlers:T}=w(o,i);return x.createElement("div",{"data-rht-toaster":i||"",style:{position:"fixed",zIndex:9999,top:D,left:D,right:D,bottom:D,pointerEvents:"none",...r},className:l,onMouseEnter:T.startPause,onMouseLeave:T.endPause},g.map(d=>{let c=d.position||t,m=T.calculateOffset(d,{reverseOrder:e,gutter:s,defaultPosition:t}),p=Me(c,m);return x.createElement(we,{id:d.id,key:d.id,onHeightUpdate:T.updateHeight,className:d.visible?Ce:"",style:p},d.type==="custom"?h(d.message,d):a?a(d):x.createElement(N,{toast:d,position:c}))}))};var zt=n;export{L as CheckmarkIcon,C as ErrorIcon,F as LoaderIcon,N as ToastBar,$ as ToastIcon,Fe as Toaster,zt as default,h as resolveValue,n as toast,w as useToaster,V as useToasterStore};
++`,D=16,Fe=({reverseOrder:e,position:t="top-center",toastOptions:o,gutter:s,children:a,toasterId:i,containerStyle:r,containerClassName:l})=>{let{toasts:g,handlers:T}=w(o,i);return x.createElement("div",{"data-rht-toaster":i||"",style:{position:"fixed",zIndex:9999,top:D,left:D,right:D,bottom:D,pointerEvents:"none",...r},className:l,onMouseEnter:void 0,onMouseLeave:void 0},g.map(d=>{let c=d.position||t,m=T.calculateOffset(d,{reverseOrder:e,gutter:s,defaultPosition:t}),p=Me(c,m);return x.createElement(we,{id:d.id,key:d.id,onHeightUpdate:T.updateHeight,className:d.visible?Ce:"",style:p},d.type==="custom"?h(d.message,d):a?a(d):x.createElement(N,{toast:d,position:c}))}))};var zt=n;export{L as CheckmarkIcon,C as ErrorIcon,F as LoaderIcon,N as ToastBar,$ as ToastIcon,Fe as Toaster,zt as default,h as resolveValue,n as toast,w as useToaster,V as useToasterStore};
+ //# sourceMappingURL=index.mjs.map
+\ No newline at end of file

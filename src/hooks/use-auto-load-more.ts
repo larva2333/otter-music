@@ -8,6 +8,12 @@ const DEFAULT_THROTTLE = 500;
 interface UseAutoLoadMoreOptions {
   /** 滚动容器 */
   containerRef: RefObject<HTMLElement | null>;
+  /**
+   * 容器是否已挂载到 DOM。骨架屏占位时 ref.current 为 null，effect 首帧读不到
+   * 容器；之后容器出现但依赖里没有任何变化，监听就永远绑不上。传一个随容器
+   * 挂载而翻转的值（如 tab 是否 visited），让 effect 在容器出现后重跑。
+   */
+  ready?: boolean;
   enabled?: boolean;
   hasMore?: boolean;
   loading?: boolean;
@@ -28,6 +34,7 @@ interface UseAutoLoadMoreOptions {
  */
 export function useAutoLoadMore({
   containerRef,
+  ready = true,
   enabled = true,
   hasMore,
   loading,
@@ -71,7 +78,7 @@ export function useAutoLoadMore({
 
     el.addEventListener("scroll", maybeLoad, { passive: true });
     return () => el.removeEventListener("scroll", maybeLoad);
-  }, [enabled, containerRef, prefetch, throttle]);
+  }, [enabled, ready, containerRef, prefetch, throttle]);
 
   useEffect(() => {
     if (!enabled || !hasMore || loading) return;
@@ -85,5 +92,5 @@ export function useAutoLoadMore({
       }
     });
     return () => cancelAnimationFrame(raf);
-  }, [enabled, hasMore, loading, contentKey, containerRef, prefetch]);
+  }, [enabled, ready, hasMore, loading, contentKey, containerRef, prefetch]);
 }

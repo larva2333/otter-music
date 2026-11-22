@@ -66,7 +66,7 @@ import { MusicTrackItem } from "./MusicTrackItem";
 import { AddToPlaylistDrawer } from "./AddToPlaylistDrawer";
 import { downloadMusicTrackBatch } from "@/lib/utils/download";
 import { useMusicStore } from "@/store/music-store";
-import { useAutoLoadMore } from "@/hooks/use-auto-load-more";
+import { useLoadMoreOnVisible } from "@/hooks/use-load-more-on-visible";
 import { useExitLayerStore } from "@/hooks/useExitLayer";
 import { setDragSelecting } from "@/hooks/gesture-axis";
 import { MusicTrack } from "@/types/music";
@@ -533,14 +533,18 @@ export function MusicTrackList({
   });
 
   /* ---------------- 上滑自动加载 ---------------- */
-  useAutoLoadMore({
-    containerRef: scrollContainerRef ?? internalRef,
-    enabled: autoLoadMore || hasMoreLocal,
-    hasMore: hasMoreLocal || hasMore,
-    loading,
-    onLoadMore: hasMoreLocal ? loadMoreLocal : onLoadMore,
-    contentKey: limitedTracks.length,
+  const loadMoreSentinelRef = useRef<HTMLDivElement>(null);
+  const scrollRootRef = scrollContainerRef ?? internalRef;
+  // 用 IntersectionObserver 代替 scroll 事件：嵌套滚动容器里 scroll 事件可能
+  // 监听不到，哨兵进入视口即加载，WebView 里更可靠
+  useLoadMoreOnVisible({
+    sentinelRef: loadMoreSentinelRef,
+    rootRef: scrollRootRef,
+    enabled:
+      (autoLoadMore || hasMoreLocal) && !loading && (hasMoreLocal || !!hasMore),
+    onLoadMore: hasMoreLocal ? loadMoreLocal : onLoadMore!,
   });
+  // 首屏不足一屏时哨兵本就可见，observer 会触发；这里不再需要 scroll/contentKey 补检测
 
   // 底部状态行：增量展示用内部 loadMoreLocal，服务端分页用外部 onLoadMore
   const footerLoadMore = hasMoreLocal ? loadMoreLocal : onLoadMore;
@@ -558,7 +562,14 @@ export function MusicTrackList({
 
   const renderHeader = () => (
     <div className="sticky top-0 z-20 border-b bg-background">
-      <div className="grid items-center gap-4 px-4 h-10 text-sm font-bold text-muted-foreground grid-cols-[1.75rem_1fr_auto]">
+      <div
+        className={cn(
+          "grid items-center px-4 h-10 text-sm font-bold text-muted-foreground",
+          showCover
+            ? "gap-3 grid-cols-[2.5rem_1fr_auto]"
+            : "gap-4 grid-cols-[1.75rem_1fr_auto]"
+        )}
+      >
         {!isSelectionMode ? (
           <>
             <div className="text-center">#</div>
@@ -792,14 +803,15 @@ export function MusicTrackList({
                 <div className="px-3 pb-20 pt-2 h-full">
                   {footerLoadMore ? (
                     footerAuto ? (
-                      <div className="flex h-8 items-center justify-center gap-2 text-xs text-muted-foreground">
-                        {loading ? (
+                      <div
+                        ref={loadMoreSentinelRef}
+                        className="flex h-8 items-center justify-center gap-2 text-xs text-muted-foreground"
+                      >
+                        {footerHasMore ? (
                           <>
                             <Loader2 className="animate-spin w-3.5 h-3.5" />
                             <span>加载中...</span>
                           </>
-                        ) : footerHasMore ? (
-                          <span className="tracking-wide">上滑加载更多</span>
                         ) : (
                           <span className="tracking-wide uppercase opacity-70">
                             没有更多了

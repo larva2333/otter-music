@@ -7,6 +7,7 @@ import { useOfflineStore } from "@/store/offline-store";
 import { useUrlCacheStore } from "@/store/url-cache-store";
 import { resolveTrackUrl } from "@/lib/audio-resolver";
 import { getProxyUrl } from "@/lib/api";
+import { resolveViaHigequFallback } from "@/lib/higequ/higequ-fallback";
 import toast from "react-hot-toast";
 import type { MusicTrack } from "@/types/music";
 
@@ -35,8 +36,16 @@ vi.mock("@/lib/audio-match", () => ({
   handleAutoMatch: vi.fn().mockResolvedValue(false),
 }));
 
+vi.mock("@/lib/higequ/higequ-fallback", () => ({
+  resolveViaHigequFallback: vi.fn().mockResolvedValue(null),
+}));
+
 vi.mock("react-hot-toast", () => ({
-  default: Object.assign(vi.fn(), { error: vi.fn(), dismiss: vi.fn() }),
+  default: Object.assign(vi.fn(), {
+    error: vi.fn(),
+    success: vi.fn(),
+    dismiss: vi.fn(),
+  }),
 }));
 
 const MOCK_URL = "https://cdn.example.com/audio-320.mp3";
@@ -110,6 +119,10 @@ describe("useAudioTrackLoader", () => {
       isLoading: false,
       currentAudioTime: 0,
       enableAutoMatch: false,
+      sourceConfigs: [
+        { source: "higequ", enabled: true, visible: true },
+        { source: "netease", enabled: true, visible: true },
+      ],
       enableProxyFallback: true,
       consecutiveFailures: 0,
       maxConsecutiveFailures: 1,
@@ -120,6 +133,8 @@ describe("useAudioTrackLoader", () => {
 
     vi.mocked(resolveTrackUrl).mockReset();
     vi.mocked(resolveTrackUrl).mockResolvedValue({ url: MOCK_URL });
+    vi.mocked(resolveViaHigequFallback).mockReset();
+    vi.mocked(resolveViaHigequFallback).mockResolvedValue(null);
   });
 
   afterEach(() => {
@@ -215,6 +230,45 @@ describe("useAudioTrackLoader", () => {
 
     expect(useUrlCacheStore.getState().urlMap[TRACK_KEY]).toBeUndefined();
     expect(useOfflineStore.getState().records["t1"]).toBeUndefined();
+    cleanup();
+  });
+
+  it("自动换源关闭时不走嗨歌曲兜底", async () => {
+    const { cleanup } = await setup((audio) => {
+      audio.play = vi.fn().mockRejectedValue(new Error("PLAY_FAIL"));
+    });
+    await flushAsync();
+
+    expect(resolveViaHigequFallback).not.toHaveBeenCalled();
+    cleanup();
+  });
+
+  it("自动换源开启且嗨歌曲启用时，播放失败走嗨歌曲兜底并接管", async () => {
+    useMusicStore.setState({
+      enableAutoMatch: true,
+      sourceConfigs: [
+        { source: "higequ", enabled: true, visible: true },
+        { source: "netease", enabled: true, visible: true },
+      ],
+    });
+    vi.mocked(resolveViaHigequFallback).mockResolvedValue({
+      url: "https://cdn.example.com/higequ.mp3",
+      trackId: "higequ_1",
+    });
+
+    const play = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("PLAY_FAIL"))
+      .mockResolvedValue(undefined);
+    const { audio, cleanup } = await setup((a) => {
+      a.play = play;
+    });
+    await flushAsync();
+
+    expect(resolveViaHigequFallback).toHaveBeenCalledWith(TRACK, 4000);
+    expect(play).toHaveBeenCalledTimes(2);
+    expect(audio.src).toContain("higequ.mp3");
+    expect(useMusicStore.getState().currentAudioOrigin?.via).toBe("higequ");
     cleanup();
   });
 

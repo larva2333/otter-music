@@ -92,12 +92,14 @@ export function SettingsPage({ onBack }: SettingsPageProps) {
   const [dataBackupOpen, setDataBackupOpen] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
 
-  // 设置是链尾：右滑回歌单最后一个 type，左滑无下一页
+  // 设置是链尾：右滑回歌单最后一个 type，左滑无下一页。
+  // 左滑方向不跟手——否则整页内容会被拖出去再弹回来。
   useSwipeCategories(scrollRef, {
     ids: ["settings"],
     activeId: "settings",
     onChange: () => {},
     onEdge: useRootTabSwipe("settings"),
+    canFollow: (dir) => dir === "prev",
   });
 
   // 再次点击底部「设置」tab：依次滚到下一个分组，最后一组之后再点回到顶部

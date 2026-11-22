@@ -33,8 +33,8 @@ const PROBE_KEYWORDS = ["周杰伦", "love"];
 /** 单次请求超时。嗨歌曲实测一次要 8~13 秒，给足 15 秒再判失败 */
 const DEFAULT_TIMEOUT = 15_000;
 
-/** 等脚本发出 inited 的时间；超时视为初始化失败（官方原生侧同样有超时） */
-const LX_INIT_WAIT = 5_000;
+/** 等脚本发出 inited 的时间。慢脚本要先异步取配置/签名，5 秒太紧容易误杀 */
+const LX_INIT_WAIT = 10_000;
 
 /** 洛雪平台代号 → 项目里能搜出该平台曲目的音源 */
 const LX_PROBE_SEARCH_SOURCE: Partial<Record<string, MusicSource>> = {
@@ -184,10 +184,14 @@ async function checkLxSource(
     if (reachable === "unknown") inconclusive = true;
   }
 
+  // 「换不到链接」不等于脚本坏了：探测曲目（晴天）在部分平台搜不到、
+  // 上游临时限流/风控、CDN 域名变动都会让这一轮换链落空。判成 fail
+  // 会被一键检测自动停用，几轮下来洛雪源只剩一两个还能用。这类不确定
+  // 结果统一判 unknown——只提示、不停用，把是否禁用交回给用户。
   return done({
     source: id,
-    status: inconclusive ? "unknown" : "fail",
-    reason: inconclusive ? "播放链接未响应" : "换不到可播放的链接",
+    status: "unknown",
+    reason: inconclusive ? "播放链接未响应" : "本轮未换到可播放的链接",
   });
 }
 

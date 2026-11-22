@@ -231,7 +231,8 @@ export function MusicTrackMobileMenu({
   const setSearchIntent = useMusicStore((s) => s.setSearchIntent);
   const setSearchSource = useMusicStore((s) => s.setSearchSource);
 
-  const provider = MusicProviderFactory.getProvider(track.source);
+  // 历史/歌单里可能留着已删除的导入音源记录，取不到时给 null，别让整页崩掉
+  const provider = MusicProviderFactory.tryGetProvider(track.source);
 
   // 音源切换可用性：仅本地/播客/Alist 这类无搜索能力的音源不可换源
   const canSwitchSource = useMemo(
@@ -247,6 +248,7 @@ export function MusicTrackMobileMenu({
   ) => {
     // 如果支持详情查询，但没有 ID，尝试获取详情
     if (
+      provider &&
       (provider.getArtistDetail || provider.getAlbumDetail) &&
       (!id || id === "0") &&
       provider.getSongDetail
@@ -293,6 +295,7 @@ export function MusicTrackMobileMenu({
     }
 
     if (
+      provider &&
       (provider.getArtistDetail || provider.getAlbumDetail) &&
       id &&
       id !== "0"
@@ -464,7 +467,7 @@ export function MusicTrackMobileMenu({
             )}
 
             {/* 如果支持评论，显示评论入口 */}
-            {provider.getComments && (
+            {provider?.getComments && (
               <ActionButton
                 icon={MessageSquareQuote}
                 onClick={() => {

@@ -36,21 +36,49 @@ describe("logger", () => {
     expect(logger.exportText()).toBe("");
   });
 
+  it("按级别筛选导出，fatal 立即落盘", () => {
+    logger.clear();
+    logger.info("test", "info msg");
+    logger.warn("test", "warn msg");
+    logger.error("test", "error msg");
+    logger.fatal("test", "fatal msg");
+
+    const all = logger.exportText({
+      levels: ["info", "warn", "error", "fatal"],
+    });
+    expect(all).toContain("INFO test: info msg");
+    expect(all).toContain("WARN test: warn msg");
+    expect(all).toContain("FATAL test: fatal msg");
+
+    const fatalOnly = logger.exportText({ levels: ["fatal"] });
+    expect(fatalOnly).toContain("FATAL test: fatal msg");
+    expect(fatalOnly).not.toContain("info msg");
+    expect(window.localStorage.getItem("otter-debug-logs")).toContain(
+      "fatal msg"
+    );
+  });
+
   it("captures window error and unhandled rejection", () => {
     const cleanup = captureWindowErrors();
 
-    window.dispatchEvent(new ErrorEvent("error", {
-      message: "runtime failed",
-      error: new Error("runtime failed"),
-      filename: "app.ts",
-      lineno: 12,
-      colno: 8,
-    }));
+    window.dispatchEvent(
+      new ErrorEvent("error", {
+        message: "runtime failed",
+        error: new Error("runtime failed"),
+        filename: "app.ts",
+        lineno: 12,
+        colno: 8,
+      })
+    );
 
-    window.dispatchEvent(new PromiseRejectionEvent("unhandledrejection", {
-      promise: Promise.reject(new Error("async failed")).catch(() => undefined),
-      reason: new Error("async failed"),
-    }));
+    window.dispatchEvent(
+      new PromiseRejectionEvent("unhandledrejection", {
+        promise: Promise.reject(new Error("async failed")).catch(
+          () => undefined
+        ),
+        reason: new Error("async failed"),
+      })
+    );
 
     cleanup();
 

@@ -1,3 +1,4 @@
+import { createElement, type KeyboardEvent } from "react";
 import { create } from "zustand";
 import { persist, createJSONStorage } from "zustand/middleware";
 import { storeKey } from "./store-keys";
@@ -11,12 +12,21 @@ import { toast } from "react-hot-toast";
 import { logger } from "@/lib/logger";
 import { IS_NATIVE, ApiError } from "@/lib/api/config";
 
+/** 新版本提醒 toast 的固定 id：多次检查只保留最新一条，不会叠加 */
+const UPDATE_TOAST_ID = "app-update-available";
+/** 新版本提醒的自动消失时长 */
+const UPDATE_TOAST_DURATION = 4000;
+/** 兜底关闭定时器（触摸设备上 Toaster 的 pause 状态可能卡住） */
+let updateToastTimer: ReturnType<typeof setTimeout> | null = null;
+
 interface AppState {
   currentVersion: string;
   lastCheckTime: number;
   latestVersionInfo: UpdateInfo | null;
   hasUpdate: boolean;
   isChecking: boolean;
+  /** toast 里点「发现新版本」后置位，设置页挂载时自动打开更新弹窗（不持久化） */
+  updateDialogRequested: boolean;
   /** 启动时是否自动检查更新并提醒 */
   enableUpdateNotify: boolean;
   /** 是否与其他应用同时播放(被其他应用抢占音频焦点时不暂停) */
@@ -24,7 +34,12 @@ interface AppState {
 }
 
 interface AppActions {
+  /** 对齐真实安装版本；升级后清掉上一版遗留的 hasUpdate */
+  syncInstalledVersion: () => Promise<void>;
   checkUpdate: (silent?: boolean) => Promise<void>;
+  consumeUpdateDialogRequest: () => void;
+  /** 进设置页时用：有新版本且这一版还没自动弹过，就把弹窗标记置位 */
+  autoOpenUpdateDialogOnce: () => void;
   resetCheckTime: () => void;
   setEnableUpdateNotify: (enableUpdateNotify: boolean) => void;
   setAllowSimultaneousPlayback: (allowSimultaneousPlayback: boolean) => void;
@@ -36,6 +51,7 @@ const initialState: AppState = {
   latestVersionInfo: null,
   hasUpdate: false,
   isChecking: false,
+  updateDialogRequested: false,
   enableUpdateNotify: true,
   allowSimultaneousPlayback: false,
 };
@@ -76,6 +92,21 @@ const compareVersions = (a: string, b: string): number => {
   return 0;
 };
 
+/** 关闭新版本 toast，同时清掉兜底定时器，避免重复触发时旧定时器提前关掉新 toast */
+function dismissUpdateToast() {
+  if (updateToastTimer) {
+    clearTimeout(updateToastTimer);
+    updateToastTimer = null;
+  }
+  toast.dismiss(UPDATE_TOAST_ID);
+}
+
+/** toast 点击：先置位再跳路由，设置页可能还没挂载，等它挂载后消费这个标记 */
+function openUpdateDialog(set: (partial: Partial<AppState>) => void) {
+  set({ updateDialogRequested: true });
+  void import("@/router").then(({ router }) => router.navigate("/settings"));
+}
+
 /* =========================
    Store
 ========================= */
@@ -85,17 +116,35 @@ export const useAppStore = create<AppState & AppActions>()(
     (set, get) => ({
       ...initialState,
 
+      syncInstalledVersion: async () => {
+        const currentVersion = await getCurrentVersion();
+        const state = get();
+        if (state.currentVersion === currentVersion) return;
+
+        // 刚装完更新：持久化的 currentVersion/hasUpdate 还是上一版算出来的，
+        // 而启动静默检查会被 24h 节流跳过，绿点就一直挂着。
+        // 先用缓存的最新版信息重算，并清掉检查时间让后续检查真正发出去。
+        const hasUpdate = state.latestVersionInfo
+          ? compareVersions(
+              currentVersion,
+              state.latestVersionInfo.latestVersion
+            ) < 0
+          : false;
+        logger.info("app-store", "Installed version changed", {
+          from: state.currentVersion,
+          to: currentVersion,
+          hasUpdate,
+        });
+        set({ currentVersion, hasUpdate, lastCheckTime: 0 });
+      },
+
       checkUpdate: async (silent = false) => {
         const now = Date.now();
         const state = get();
 
         if (state.isChecking) return;
-        if (
-          silent &&
-          state.lastCheckTime &&
-          now - state.lastCheckTime < 24 * 60 * 60 * 1000
-        )
-          return;
+        // 冷启动检查不做 24h 节流：开关开着就每次启动都真正查一次。
+        // 升级后残留的旧 hasUpdate 由 syncInstalledVersion() 负责清掉。
         set({ isChecking: true });
 
         try {
@@ -114,10 +163,40 @@ export const useAppStore = create<AppState & AppActions>()(
           });
 
           if (hasUpdate) {
-            toast(`发现新版本 ${info.latestVersion}`, {
-              icon: "✨",
-              duration: 3000,
-            });
+            // react-hot-toast 的普通 toast 没有 onClick，只有 custom 能放可点击元素。
+            // 固定 id：每次冷启动检查都会走这里，随机 id 会叠成一摞相同的 toast；
+            // 同一个 id 则会替换掉上一条，屏幕上永远只有一条。
+            dismissUpdateToast();
+            toast.custom(
+              () =>
+                createElement(
+                  "div",
+                  {
+                    role: "button",
+                    tabIndex: 0,
+                    className:
+                      "flex max-w-md cursor-pointer items-center gap-2 rounded-lg bg-foreground px-4 py-3 text-sm text-background shadow-lg",
+                    onClick: () => {
+                      dismissUpdateToast();
+                      openUpdateDialog(set);
+                    },
+                    onKeyDown: (event: KeyboardEvent) => {
+                      if (event.key !== "Enter" && event.key !== " ") return;
+                      dismissUpdateToast();
+                      openUpdateDialog(set);
+                    },
+                  },
+                  `✨ 发现新版本 ${info.latestVersion}，点击查看`
+                ),
+              { id: UPDATE_TOAST_ID, duration: UPDATE_TOAST_DURATION }
+            );
+            // Toaster 在触摸设备上 onMouseLeave 不触发时 pausedAt 会卡住，
+            // react-hot-toast 内部会跳过自动消失（源码中 if (pausedAt) return），
+            // 所以自己钉一个定时器兜底，保证 toast 一定会关掉。
+            updateToastTimer = setTimeout(
+              dismissUpdateToast,
+              UPDATE_TOAST_DURATION
+            );
           } else if (!silent) {
             toast.success(`当前已是最新版本 (${currentVersion})`);
           }
@@ -145,6 +224,24 @@ export const useAppStore = create<AppState & AppActions>()(
         } finally {
           set({ isChecking: false });
         }
+      },
+
+      consumeUpdateDialogRequest: () => set({ updateDialogRequested: false }),
+
+      autoOpenUpdateDialogOnce: () => {
+        const { hasUpdate, latestVersionInfo } = get();
+        const version = latestVersionInfo?.latestVersion;
+        if (!hasUpdate || !version) return;
+        // 同一个版本只自动弹一次；出了新版本会再弹
+        const key = `otter_update_auto_shown_${version}`;
+        try {
+          if (localStorage.getItem(key)) return;
+          localStorage.setItem(key, "1");
+        } catch {
+          // 存储不可用时不自动弹，用户仍可点版本更新行 / toast 打开
+          return;
+        }
+        set({ updateDialogRequested: true });
       },
 
       resetCheckTime: () => set({ lastCheckTime: 0 }),

@@ -190,3 +190,77 @@ describe("useAutoLoadMore 上滑自动加载", () => {
     expect(onLoadMore).toHaveBeenCalledTimes(1);
   });
 });
+
+describe("useAutoLoadMore 容器延迟挂载", () => {
+  let container: HTMLDivElement;
+  let root: Root;
+
+  /** 首帧渲染骨架屏（无滚动容器），ready 翻转后才挂真实容器 */
+  function DelayedHarness({
+    ready,
+    onLoadMore,
+  }: {
+    ready: boolean;
+    onLoadMore: () => void;
+  }) {
+    const ref = useRef<HTMLDivElement>(null);
+    useAutoLoadMore({
+      containerRef: ref,
+      ready,
+      hasMore: true,
+      loading: false,
+      contentKey: 10,
+      onLoadMore,
+    });
+    return ready ? <div ref={ref} data-testid="scroll" /> : <div>骨架屏</div>;
+  }
+
+  beforeEach(() => {
+    (
+      globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }
+    ).IS_REACT_ACT_ENVIRONMENT = true;
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+  });
+
+  afterEach(() => {
+    act(() => root.unmount());
+    container.remove();
+  });
+
+  it("容器从骨架屏挂载后，滚动监听重新绑定，上滑能触发加载", () => {
+    const onLoadMore = vi.fn();
+
+    // 首帧：容器不存在
+    act(() =>
+      root.render(<DelayedHarness ready={false} onLoadMore={onLoadMore} />)
+    );
+    expect(container.querySelector('[data-testid="scroll"]')).toBeNull();
+
+    // ready 翻转：真实容器挂载
+    act(() =>
+      root.render(<DelayedHarness ready={true} onLoadMore={onLoadMore} />)
+    );
+    const el = container.querySelector(
+      '[data-testid="scroll"]'
+    ) as HTMLDivElement;
+    expect(el).not.toBeNull();
+    Object.defineProperty(el, "scrollHeight", {
+      value: 1000,
+      configurable: true,
+    });
+    Object.defineProperty(el, "clientHeight", {
+      value: 600,
+      configurable: true,
+    });
+    Object.defineProperty(el, "scrollTop", {
+      get: () => 300,
+      configurable: true,
+    });
+
+    act(() => el.dispatchEvent(new Event("scroll")));
+
+    expect(onLoadMore).toHaveBeenCalled();
+  });
+});

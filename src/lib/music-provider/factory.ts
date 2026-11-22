@@ -21,6 +21,18 @@ import { createImportedProvider } from "@/lib/imported-sources/providers";
 export class MusicProviderFactory {
   private static instances = new Map<string, IMusicProvider>();
 
+  /** 取不到就返回 null，不抛异常。
+   *
+   *  播放历史/歌单里可能留着已删除的导入音源（imp_xxx）的旧记录，渲染时必须
+   *  容忍这种情况，否则一滑到那首歌整个页面就被错误边界接管。 */
+  static tryGetProvider(source: MusicSource): IMusicProvider | null {
+    try {
+      return this.getProvider(source);
+    } catch {
+      return null;
+    }
+  }
+
   static getProvider(source: MusicSource): IMusicProvider {
     if (this.instances.has(source)) {
       return this.instances.get(source)!;

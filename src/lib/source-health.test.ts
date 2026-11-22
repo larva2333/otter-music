@@ -233,7 +233,7 @@ describe("checkSourceHealth", () => {
     expect(resolveViaSpecificLxSource).toHaveBeenCalledTimes(2);
   });
 
-  it("脚本给了链接但链接已失效时判为不可用", async () => {
+  it("脚本给的链接已失效时判为未知，不自动停用", async () => {
     getImportedSource.mockReturnValue(LX_SOURCE);
     getLxRuntime.mockReturnValue(lxRuntime());
     search.mockResolvedValue(TRACK_RESULT);
@@ -244,7 +244,9 @@ describe("checkSourceHealth", () => {
 
     const result = await checkSourceHealth("imp_lx" as never);
 
-    expect(result.status).toBe("fail");
+    // 上游 CDN 域名下线是上游的问题，不是脚本失效；判 unknown 保留源，
+    // 换链阶段会按平台挑下一个脚本继续试
+    expect(result.status).toBe("unknown");
   });
 
   it("链接请求超时时判为未知，不武断停用", async () => {
@@ -259,7 +261,7 @@ describe("checkSourceHealth", () => {
     expect(result.status).toBe("unknown");
   });
 
-  it("洛雪源换不到链接时判为不可用", async () => {
+  it("洛雪源本轮换不到链接时判为未知，不自动停用", async () => {
     getImportedSource.mockReturnValue(LX_SOURCE);
     getLxRuntime.mockReturnValue(lxRuntime());
     search.mockResolvedValue(TRACK_RESULT);
@@ -267,7 +269,9 @@ describe("checkSourceHealth", () => {
 
     const result = await checkSourceHealth("imp_lx" as never);
 
-    expect(result.status).toBe("fail");
+    // 探测曲目搜不到 / 上游限流都会让这一轮换链落空，不等于脚本坏了。
+    // 判 unknown 才不会被一键检测停用，否则几轮后洛雪源只剩一两个
+    expect(result.status).toBe("unknown");
   });
 
   it("洛雪源没有可验证平台时判为未知，不武断停用", async () => {

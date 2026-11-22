@@ -6,7 +6,13 @@ const MAX_LOG_ENTRIES = 100;
 const APP_START_TIME = formatDate(new Date(), "yyyy-MM-dd HH:mm:ss");
 const IS_BROWSER = typeof window !== "undefined";
 
-export type LogLevel = "info" | "warn" | "error";
+export type LogLevel = "info" | "warn" | "error" | "fatal";
+
+/** 诊断日志面板的级别筛选按钮顺序 */
+export const LOG_LEVELS: LogLevel[] = ["info", "warn", "error", "fatal"];
+
+/** 默认导出级别：info 太吵，除非用户主动勾上 */
+const DEFAULT_EXPORT_LEVELS: LogLevel[] = ["warn", "error", "fatal"];
 
 export interface LogEntry {
   id: string;
@@ -64,17 +70,26 @@ if (IS_BROWSER) {
 
 // 2. 优化调用栈解析逻辑
 const getSource = () => {
-  try { throw new Error(); } catch (e: any) {
+  try {
+    throw new Error();
+  } catch (e: any) {
     const match = e.stack?.split("\n")[4]?.match(/\((.*):\d+:\d+\)/);
     return match?.[1]?.split("/").pop() || "unknown";
   }
 };
 
 const createAndSaveLog = (level: LogLevel, args: any[]): LogEntry => {
-  let source = "unknown", message = "", error: Error | undefined, context: any;
+  let source = "unknown",
+    message = "",
+    error: Error | undefined,
+    context: any;
 
   // 灵活的参数重载解析
-  if (args.length >= 2 && typeof args[0] === "string" && typeof args[1] === "string") {
+  if (
+    args.length >= 2 &&
+    typeof args[0] === "string" &&
+    typeof args[1] === "string"
+  ) {
     [source, message, error, context] = args;
   } else {
     source = getSource();
@@ -97,16 +112,21 @@ const createAndSaveLog = (level: LogLevel, args: any[]): LogEntry => {
   };
 
   // 维护内存队列并同步
-  // INFO: 仅 console（不持久化）
+  // INFO: 内存 + 延迟写盘
   // WARN: debounce 写入（2s 合并）
-  // ERROR: 立即写入
+  // ERROR / FATAL: 立即写入
   logsCache.push(entry);
   if (logsCache.length > MAX_LOG_ENTRIES) logsCache.shift();
-  if (level === "error") flushPersist();
+  if (level === "error" || level === "fatal") flushPersist();
   else if (level === "warn") schedulePersist();
 
   if (import.meta.env?.DEV) {
-    console[level](`[${source}] ${entry.message}`, context ?? entry.stack ?? "");
+    // console 没有 fatal 方法，按 error 输出
+    const method = level === "fatal" ? "error" : level;
+    console[method](
+      `[${source}] ${entry.message}`,
+      context ?? entry.stack ?? ""
+    );
   }
   return entry;
 };
@@ -115,28 +135,50 @@ export const logger = {
   info: (...args: any[]) => createAndSaveLog("info", args),
   warn: (...args: any[]) => createAndSaveLog("warn", args),
   error: (...args: any[]) => createAndSaveLog("error", args),
+  fatal: (...args: any[]) => createAndSaveLog("fatal", args),
   getLogs: () => [...logsCache],
-  getRecentLogs: () => logsCache.filter(e => e.time >= APP_START_TIME),
+  getRecentLogs: () => logsCache.filter((e) => e.time >= APP_START_TIME),
   getLastNLogs: (n: number) => logsCache.slice(-n),
-  clear: () => { logsCache = []; flushPersist(); },
-  exportText: (filter?: { recent?: boolean; lastN?: number }) => {
-    let res = logsCache.filter(e => e.level !== "info");
-    if (filter?.recent) res = res.filter(e => e.time >= APP_START_TIME);
+  clear: () => {
+    logsCache = [];
+    flushPersist();
+  },
+  exportText: (filter?: {
+    recent?: boolean;
+    lastN?: number;
+    levels?: LogLevel[];
+  }) => {
+    const levels = new Set(filter?.levels ?? DEFAULT_EXPORT_LEVELS);
+    let res = logsCache.filter((e) => levels.has(e.level));
+    if (filter?.recent) res = res.filter((e) => e.time >= APP_START_TIME);
     if (filter?.lastN) res = res.slice(-filter.lastN);
-    
-    return res.map(e => {
-      const ctx = e.context ? `\ncontext: ${JSON.stringify(e.context, null, 2)}` : "";
-      const stack = e.stack ? `\n${e.stack}` : "";
-      return `[${e.time}] ${e.level.toUpperCase()} ${e.source}: ${e.message}${stack}${ctx}`;
-    }).join("\n\n");
+
+    return res
+      .map((e) => {
+        const ctx = e.context
+          ? `\ncontext: ${JSON.stringify(e.context, null, 2)}`
+          : "";
+        const stack = e.stack ? `\n${e.stack}` : "";
+        return `[${e.time}] ${e.level.toUpperCase()} ${e.source}: ${e.message}${stack}${ctx}`;
+      })
+      .join("\n\n");
   },
 };
 
 export function captureWindowErrors() {
   if (!IS_BROWSER) return () => {};
 
-  const onError = (e: ErrorEvent) => logger.error("window.error", e.message || "Unhandled error", e.error, { file: e.filename, line: e.lineno });
-  const onReject = (e: PromiseRejectionEvent) => logger.error("window.unhandledrejection", e.reason instanceof Error ? e.reason.message : String(e.reason), e.reason);
+  const onError = (e: ErrorEvent) =>
+    logger.error("window.error", e.message || "Unhandled error", e.error, {
+      file: e.filename,
+      line: e.lineno,
+    });
+  const onReject = (e: PromiseRejectionEvent) =>
+    logger.error(
+      "window.unhandledrejection",
+      e.reason instanceof Error ? e.reason.message : String(e.reason),
+      e.reason
+    );
 
   window.addEventListener("error", onError);
   window.addEventListener("unhandledrejection", onReject);
@@ -155,7 +197,11 @@ function interceptNetworkRequests() {
     const start = Date.now();
     try {
       const res = await origFetch(...args);
-      if (!res.ok) logger.warn("Network", `Fetch failed: ${res.url}`, { status: res.status, duration: Date.now() - start });
+      if (!res.ok)
+        logger.warn("Network", `Fetch failed: ${res.url}`, {
+          status: res.status,
+          duration: Date.now() - start,
+        });
       return res;
     } catch (err) {
       logger.error("Network", "Fetch error", err);
@@ -165,13 +211,20 @@ function interceptNetworkRequests() {
 
   window.XMLHttpRequest = function () {
     const xhr = new OrigXHR();
-    let reqMethod = "", reqUrl = "";
+    let reqMethod = "",
+      reqUrl = "";
     const start = Date.now();
-    
+
     xhr.addEventListener("load", () => {
-      if (xhr.status >= 400) logger.warn("Network", `XHR failed: ${reqMethod} ${reqUrl}`, { status: xhr.status, duration: Date.now() - start });
+      if (xhr.status >= 400)
+        logger.warn("Network", `XHR failed: ${reqMethod} ${reqUrl}`, {
+          status: xhr.status,
+          duration: Date.now() - start,
+        });
     });
-    xhr.addEventListener("error", () => logger.error("Network", `XHR error: ${reqMethod} ${reqUrl}`));
+    xhr.addEventListener("error", () =>
+      logger.error("Network", `XHR error: ${reqMethod} ${reqUrl}`)
+    );
 
     const origOpen = xhr.open;
     xhr.open = function (method: string, url: string | URL, ...rest: any[]) {
@@ -191,7 +244,15 @@ function interceptNetworkRequests() {
 export function initializeLogger() {
   captureWindowErrors();
   interceptNetworkRequests();
-  const platform = IS_BROWSER ? (Capacitor?.isNativePlatform?.() ? "native" : "web") : "server";
+  const platform = IS_BROWSER
+    ? Capacitor?.isNativePlatform?.()
+      ? "native"
+      : "web"
+    : "server";
   const env = import.meta.env?.DEV ? "development" : "production";
-  logger.info("system", `App started at ${APP_START_TIME}`, { version: __APP_VERSION__, platform, env });
+  logger.info("system", `App started at ${APP_START_TIME}`, {
+    version: __APP_VERSION__,
+    platform,
+    env,
+  });
 }

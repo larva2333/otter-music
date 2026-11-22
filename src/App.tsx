@@ -29,8 +29,20 @@ export default function App() {
     // Android 14 及以下没有原生注入的安全区，这里按系统栏占用补一个顶部兜底值
     applyTopSafeAreaFallback();
 
-    // 启动时静默检查更新（用户关闭更新提醒后跳过，延迟 2s 避免阻塞首屏）
-    const timer = setTimeout(() => {
+    // 每次冷启动静默检查更新（用户关闭更新提醒后跳过，延迟 2s 避免阻塞首屏）
+    const timer = setTimeout(async () => {
+      // IndexedDB 恢复是异步的：先等它完成，否则对齐版本的结果会被稍后的
+      // rehydrate 覆盖回升级前的旧状态，绿点又回来了
+      if (!useAppStore.persist.hasHydrated()) {
+        await new Promise<void>((resolve) => {
+          const unsub = useAppStore.persist.onFinishHydration(() => {
+            unsub();
+            resolve();
+          });
+        });
+      }
+      // 装完更新后 store 里还是旧版本的 hasUpdate，先按真实安装版本校正
+      await useAppStore.getState().syncInstalledVersion();
       if (useAppStore.getState().enableUpdateNotify) {
         useAppStore.getState().checkUpdate(true);
       }

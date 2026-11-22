@@ -59,6 +59,7 @@ function insertNext(
 export type AudioOriginVia =
   | "official"
   | "lx"
+  | "higequ"
   | "download"
   | "offline"
   | "local";

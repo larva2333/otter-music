@@ -12,6 +12,7 @@ import { handleAutoMatch } from "@/lib/audio-match";
 import { logger } from "@/lib/logger";
 import { resolveTrackUrl } from "@/lib/audio-resolver";
 import { resolveViaLxPlayback } from "@/lib/imported-sources/lx-playback";
+import { resolveViaHigequFallback } from "@/lib/higequ/higequ-fallback";
 import { isVipOnlyTrack } from "@/lib/playback-access";
 import { muteAndPause, restoreVolume } from "@/lib/audio-fade";
 import { IS_NATIVE } from "@/lib/api/config";
@@ -19,6 +20,8 @@ import { IS_NATIVE } from "@/lib/api/config";
 const AUDIO_READY_TIMEOUT = 8000;
 /** 播放失败后给洛雪源重新取链的时限 */
 const LX_FALLBACK_TIMEOUT = 7000;
+/** 播放失败后给嗨歌曲搜索+取链的时限（站点较慢，给足时间） */
+const HIGEQU_FALLBACK_TIMEOUT = 15000;
 type FallbackStage = "none" | "proxy" | "final";
 
 /** 带超时的 Promise：超时返回 null，不抛错 */
@@ -134,6 +137,8 @@ export function useAudioTrackLoader(
   }>({});
   /** 本曲已经用洛雪源试过兜底，避免失败后无限重试 */
   const lxFallbackTrackRef = useRef<string | null>(null);
+  /** 本曲已经用嗨歌曲试过兜底，避免失败后无限重试 */
+  const higequFallbackTrackRef = useRef<string | null>(null);
   /** 当前这次播放的直链是不是洛雪给的（是则不再重复走洛雪兜底） */
   const fromLxRef = useRef(false);
 
@@ -388,10 +393,62 @@ export function useAudioTrackLoader(
                 source,
                 lxError,
               });
+              // 取到了链但播放仍失败：这条 if 不会走下面的 else，
+              // 不在这里 dismiss，「正在取链」的 toast 就会残留
+              toast.dismiss("lx-fallback");
             }
           } else {
             toast.dismiss("lx-fallback");
           }
+        }
+
+        // 洛雪也没接住：用嗨歌曲搜同名曲换一条直链。它相对其他源稳定，
+        // 只换播放地址、不动队列曲目（和洛雪接管一致）。搜索+取链较慢，
+        // 放在洛雪之后、会员曲跨平台自动匹配之前。
+        // 尊重「自动换源」总开关和设置里嗨歌曲的启用状态：关掉其中之一
+        // 就说明用户不想要自动替换，不该在播放失败时偷偷再发搜索请求。
+        const higequEnabled = getState().sourceConfigs.some(
+          (c) => c.source === "higequ" && c.enabled && c.visible
+        );
+        if (
+          getState().enableAutoMatch &&
+          higequEnabled &&
+          source !== "local" &&
+          source !== "podcast" &&
+          source !== "higequ" &&
+          higequFallbackTrackRef.current !== trackKey
+        ) {
+          higequFallbackTrackRef.current = trackKey;
+          toast("官方链接不可播，正在用嗨歌曲找同名歌曲…", {
+            id: "higequ-fallback",
+            icon: "🎵",
+          });
+          const higequResult = await withTimeout(
+            resolveViaHigequFallback(currentTrack, 4000),
+            HIGEQU_FALLBACK_TIMEOUT
+          );
+          if (
+            higequResult &&
+            !isStale() &&
+            higequResult.url !== remoteUrlRef.current
+          ) {
+            remoteUrlRef.current = higequResult.url;
+            const origin = { via: "higequ" as const, source };
+            getState().setCurrentAudioOrigin(origin);
+            getState().recordTrackOrigin(currentTrack, origin);
+            try {
+              await play(higequResult.url);
+              toast.success("嗨歌曲已接管播放", { id: "higequ-fallback" });
+              return;
+            } catch (higequError) {
+              logger.warn("useAudioTrackLoader", "嗨歌曲兜底播放仍失败", {
+                trackId,
+                source,
+                higequError,
+              });
+            }
+          }
+          toast.dismiss("higequ-fallback");
         }
 
         // 自动匹配容灾：只给会员曲跨平台换源。

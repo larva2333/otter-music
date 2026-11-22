@@ -14,23 +14,30 @@ import {
 import { Textarea } from "@/components/ui/textarea";
 import { SettingItem } from "./SettingItem";
 import { writeClipboardText } from "@/lib/clipboard";
-import { logger } from "@/lib/logger";
+import { LOG_LEVELS, logger, type LogLevel } from "@/lib/logger";
+import { cn } from "@/lib/utils";
 import { toastUtils } from "@/lib/utils/toast";
 import { GithubUrl } from "@/types";
 
 export function IssueLogs() {
   const [isOpen, setIsOpen] = useState(false);
+  // 默认全选：想看什么级别就取消其他级别，不用先想起来去开 info
+  const [selectedLevels, setSelectedLevels] = useState<LogLevel[]>([
+    ...LOG_LEVELS,
+  ]);
   const [logs, setLogs] = useState({ count: 0, all: "", recent: "" });
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  const buildTexts = (levels: LogLevel[]) => ({
+    count: logger.getLogs().length,
+    all: logger.exportText({ levels }),
+    recent: logger.exportText({ recent: true, levels }),
+  });
 
   const handleOpen = (open: boolean) => {
     setIsOpen(open);
     if (open) {
-      setLogs({
-        count: logger.getLogs().length,
-        all: logger.exportText(),
-        recent: logger.exportText({ recent: true }),
-      });
+      setLogs(buildTexts(selectedLevels));
       // 打开后滚动到底部
       setTimeout(() => {
         if (textareaRef.current) {
@@ -38,6 +45,16 @@ export function IssueLogs() {
         }
       }, 0);
     }
+  };
+
+  const toggleLevel = (level: LogLevel) => {
+    const next = selectedLevels.includes(level)
+      ? selectedLevels.filter((item) => item !== level)
+      : LOG_LEVELS.filter(
+          (item) => selectedLevels.includes(item) || item === level
+        );
+    setSelectedLevels(next);
+    setLogs(buildTexts(next));
   };
 
   const handleAction = async (action: "copy-recent" | "copy-all" | "clear") => {
@@ -80,6 +97,29 @@ export function IssueLogs() {
               复制后粘贴到 GitHub issue，仅保留最近 100 条
             </DrawerDescription>
           </DrawerHeader>
+
+          {/* 级别筛选：多选，点一下切换该级别；复制按钮复制的是筛选后的文本 */}
+          <div className="flex flex-wrap gap-2 px-4 pb-3">
+            {LOG_LEVELS.map((level) => {
+              const active = selectedLevels.includes(level);
+              return (
+                <button
+                  key={level}
+                  type="button"
+                  aria-pressed={active}
+                  onClick={() => toggleLevel(level)}
+                  className={cn(
+                    "rounded-full border px-3 py-1 text-xs transition-colors",
+                    active
+                      ? "border-primary bg-primary/10 text-primary"
+                      : "border-border text-muted-foreground"
+                  )}
+                >
+                  {level}
+                </button>
+              );
+            })}
+          </div>
 
           <div className="px-4 pb-4 overflow-hidden">
             <Textarea

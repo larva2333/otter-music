@@ -42,6 +42,12 @@ interface UseSwipeCategoriesOptions {
    * 发现页传内容 wrapper（而不是滚动容器），避免跟手位移带动下拉刷新指示器。
    */
   followRef?: { current: HTMLElement | null };
+  /**
+   * 该方向是否允许跟手位移。用于链头/链尾这种「滑出去也没有下一页」的边界：
+   * 返回 false 时该方向页面不跟手（松手判定与 onEdge 照旧），
+   * 避免整页拖出去再弹回来。
+   */
+  canFollow?: (dir: "next" | "prev") => boolean;
   /** 关闭跟手位移（只保留松手切换判定），默认开启 */
   disableFollow?: boolean;
 }
@@ -175,10 +181,19 @@ export function useSwipeCategories(
         if (!latest.current.disableFollow) {
           const node = followEl();
           if (node) {
-            const max = window.innerWidth * FOLLOW_MAX_VIEWPORT;
-            const offset = Math.max(-max, Math.min(max, dx * FOLLOW_RATIO));
+            // 该方向没有下一页（链头/链尾）时保持不动：
+            // 否则整页会被拖出去再弹回来，看着像页面自己抖了一下
+            const dir: "next" | "prev" = dx < 0 ? "next" : "prev";
+            const allowed = latest.current.canFollow?.(dir) ?? true;
             node.style.transition = "none";
-            node.style.transform = `translateX(${offset}px)`;
+            if (allowed) {
+              const max = window.innerWidth * FOLLOW_MAX_VIEWPORT;
+              const offset = Math.max(-max, Math.min(max, dx * FOLLOW_RATIO));
+              node.style.transform = `translateX(${offset}px)`;
+            } else {
+              // 手势中途反向（先右后左）时把之前的位移一并撤回
+              node.style.transform = "";
+            }
           }
         }
       }

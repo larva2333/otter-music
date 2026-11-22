@@ -12,10 +12,19 @@ export const formatMediaTime = (time: number) => {
 };
 
 /**
- * 清理 MusicTrack，移除运行时专属字段（variants、privilege），仅保留需持久化的核心数据
+ * 清理 MusicTrack，移除运行时专属字段（variants），仅保留需持久化的核心数据。
+ *
+ * privilege **不能删**：会员曲判断（isVipOnlyTrack / shouldSkipOfficialResolve）
+ * 靠它识别 VIP。删掉后从队列/歌单重新播放这类曲目时，会被当成免费歌去请求
+ * 官方直链，拿到的是 30 秒试听片段，而且永远不会触发跨平台换源。
+ * 只保留判定要用的三个字段，避免把整个对象写进 IndexedDB。
  */
 export function cleanTrack(track: MusicTrack | MergedMusicTrack): MusicTrack {
-  const { variants: _, privilege: __, ...rest } = track as MergedMusicTrack;
+  const { variants: _, ...rest } = track as MergedMusicTrack;
+  if (rest.privilege) {
+    const { fee, st, pl } = rest.privilege;
+    rest.privilege = { fee, st, pl } as MusicTrack["privilege"];
+  }
   return rest;
 }
 

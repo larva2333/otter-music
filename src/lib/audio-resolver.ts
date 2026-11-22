@@ -16,6 +16,11 @@ import {
 } from "@/lib/imported-sources/lx-playback";
 import { getSourceLabel } from "@/lib/imported-sources/labels";
 import { shouldSkipOfficialResolve } from "@/lib/playback-access";
+import {
+  getSongDetail as getNeteaseSongDetail,
+  convertSongToMusicTrack,
+} from "@/lib/netease/netease-api";
+import { useMusicStore } from "@/store/music-store";
 import type { AudioOrigin } from "@/store/music-store/playback-slice";
 import type { MusicSource, MusicTrack } from "@/types/music";
 import { IS_NATIVE } from "@/lib/api/config";
@@ -66,6 +71,32 @@ async function resolveRemoteAudioUrl(
     maxRetries,
     800
   );
+}
+
+/**
+ * 补齐老数据缺失的网易 VIP 标记。
+ *
+ * v96 之前 `cleanTrack` 会把 `privilege` 一起持久化时删掉，于是队列/歌单里
+ * 存下来的网易曲目全都「没有 VIP 标记」：从播放列表点播时被判成免费歌，
+ * 官方接口返回 30 秒试听片段却照播不误，也就永远走不到换源逻辑。
+ * 这里在播放前补一次详情（getSongDetail 自带长缓存），并把结果写回队列，
+ * 之后的播放就不用再补。
+ */
+async function fillMissingNeteasePrivilege(
+  track: MusicTrack
+): Promise<MusicTrack> {
+  if (track.source !== "_netease" || track.privilege) return track;
+  try {
+    const song = await getNeteaseSongDetail(track.id);
+    if (!song) return track;
+    const enriched = convertSongToMusicTrack(song);
+    if (!enriched.privilege) return track;
+    const merged: MusicTrack = { ...track, privilege: enriched.privilege };
+    useMusicStore.getState().updateTrackInQueue(track.id, merged);
+    return merged;
+  } catch {
+    return track;
+  }
 }
 
 /**
@@ -121,9 +152,18 @@ export async function resolveTrackUrl(
     };
   }
 
+  // 老数据补齐 VIP 标记：补齐后之前缓存的「官方 30 秒试听直链」必须作废，
+  // 否则下面虽然判定为会员曲，却还是会把试听片段当成正式直链播出去
+  let workingTrack = track;
+  const filledTrack = await fillMissingNeteasePrivilege(track);
+  if (filledTrack !== track) {
+    workingTrack = filledTrack;
+    cacheStore.delete(trackKey);
+  }
+
   // 会员曲 + 当前账号没会员：官方接口只会给 30/45 秒试听片段，
   // 播下去必然是「听半分钟就断」。直接从洛雪开始，取不到就交给上层换源。
-  if (shouldSkipOfficialResolve(track)) {
+  if (shouldSkipOfficialResolve(workingTrack)) {
     // 但先看缓存：洛雪取到的链接两小时内可以直接复用，
     // 不然每次切回这首都要重新跑一遍脚本（还是十几秒）。
     if (!forceRefresh) {
@@ -139,7 +179,7 @@ export async function resolveTrackUrl(
     }
     cacheStore.delete(trackKey);
     const lxResult = await withTimeout(
-      resolveViaLxPlayback(track, quality).catch(() => null),
+      resolveViaLxPlayback(workingTrack, quality).catch(() => null),
       LX_RESOLVE_TIMEOUT
     );
     if (!lxResult) throw new Error("VIP_NO_ACCESS");
@@ -200,7 +240,7 @@ export async function resolveTrackUrl(
 
   if (!remoteUrl) {
     const lxResult = await withTimeout(
-      resolveViaLxPlayback(track, quality).catch(() => null),
+      resolveViaLxPlayback(workingTrack, quality).catch(() => null),
       LX_RESOLVE_TIMEOUT
     );
     if (!lxResult) throw new Error("EMPTY_URL");

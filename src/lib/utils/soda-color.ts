@@ -61,6 +61,24 @@ export const LIGHT_PARAMS = {
   gradientDL: -6,
 } as const;
 
+/**
+ * 浅色背景的色度下限。
+ *
+ * 黑/白/灰封面的主色几乎没有色度，若直接按 `chroma × cGain` 映射，浅底会变成
+ * L 82–92 的纯灰白，看起来就是一块「黑灰色」的脏底。给一个很小的下限，让浅底
+ * 始终带一点淡彩，播放条才能从浅色页面里分辨出来。这个下限只在浅色模式生效。
+ */
+const LIGHT_MIN_CHROMA = 10;
+
+/** 判定封面主色「接近无彩色」的 Lab 色度阈值（低于它视为黑/白/灰）。 */
+const NEUTRAL_CHROMA = 8;
+
+/**
+ * 整张封面都无彩色（纯黑白封套）时的兜底色相（Lab a/b）。
+ * 选一个偏暖的淡雅粉杏色，浅底上不刺眼，也不会像荧光块。
+ */
+const LIGHT_NEUTRAL_FALLBACK: readonly [number, number] = [4, 8];
+
 /** 取色目标：深色主题压暗背景，浅色主题提亮背景 */
 export type ColorMode = "dark" | "light";
 
@@ -253,6 +271,39 @@ export function dominantColor(pixels: RGB[]): RGB {
   return dominantColorFromClusters(kmeans(pixels));
 }
 
+/**
+ * 浅色模式专用：挑一个「有颜色、亮度适中」的色相来替代无彩色的主色。
+ *
+ * 返回 Lab 的 [a, b]。优先级：
+ * 1. 主色本身有色度 → 直接用它（彩色封面走这里，行为与之前完全一致）；
+ * 2. 主色接近黑/灰/白 → 从聚类里挑色度最高的那个簇的色相，仍是「封面自己的颜色」；
+ * 3. 整张封面都是黑/白/灰（无任何有色簇）→ 用固定的淡雅兜底色。
+ *
+ * 判定「有色」要求色度 ≥ NEUTRAL_CHROMA，避免从一堆深灰里挑出一个稍微偏色的
+ * 脏色相当色相。
+ */
+function lightChromaFromClusters(
+  km: KMeansResult,
+  mainLab: Lab
+): [number, number] {
+  const mainChroma = Math.hypot(mainLab[1], mainLab[2]);
+  if (mainChroma >= NEUTRAL_CHROMA) return [mainLab[1], mainLab[2]];
+
+  let best: [number, number] | null = null;
+  let bestChroma = NEUTRAL_CHROMA;
+  for (const center of km.centers) {
+    const lab = srgbToLab(center);
+    const chroma = Math.hypot(lab[1], lab[2]);
+    // 亮度太低的簇（近黑）即便带点色也不适合做浅底来源，跳过
+    if (lab[0] < 25) continue;
+    if (chroma > bestChroma) {
+      bestChroma = chroma;
+      best = [lab[1], lab[2]];
+    }
+  }
+  return best ?? [...LIGHT_NEUTRAL_FALLBACK];
+}
+
 /** 由主色计算背景基色：Lab 下压缩并钳制亮度、增益色度、保持色相。 */
 export function backgroundColorFromClusters(
   km: KMeansResult,
@@ -261,8 +312,16 @@ export function backgroundColorFromClusters(
   const p = mode === "light" ? LIGHT_PARAMS : PARAMS;
   const lab = srgbToLab(dominantColorFromClusters(km));
   const l = Math.min(p.lMax, Math.max(p.lMin, p.lScale * lab[0] + p.lBias));
-  const c = Math.min(p.cMax, Math.hypot(lab[1], lab[2]) * p.cGain);
-  const h = Math.atan2(lab[2], lab[1]);
+
+  const [a, b] =
+    mode === "light" ? lightChromaFromClusters(km, lab) : [lab[1], lab[2]];
+  const rawChroma = Math.hypot(a, b) * p.cGain;
+  // 浅色底加最小色度，保证黑/灰封面也不会退化成灰白色；深色底维持原样。
+  const c = Math.min(
+    p.cMax,
+    mode === "light" ? Math.max(LIGHT_MIN_CHROMA, rawChroma) : rawChroma
+  );
+  const h = Math.atan2(b, a);
   return labToSrgb([l, c * Math.cos(h), c * Math.sin(h)]);
 }
 

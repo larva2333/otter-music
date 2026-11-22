@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { SettingItem } from "./SettingItem";
 import {
   Download,
@@ -286,15 +286,45 @@ export function UpdateDialog({ open, onOpenChange }: UpdateDialogProps) {
 }
 
 export function UpdateCheck() {
-  const [showDialog, setShowDialog] = useState(false);
-  const { currentVersion, hasUpdate } = useAppStore();
+  const [localOpen, setLocalOpen] = useState(false);
+  const updateDialogRequested = useAppStore((s) => s.updateDialogRequested);
+  const consumeUpdateDialogRequest = useAppStore(
+    (s) => s.consumeUpdateDialogRequest
+  );
+  const { currentVersion, hasUpdate, latestVersionInfo } = useAppStore();
+  const autoOpenUpdateDialogOnce = useAppStore(
+    (s) => s.autoOpenUpdateDialogOnce
+  );
+
+  // 有新版本时进入设置页自动弹一次更新弹窗（和点 toast 是同一个弹窗）。
+  // 去重与置位都在 store 里做：本地 state 不在 effect 里同步改，
+  // 避免多一次级联渲染；弹窗开关统一读 updateDialogRequested。
+  useEffect(() => {
+    autoOpenUpdateDialogOnce();
+    // 离开设置页时把标记收掉：下次进来不该再因为挂载前的旧标记弹一次
+    return consumeUpdateDialogRequest;
+  }, [
+    hasUpdate,
+    latestVersionInfo?.latestVersion,
+    autoOpenUpdateDialogOnce,
+    consumeUpdateDialogRequest,
+  ]);
+
+  // 从「发现新版本」toast 点进来时直接展开：标记在 store 里，
+  // 组件挂载前就已经置位，渲染期就能拿到，不需要 effect 再 setState
+  const showDialog = localOpen || updateDialogRequested;
+  const handleOpenChange = (open: boolean) => {
+    setLocalOpen(open);
+    if (!open) consumeUpdateDialogRequest();
+  };
 
   return (
     <>
+      {/* 版本号和绿点只是展示，点它们也应该打开更新弹窗 */}
       <SettingItem
         icon={Milestone}
         title="版本更新"
-        onClick={() => setShowDialog(true)}
+        onClick={() => handleOpenChange(true)}
         // 有新版本时在版本号右上角点一个绿点，不再用占地方的「新版本」红标签
         action={
           <span className="relative inline-flex text-sm text-muted-foreground">
@@ -307,10 +337,11 @@ export function UpdateCheck() {
             )}
           </span>
         }
+        actionPassThrough
         showChevron
       />
 
-      <UpdateDialog open={showDialog} onOpenChange={setShowDialog} />
+      <UpdateDialog open={showDialog} onOpenChange={handleOpenChange} />
     </>
   );
 }

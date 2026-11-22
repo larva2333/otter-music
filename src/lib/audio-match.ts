@@ -129,6 +129,8 @@ export async function handleAutoMatch(
         );
 
     if (aggregatedSources.length === 0) {
+      // 上面已经起了 loading toast，这里直接 return 会把它留下
+      toast.dismiss(toastId);
       return false;
     }
 

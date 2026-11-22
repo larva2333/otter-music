@@ -45,11 +45,12 @@ describe("useSwipeCategories 首页分类左右滑动", () => {
     ids: string[],
     activeId: string,
     onChange: (id: string) => void,
-    onEdge?: (dir: "next" | "prev") => void
+    onEdge?: (dir: "next" | "prev") => void,
+    extra?: { canFollow?: (dir: "next" | "prev") => boolean }
   ) => {
     function Harness() {
       const ref = useRef<HTMLDivElement>(null);
-      useSwipeCategories(ref, { ids, activeId, onChange, onEdge });
+      useSwipeCategories(ref, { ids, activeId, onChange, onEdge, ...extra });
       return <div ref={ref} data-testid="surface" />;
     }
 
@@ -204,6 +205,43 @@ describe("useSwipeCategories 首页分类左右滑动", () => {
     swipe(surface, [300, 200], [160, 205]);
 
     expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it("canFollow 为 false 的方向不跟手（链尾左滑不拖动整页）", () => {
+    const onChange = vi.fn();
+    const onEdge = vi.fn();
+    const surface = mountSurface(["设置"], "设置", onChange, onEdge, {
+      canFollow: (dir) => dir === "prev",
+    });
+
+    act(() => {
+      surface.dispatchEvent(
+        makeTouchEvent("touchstart", [
+          { clientX: 300, clientY: 200, target: surface },
+        ])
+      );
+      // 左滑：链尾没有下一页 → 不产生位移
+      surface.dispatchEvent(
+        makeTouchEvent("touchmove", [{ clientX: 160, clientY: 200 }])
+      );
+    });
+    expect(surface.style.transform).toBe("");
+
+    act(() => {
+      // 同一手势中途反向右滑 → 恢复跟手（dx = +120 → 120 * 0.55 = 66px）
+      surface.dispatchEvent(
+        makeTouchEvent("touchmove", [{ clientX: 420, clientY: 200 }])
+      );
+    });
+    expect(surface.style.transform).toBe("translateX(66px)");
+
+    act(() => {
+      surface.dispatchEvent(
+        makeTouchEvent("touchend", [], [{ clientX: 420, clientY: 200 }])
+      );
+    });
+    expect(onChange).not.toHaveBeenCalled();
+    expect(onEdge).toHaveBeenCalledWith("prev");
   });
 
   it("内部横向滚动区域上的横滑交给该元素处理", () => {

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { MusicProviderFactory } from "./factory";
-import { MusicTrack } from "@/types/music";
+import { MusicTrack, MusicSource } from "@/types/music";
 
 const qqTrack: MusicTrack = {
   id: "qq_000abc",
@@ -178,5 +178,17 @@ describe("MusicProviderFactory", () => {
     await expect(provider.getUrl(alistTrack)).resolves.toBeNull();
     await expect(provider.getPic(alistTrack)).resolves.toBeNull();
     await expect(provider.getLyric(alistTrack)).resolves.toBeNull();
+  });
+
+  it("已删除的导入音源：getProvider 抛错，tryGetProvider 返回 null", () => {
+    // 历史里残留的旧记录（音源已被删），不能把整页渲染带崩
+    const deadSource = "imp_mwq45s183eib" as unknown as MusicSource;
+
+    expect(() => MusicProviderFactory.getProvider(deadSource)).toThrow(
+      "不支持的音乐源"
+    );
+    expect(MusicProviderFactory.tryGetProvider(deadSource)).toBeNull();
+    // 正常音源照旧
+    expect(MusicProviderFactory.tryGetProvider("qq")?.source).toBe("qq");
   });
 });

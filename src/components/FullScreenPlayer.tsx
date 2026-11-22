@@ -46,7 +46,7 @@ import toast from "react-hot-toast";
 import { useCoverColors } from "@/hooks/useCoverColors";
 import { useCoverWhiteBands } from "@/hooks/useCoverWhiteBands";
 import { useLandscapeMode } from "@/hooks/useLandscapeMode";
-import { handleLyricsBlankTap } from "@/lib/lyrics-tap";
+import { scrollPageToTop } from "@/lib/scroll-to-top";
 import {
   consumeSwipeArmCut,
   usePlayerSwipeGestures,
@@ -654,8 +654,12 @@ export function FullScreenPlayer({
       // 刚关掉风格菜单的那次 tap 只用于关菜单，不要切页
       if (consumeMenuCloseClick()) return;
       if (isCoverPreviewOpen || isStyleMenuOpen) return;
-      // 歌词页的空白：点一下回顶，别当成「切回封面」
-      if (showLyrics && handleLyricsBlankTap(target)) return;
+      // 标题栏的「回顶」热区：交给它自己的 onClick，别当成切页
+      if (
+        target instanceof Element &&
+        target.closest("[data-lyrics-scrolltop]")
+      )
+        return;
       // 只有唱臂骨架（基座/臂管/唱头）= 播放/暂停；点盘面与周围空白都是切歌词
       if (target instanceof Element && target.closest("[data-vinyl-control]")) {
         vinylTapAtRef.current = Date.now();
@@ -763,12 +767,31 @@ export function FullScreenPlayer({
         />
       )}
 
-      <header className="shrink-0 grid grid-cols-3 items-center px-6 pt-[calc(1rem+var(--safe-area-top))] relative z-10">
+      <header
+        data-lyrics-header=""
+        className="shrink-0 grid grid-cols-3 items-center px-6 pt-[calc(1rem+var(--safe-area-top))] relative z-10"
+      >
+        {/* 歌词回顶热区：整条标题栏都能点，往下还多探出 12dp。
+            注意：三格容器不能再加 z-index（之前给它们加 relative z-10，
+            三格把整条盖住，热区反而一次都收不到点击）。只给左右两个角按钮
+            自己加 relative z-10，让它们浮在热区之上。 */}
+        {showLyrics && (
+          <button
+            type="button"
+            data-lyrics-scrolltop=""
+            aria-label="歌词回到顶部"
+            className="absolute inset-x-0 top-[calc(1rem+var(--safe-area-top))] bottom-[-0.75rem]"
+            onClick={(e) => {
+              e.stopPropagation();
+              scrollPageToTop();
+            }}
+          />
+        )}
         <div className="flex justify-start">
           <Button
             variant="ghost"
             size="icon"
-            className="h-12 w-12 text-white/60 hover:bg-white/10 hover:text-white"
+            className="relative z-10 h-12 w-12 text-white/60 hover:bg-white/10 hover:text-white"
             onClick={() => {
               onClose();
             }}
@@ -776,12 +799,14 @@ export function FullScreenPlayer({
             <ChevronDown className="size-7" strokeWidth={1.5} />
           </Button>
         </div>
-        <div className="flex justify-center">
-          {!showLyrics && (
+        {/* h-12 必须写死：header 是 items-center，本格内没有流内元素，
+            高度会塌成 0 */}
+        <div className="flex justify-center h-12">
+          {showLyrics ? null : (
             <Button
               variant="ghost"
               size="sm"
-              className="text-xs tracking-widest text-white/50 hover:text-white hover:bg-white/10 h-8 px-3"
+              className="relative z-10 text-xs tracking-widest text-white/50 hover:text-white hover:bg-white/10 h-8 px-3"
               onClick={() => setQualityDrawerOpen(true)}
             >
               {getQualityShortLabel(quality)}
@@ -793,7 +818,7 @@ export function FullScreenPlayer({
             <Button
               variant="ghost"
               size="icon"
-              className="h-12 w-12 text-white/60 hover:bg-white/10 hover:text-white"
+              className="relative z-10 h-12 w-12 text-white/60 hover:bg-white/10 hover:text-white"
               onClick={enterLandscapeMode}
               aria-label="横屏沉浸播放"
               title="横屏沉浸播放"
@@ -804,7 +829,7 @@ export function FullScreenPlayer({
             <Button
               variant="ghost"
               size="icon"
-              className="h-12 w-12 text-white/60 hover:bg-white/10 hover:text-white"
+              className="relative z-10 h-12 w-12 text-white/60 hover:bg-white/10 hover:text-white"
               onClick={handleShare}
               aria-label="分享"
               title="分享"
@@ -869,8 +894,12 @@ export function FullScreenPlayer({
           if (isCoverPreviewOpen || isStyleMenuOpen) return;
           // 滑动切歌/收起后浏览器还会补一次 click，这里吞掉，否则会顺带切到歌词页
           if (swipe.shouldSuppressClick()) return;
-          // 歌词页的空白：点一下回顶（Web 端鼠标点击走这里）
-          if (showLyrics && handleLyricsBlankTap(e.target)) return;
+          // 标题栏回顶按钮：onClick 已 stopPropagation，这里再兜一层防切页
+          if (
+            e.target instanceof Element &&
+            e.target.closest("[data-lyrics-scrolltop]")
+          )
+            return;
           // Web 端鼠标点击没有 touchend 的 onTap，在这里走同一套分流
           if (
             e.target instanceof Element &&

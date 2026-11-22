@@ -53,3 +53,6 @@ tmp-*
 build_log.txt
 build_android_log.txt
 ICON_EDGE_INVESTIGATION.md
+
+# 本地调试产物（截图 / CDP 脚本 / 临时 apk）
+.workbuddy-ai/

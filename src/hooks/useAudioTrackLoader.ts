@@ -13,6 +13,7 @@ import { logger } from "@/lib/logger";
 import { resolveTrackUrl } from "@/lib/audio-resolver";
 import { resolveViaLxPlayback } from "@/lib/imported-sources/lx-playback";
 import { resolveViaHigequFallback } from "@/lib/higequ/higequ-fallback";
+import { resolveViaCrossPlatform } from "@/lib/cross-platform-fallback";
 import { isVipOnlyTrack } from "@/lib/playback-access";
 import { muteAndPause, restoreVolume } from "@/lib/audio-fade";
 import { IS_NATIVE } from "@/lib/api/config";
@@ -22,6 +23,8 @@ const AUDIO_READY_TIMEOUT = 8000;
 const LX_FALLBACK_TIMEOUT = 7000;
 /** 播放失败后给嗨歌曲搜索+取链的时限（站点较慢，给足时间） */
 const HIGEQU_FALLBACK_TIMEOUT = 15000;
+/** 播放失败后跨平台搜同曲+并发取链的时限（多平台搜索） */
+const CROSS_PLATFORM_FALLBACK_TIMEOUT = 20000;
 type FallbackStage = "none" | "proxy" | "final";
 
 /** 带超时的 Promise：超时返回 null，不抛错 */
@@ -139,6 +142,8 @@ export function useAudioTrackLoader(
   const lxFallbackTrackRef = useRef<string | null>(null);
   /** 本曲已经用嗨歌曲试过兜底，避免失败后无限重试 */
   const higequFallbackTrackRef = useRef<string | null>(null);
+  /** 本曲已经用跨平台换源试过兜底，避免失败后无限重试 */
+  const crossPlatformFallbackTrackRef = useRef<string | null>(null);
   /** 当前这次播放的直链是不是洛雪给的（是则不再重复走洛雪兜底） */
   const fromLxRef = useRef(false);
 
@@ -400,6 +405,59 @@ export function useAudioTrackLoader(
           } else {
             toast.dismiss("lx-fallback");
           }
+        }
+
+        // 洛雪也没接住：按洛雪桌面版 findMusic 的思路跨平台搜同曲换链。
+        // 并发搜用户启用的多个平台、歌名+歌手+专辑严格校验（挡翻唱），
+        // 再并发取链探活，只换播放地址不动队列。放在嗨歌曲之前——命中率高
+        // 且严格，避免嗨歌曲那种同名曲（可能翻唱）抢先接管。
+        // 尊重「自动换源」总开关：关掉就说明用户不想自动替换播放来源。
+        if (
+          getState().enableAutoMatch &&
+          source !== "local" &&
+          source !== "podcast" &&
+          crossPlatformFallbackTrackRef.current !== trackKey
+        ) {
+          crossPlatformFallbackTrackRef.current = trackKey;
+          toast("正在跨平台寻找同曲的可播音源…", {
+            id: "cross-platform-fallback",
+            icon: "🎵",
+          });
+          const crossResult = await withTimeout(
+            resolveViaCrossPlatform(
+              currentTrack,
+              parseInt(quality, 10),
+              CROSS_PLATFORM_FALLBACK_TIMEOUT
+            ),
+            CROSS_PLATFORM_FALLBACK_TIMEOUT
+          );
+          if (
+            crossResult &&
+            !isStale() &&
+            crossResult.url !== remoteUrlRef.current
+          ) {
+            remoteUrlRef.current = crossResult.url;
+            const origin = {
+              via: "official" as const,
+              source: crossResult.track.source,
+            };
+            getState().setCurrentAudioOrigin(origin);
+            getState().recordTrackOrigin(currentTrack, origin);
+            try {
+              await play(crossResult.url);
+              toast.success(`已切换到${crossResult.track.source}音源播放`, {
+                id: "cross-platform-fallback",
+              });
+              return;
+            } catch (crossPlayError) {
+              logger.warn("useAudioTrackLoader", "跨平台换源播放仍失败", {
+                trackId,
+                source,
+                crossPlayError,
+              });
+            }
+          }
+          toast.dismiss("cross-platform-fallback");
         }
 
         // 洛雪也没接住：用嗨歌曲搜同名曲换一条直链。它相对其他源稳定，

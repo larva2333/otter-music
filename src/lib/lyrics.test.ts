@@ -55,6 +55,47 @@ describe("parseLrc", () => {
   });
 });
 
+describe("逐字歌词", () => {
+  it("解析 <start,duration> 成 words，text 仍是干净的逐行文本", () => {
+    const [line] = parseLrc("[00:01.00]<0,165>海<165,156>风");
+
+    expect(line.text).toBe("海风");
+    expect(line.words).toEqual([
+      { text: "海", start: 0, end: 165 },
+      { text: "风", start: 165, end: 321 },
+    ]);
+  });
+
+  it("一行多个时间戳时共用同一份逐字数据", () => {
+    const lines = parseSimpleLrc("[00:01.00][00:05.00]<0,100>a<100,100>b");
+
+    expect(lines).toHaveLength(2);
+    expect(lines[0].words).toEqual(lines[1].words);
+    expect(lines[1].text).toBe("ab");
+  });
+
+  it("普通 LRC 不产生 words 字段", () => {
+    expect(parseLrc("[00:01.00]hi")[0].words).toBeUndefined();
+  });
+
+  it("纯空格 token 并入前字，不单独占高亮步", () => {
+    const [line] = parseLrc("[00:01.00]<0,100>海<100,50> <150,100>风");
+
+    expect(line.text).toBe("海 风");
+    expect(line.words).toEqual([
+      { text: "海 ", start: 0, end: 150 },
+      { text: "风", start: 150, end: 250 },
+    ]);
+  });
+
+  it("负时长标记被跳过，但文字不丢", () => {
+    const [line] = parseLrc("[00:01.00]<0,-100>海<100,100>风");
+
+    expect(line.text).toBe("海风");
+    expect(line.words).toEqual([{ text: "风", start: 100, end: 200 }]);
+  });
+});
+
 describe("findActiveLyricIndex", () => {
   const lines = parseSimpleLrc("[00:01.00]a\n[00:05.00]b\n[00:09.00]c");
 

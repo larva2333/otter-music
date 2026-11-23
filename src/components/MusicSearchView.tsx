@@ -1,7 +1,6 @@
 import {
   useCallback,
   useEffect,
-  useMemo,
   useRef,
   useState,
   type ChangeEvent,
@@ -16,6 +15,7 @@ import { getExactKey } from "@/lib/utils/music-key";
 import { useDebounce } from "@/hooks/use-debounce";
 import { useExitLayer } from "@/hooks/useExitLayer";
 import { useSearchBackClear } from "@/hooks/useSearchBackClear";
+import { useSearchUrlPrefetch } from "@/hooks/useSearchUrlPrefetch";
 import { musicApi } from "@/lib/music-api";
 import { useMusicStore } from "@/store/music-store";
 import {
@@ -33,13 +33,6 @@ import {
 } from "@/lib/search-categories";
 
 import { Input } from "./ui/input";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "./ui/select";
 import { SearchSuggestions } from "./SearchSuggestions";
 import { SearchHistory } from "./SearchHistory";
 import { PageHeader } from "./PageHeader";
@@ -47,21 +40,23 @@ import { useSearchHistory } from "@/hooks/useSearchHistory";
 import { MusicTrackList } from "./MusicTrackList";
 import { SearchCategoryResults } from "./SearchCategoryResults";
 import { PlaylistMarket } from "./PlaylistMarket/PlaylistMarket";
-import {
-  type MusicTrack,
-  type MusicSource,
-  type SearchSuggestionItem,
-  searchOptions,
-} from "@/types/music";
+import { type MusicTrack, type SearchSuggestionItem } from "@/types/music";
 import { logger } from "@/lib/logger";
-import { useImportedSourcesStore } from "@/lib/imported-sources/store";
-import { isLxPlaybackSource } from "@/lib/imported-sources/lx-playback";
 
 interface MusicSearchViewProps {
   onPlay: (track: MusicTrack, list: MusicTrack[], contextId?: string) => void;
   currentTrackId?: string;
   isPlaying?: boolean;
 }
+
+/** 非歌曲 tab 用固定空数组，避免每次渲染新建导致预取 hook 反复触发 */
+const EMPTY_TRACKS: MusicTrack[] = [];
+
+/**
+ * 搜索固定走酷我：酷我曲目能被溯音/非常刀几百毫秒拿到完整音轨，
+ * 而 QQ 平台的 VIP 曲只能靠 fish 慢取 20-45 秒。
+ */
+const SEARCH_SOURCE = "kuwo";
 
 export function MusicSearchView({
   onPlay,
@@ -71,8 +66,6 @@ export function MusicSearchView({
   const resultsScrollRef = useRef<HTMLDivElement>(null);
   const categoryVersionRef = useRef(0);
   const {
-    source,
-    setSource,
     searchQuery,
     setSearchQuery,
     searchResults,
@@ -93,11 +86,8 @@ export function MusicSearchView({
     setSearchPage,
     searchIntent,
     setSearchIntent,
-    sourceConfigs,
   } = useMusicStore(
     useShallow((s) => ({
-      source: s.searchSource,
-      setSource: s.setSearchSource,
       searchQuery: s.searchQuery,
       setSearchQuery: s.setSearchQuery,
       searchResults: s.searchResults,
@@ -118,7 +108,6 @@ export function MusicSearchView({
       setSearchPage: s.setSearchPage,
       searchIntent: s.searchIntent,
       setSearchIntent: s.setSearchIntent,
-      sourceConfigs: s.sourceConfigs,
     }))
   );
 
@@ -135,42 +124,6 @@ export function MusicSearchView({
     suggestions: SearchSuggestionItem[];
   } | null>(null);
   const navigate = useNavigate();
-
-  const visibleSourceOptions = useMemo(() => {
-    // 洛雪脚本没有搜索能力，不能出现在搜索源下拉里
-    const visible = sourceConfigs.filter(
-      (c) => c.enabled && c.visible && !isLxPlaybackSource(c.source)
-    );
-    const imported = useImportedSourcesStore.getState().sources;
-    return [
-      { value: "all", label: "聚合搜索" },
-      ...visible.map((c) => {
-        const opt = searchOptions[c.source];
-        const custom = imported.find((s) => s.id === c.source)?.name;
-        return {
-          value: c.source,
-          label: c.alias?.trim() || opt || custom || c.source,
-        };
-      }),
-    ];
-  }, [sourceConfigs]);
-
-  // 已持久化的搜索源若当前不可见（例如刚在设置里把它隐藏了），回退到聚合搜索，
-  // 避免下拉框拿不到选项、直接把 imp_xxx 这种内部 id 显示出来。
-  useEffect(() => {
-    if (source === "all") return;
-    if (
-      !sourceConfigs.some(
-        (c) =>
-          c.source === source &&
-          c.enabled &&
-          c.visible &&
-          !isLxPlaybackSource(c.source)
-      )
-    ) {
-      setSource("all");
-    }
-  }, [source, sourceConfigs, setSource]);
 
   /* ---------------- 搜索建议 ---------------- */
   const [suggestions, setSuggestions] = useState<SearchSuggestionItem[]>([]);
@@ -529,17 +482,14 @@ export function MusicSearchView({
       const categoriesPromise = categorize
         ? musicApi.searchCategories(query)
         : Promise.resolve(null);
-      const res =
-        source === "all"
-          ? await musicApi.searchAll(query, nextPage, 20, signal, searchIntent)
-          : await musicApi.search(
-              query,
-              source,
-              nextPage,
-              20,
-              signal,
-              searchIntent
-            );
+      const res = await musicApi.search(
+        query,
+        SEARCH_SOURCE,
+        nextPage,
+        20,
+        signal,
+        searchIntent
+      );
       const categories = await categoriesPromise;
 
       if (version !== versionRef.current) return;
@@ -573,8 +523,7 @@ export function MusicSearchView({
         );
       }
 
-      let items =
-        source === "all" ? res.items : mergeAndSortTracks(res.items, query);
+      let items = mergeAndSortTracks(res.items, query);
       items = applySearchIntentSort(items, searchIntent, query);
 
       const currentLength = reset ? 0 : searchResults.length;
@@ -616,25 +565,6 @@ export function MusicSearchView({
       if (version === versionRef.current) setSearchLoading(false);
     }
   };
-
-  /* ---------------- 切换音源自动搜索 ---------------- */
-  const isFirstSourceRef = useRef(true);
-
-  useEffect(() => {
-    if (isFirstSourceRef.current) {
-      isFirstSourceRef.current = false;
-      return;
-    }
-    if (searchQuery.trim().length >= 2) {
-      isSearchingRef.current = true;
-      setShowSuggestions(false);
-      setSearchIntent(null);
-      fetchPage(1, true);
-      searchInputRef.current?.focus();
-      isSearchingRef.current = false;
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [source]);
 
   const loadMoreCategories = () => {
     const snap = useMusicStore.getState();
@@ -690,6 +620,12 @@ export function MusicSearchView({
     searchResults.length > 0 ||
     searchCategories !== null;
 
+  // 会员曲必须走洛雪取完整音轨，真机上要十几秒。搜索结果出来后后台预取，
+  // 点歌时命中缓存零等待。只在歌曲 tab、且已提交搜索时跑。
+  const prefetchTracks =
+    searchTab === "song" && hasCommittedSearch ? searchResults : EMPTY_TRACKS;
+  useSearchUrlPrefetch(prefetchTracks);
+
   /* ---------------- UI ---------------- */
   return (
     <div className="flex h-full min-h-0 flex-col bg-background">
@@ -744,39 +680,6 @@ export function MusicSearchView({
             >
               <X className="h-3.5 w-3.5" />
             </button>
-
-            <div className="mx-2 h-4 w-px shrink-0 bg-border/60" />
-
-            {/* 音源选择 */}
-            <Select
-              value={source}
-              onValueChange={(v) => setSource(v as MusicSource)}
-            >
-              <SelectTrigger
-                onPointerDown={() => {
-                  searchInputRef.current?.blur();
-                  setShowHistory(false);
-                }}
-                className="-mr-1.5 h-7 w-auto min-w-[108px] shrink-0 border-0 bg-transparent! px-2 text-sm text-muted-foreground shadow-none hover:text-foreground focus:ring-0"
-              >
-                <SelectValue />
-              </SelectTrigger>
-              {/* 面板与按钮等宽：右边对齐后不会再往左探出，菜单项文字也与按钮文字同一左边缘 */}
-              <SelectContent
-                align="end"
-                className="w-[var(--radix-popover-trigger-width)]"
-              >
-                {visibleSourceOptions.map((opt) => (
-                  <SelectItem
-                    key={opt.value}
-                    value={opt.value}
-                    className="pl-1 whitespace-nowrap text-sm"
-                  >
-                    {opt.label}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
           </div>
 
           {/* 搜索建议弹窗 */}

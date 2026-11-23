@@ -80,13 +80,9 @@ export const useMusicStore = create<MusicState>()(
         if (newConfigs.length > 0) {
           state.sourceConfigs = [...state.sourceConfigs, ...newConfigs];
         }
-        // 老用户可能把搜索源选成了已移除的音源，Select 会显示空白；
-        // 不在保留列表里就回退到聚合搜索。
-        if (
-          state.searchSource !== "all" &&
-          !validSources.has(state.searchSource)
-        ) {
-          state.searchSource = "all";
+        // 搜索固定走酷我，不再有音源下拉；持久化里的旧值统一纠正。
+        if (state.searchSource !== "kuwo") {
+          state.searchSource = "kuwo";
         }
         return state;
       },

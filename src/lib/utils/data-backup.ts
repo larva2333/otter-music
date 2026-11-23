@@ -343,7 +343,7 @@ export function importStoreData(payload: BackupPayload): void {
   // UI 设置
   useMusicStore.setState({
     quality: payload.quality ?? "192",
-    searchSource: payload.searchSource ?? "all",
+    searchSource: payload.searchSource ?? "kuwo",
     sourceConfigs: payload.sourceConfigs ?? [],
     lastPlaylistCategory: payload.lastPlaylistCategory ?? "全部",
     lastMineTab: payload.lastMineTab ?? "created",

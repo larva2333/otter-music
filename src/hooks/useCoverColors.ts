@@ -30,7 +30,26 @@ interface ColorsState {
  * 每次重算就会出现「背景色空一拍再刷上」的闪烁。缓存按「主题模式 + 图片地址」索引，
  * 命中的组件在渲染期就同步拿到颜色，连一帧回退底色都不会有。
  */
-const colorCache = new Map<string, SodaColors>();
+const CACHE_STORAGE_KEY = "otter-cover-colors-v1";
+
+/**
+ * 切到别的 APP 再回来时 WebView 可能被回收重建，模块内存缓存随之清空；
+ * 取色要重新加载跨域封面，失败那几帧 `isLightTone` 会翻转成深色排版，
+ * 浅色底上白字一片白。把结果同步落盘，重建后首帧就能拿回同一套颜色。
+ */
+function loadCachedColors(): Map<string, SodaColors> {
+  try {
+    const raw = globalThis.localStorage?.getItem(CACHE_STORAGE_KEY);
+    if (!raw) return new Map();
+    const entries = JSON.parse(raw) as [string, SodaColors][];
+    if (!Array.isArray(entries)) return new Map();
+    return new Map(entries.slice(0, CACHE_LIMIT));
+  } catch {
+    return new Map();
+  }
+}
+
+const colorCache = loadCachedColors();
 const pendingRequests = new Map<string, Promise<SodaColors>>();
 
 function cacheKey(url: string, mode: ColorMode) {
@@ -42,6 +61,15 @@ function remember(key: string, colors: SodaColors) {
   if (colorCache.size > CACHE_LIMIT) {
     const oldest = colorCache.keys().next().value;
     if (oldest !== undefined) colorCache.delete(oldest);
+  }
+
+  try {
+    globalThis.localStorage?.setItem(
+      CACHE_STORAGE_KEY,
+      JSON.stringify([...colorCache])
+    );
+  } catch {
+    // 隐私模式 / 配额满：只保留内存缓存，不影响取色本身
   }
 }
 

@@ -27,7 +27,12 @@ import { useMusicStore, type LyricAlign } from "@/store/music-store";
 import { useShallow } from "zustand/react/shallow";
 import { useScrimSystemBars } from "@/hooks/useScrimSystemBars";
 import { onPageScrollToTop } from "@/lib/scroll-to-top";
-import { findActiveLyricIndex, parseLrc, type LyricLine } from "@/lib/lyrics";
+import {
+  findActiveLyricIndex,
+  parseLrc,
+  type LyricLine,
+  type LyricWord,
+} from "@/lib/lyrics";
 
 interface LyricsPanelProps {
   track: MusicTrack | null;
@@ -68,18 +73,128 @@ function formatTime(seconds: number): string {
   return `${mins}:${secs.toString().padStart(2, "0")}`;
 }
 
+/** 逐字高亮刷新节流：30fps 足够跟唱，别让 WebView 每帧重渲染 */
+const KARAOKE_FRAME_MS = 33;
+
+/**
+ * 当前行的卡拉OK文字。播放进度直接读 audio 元素（store 的 currentAudioTime
+ * 被节流到 1 秒，逐字会明显跳字），拿不到 audio 时回退 store。
+ */
+const KaraokeText = memo(function KaraokeText({
+  words,
+  lineTime,
+  lyricOffset,
+  fontSize,
+  enabled,
+}: {
+  words: LyricWord[];
+  lineTime: number;
+  lyricOffset: number;
+  fontSize: number;
+  enabled: boolean;
+}) {
+  const [progress, setProgress] = useState({ index: -1, ratio: 0 });
+  const progressRef = useRef(progress);
+
+  useEffect(() => {
+    progressRef.current = { index: -1, ratio: 0 };
+    setProgress(progressRef.current);
+
+    // 非当前行只借用同一套排版，不跑逐字动画，颜色交给外层 lyric-line
+    if (!enabled) return;
+
+    const audio = document.querySelector("audio");
+    let raf = 0;
+    let last = 0;
+
+    const tick = (now: number) => {
+      raf = requestAnimationFrame(tick);
+      if (now - last < KARAOKE_FRAME_MS) return;
+      last = now;
+
+      const current =
+        audio?.currentTime ?? useMusicStore.getState().currentAudioTime;
+      const ms = (current - lineTime - lyricOffset) * 1000;
+
+      let index = -1;
+      let ratio = 0;
+      for (let i = 0; i < words.length; i++) {
+        const w = words[i];
+        if (ms >= w.end) {
+          index = i;
+          ratio = 1;
+          continue;
+        }
+        if (ms >= w.start) {
+          index = i;
+          ratio = (ms - w.start) / Math.max(1, w.end - w.start);
+        }
+        break;
+      }
+
+      const prev = progressRef.current;
+      if (prev.index !== index || Math.abs(prev.ratio - ratio) > 0.01) {
+        progressRef.current = { index, ratio };
+        setProgress(progressRef.current);
+      }
+    };
+
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [words, lineTime, lyricOffset, enabled]);
+
+  return (
+    <p
+      className="lyric-main font-medium leading-relaxed tracking-wide break-words"
+      style={{ fontSize: `${fontSize}px` }}
+    >
+      {words.map((w, i) => {
+        const done = i < progress.index;
+        const singing = enabled && i === progress.index;
+        // 唱完就保持 100%，覆盖层不消失，避免唱完瞬间白色「缩回」看着像抖
+        const pct = done ? 100 : singing ? Math.round(progress.ratio * 100) : 0;
+
+        return (
+          <span
+            key={`${w.start}-${i}`}
+            className="relative inline-block whitespace-pre"
+          >
+            {/* 底层：未唱淡色。非当前行不覆盖，继承整行的 future/past 色 */}
+            <span className={cn(enabled && "text-white/15")}>{w.text}</span>
+            {/* 顶层：宽度固定铺满，只用 clip-path 裁切缝。用 width 裁会让
+                带尾部空格的字在临界宽度反复重排，看着就是「抖一下」。 */}
+            {enabled && pct > 0 && (
+              <span
+                aria-hidden="true"
+                className="absolute inset-0 whitespace-pre text-white"
+                style={{ clipPath: `inset(0 ${100 - pct}% 0 0)` }}
+              >
+                {w.text}
+              </span>
+            )}
+          </span>
+        );
+      })}
+    </p>
+  );
+});
+
 const LyricLineView = memo(function LyricLineView({
   line,
   isActive,
+  isPast,
   isBaseLine,
   align,
   fontSize,
+  lyricOffset,
 }: {
   line: LyricLine;
   isActive: boolean;
+  isPast: boolean;
   isBaseLine: boolean;
   align: LyricAlign;
   fontSize: number;
+  lyricOffset: number;
 }) {
   const translationSize = Math.max(11, Math.round(fontSize * (15 / 18)));
 
@@ -98,18 +213,34 @@ const LyricLineView = memo(function LyricLineView({
         // 深色底用黑投影，浅色底换成白柔光，否则黑投影落在浅底上就是一团脏灰。
         isActive
           ? "lyric-active text-white opacity-100 hover:text-white/70"
-          : "text-white/60 opacity-100 hover:text-white/80",
+          : isPast
+            ? "text-white/60 opacity-100 hover:text-white/80"
+            : // 没唱到的行整体压到 25%，和已唱行、当前行拉开层次；
+              // 浅色底的覆盖规则在 global.css 的 .lyric-line:not(.lyric-active)
+              "lyric-future text-white/25 opacity-100 hover:text-white/70",
         // 基准线行加浅色背景框；py 与 -my 等额抵消，保证行间距不变
         // self-start 阻止 flex 拉伸，避免抵消后的内边距被压缩
         isBaseLine && "-my-2.5 self-start rounded-xl bg-white/10 py-2.5"
       )}
     >
-      <p
-        className="lyric-main font-medium leading-relaxed tracking-wide break-words"
-        style={{ fontSize: `${fontSize}px` }}
-      >
-        {line.text}
-      </p>
+      {line.words && line.words.length > 0 ? (
+        // 有逐字数据的行始终走同一套 span 排版，只在当前行开启高亮，
+        // 避免「切到当前行时字突然合并/变样」
+        <KaraokeText
+          words={line.words}
+          lineTime={line.time}
+          lyricOffset={lyricOffset}
+          fontSize={fontSize}
+          enabled={isActive}
+        />
+      ) : (
+        <p
+          className="lyric-main font-medium leading-relaxed tracking-wide break-words"
+          style={{ fontSize: `${fontSize}px` }}
+        >
+          {line.text}
+        </p>
+      )}
 
       {line.ttext && (
         <p
@@ -173,9 +304,31 @@ export function LyricsPanel({ track, active = true }: LyricsPanelProps) {
   const lyricId = track?.lyric_id ?? null;
   const source = track?.source ?? null;
 
+  /**
+   * store 的 currentAudioTime 被 timeupdate 节流到 1 秒，用它算「当前行」，
+   * 每句开头最多晚 1 秒才切到该行，逐字高亮也就跟着慢半拍。
+   * 这里单独读 audio 的即时时间，10fps 足够跟上唱词，又不会让整页每帧重渲染。
+   */
+  const [fastTime, setFastTime] = useState(currentTime);
+  useEffect(() => {
+    const audio = document.querySelector("audio");
+    if (!audio) return;
+
+    let raf = 0;
+    let last = 0;
+    const tick = (now: number) => {
+      raf = requestAnimationFrame(tick);
+      if (now - last < 100) return;
+      last = now;
+      setFastTime(audio.currentTime);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, []);
+
   const activeIndex =
     lyrics.length > 0
-      ? Math.max(0, findActiveLyricIndex(lyrics, currentTime, lyricOffset))
+      ? Math.max(0, findActiveLyricIndex(lyrics, fastTime, lyricOffset))
       : 0;
 
   const lineRefs = useRef<(HTMLDivElement | null)[]>([]);
@@ -673,9 +826,11 @@ export function LyricsPanel({ track, active = true }: LyricsPanelProps) {
           <LyricLineView
             line={line}
             isActive={i === activeIndex}
+            isPast={i < activeIndex}
             isBaseLine={i === centerLineIndex}
             align={lyricAlign}
             fontSize={lyricFontSize}
+            lyricOffset={lyricOffset}
           />
         </div>
       ))}

@@ -311,13 +311,17 @@
 }
 
 /*
- * 浅色底：原来非当前行 0.6 配黑投影糊成一团脏灰，
- * 后来提到 0.88 又和当前行分不出层次。
- * 现在去掉投影、非当前行 0.64（纯墨色不投影，仍读得清），
+ * 浅色底：唱过的行 0.64（纯墨色不投影，仍读得清），
+ * 没唱到的行压到 0.28，和当前行、已唱行拉开层次。
  * 层次同时靠字重和明度两条通道拉。
  */
-.player-tone-light .lyric-line:not(.lyric-active) {
+.player-tone-light .lyric-line:not(.lyric-active):not(.lyric-future) {
   color: rgba(23, 34, 43, 0.64);
+}
+
+/* 还没唱到的整行：浅色底上同样压淡，别让整页看着一样深 */
+.player-tone-light .lyric-line.lyric-future {
+  color: rgba(23, 34, 43, 0.28);
 }
 
 .player-tone-light .lyric-active {

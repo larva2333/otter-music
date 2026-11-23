@@ -1,4 +1,5 @@
 import { fetchWithTimeout, getProxyUrl, IS_NATIVE } from "@/lib/api/config";
+import { strFromU8, unzlibSync, zlibSync } from "fflate";
 import type { MusicTrack, SearchPageResult, SongLyric } from "@/types/music";
 
 /**
@@ -65,6 +66,21 @@ const EVENT_NAMES = {
 };
 
 /* ---------------- Buffer / 编码工具 ---------------- */
+
+/**
+ * 洛雪音源脚本有两种存储形态：明文 JS，或 `gz_` + base64(zlib deflate)。
+ * 桌面端从「音源仓库/导出文件」导入时存的就是压缩形态，官方客户端会在
+ * 注入前解压；不处理会让 `new Function(script)` 直接语法报错，脚本永远
+ * 注册不上 handler —— 表现就是所有洛雪源「一条链接都拿不到」。
+ */
+export function decodeLxScript(script: string): string {
+  if (!script.startsWith("gz_")) return script;
+  const b64 = script.slice(3).trim();
+  const bin = atob(b64);
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i += 1) bytes[i] = bin.charCodeAt(i);
+  return strFromU8(unzlibSync(bytes));
+}
 
 function toBytes(
   input: string | ArrayBuffer | Uint8Array,
@@ -134,6 +150,8 @@ function bufferFrom(
 interface LxResponse {
   body: unknown;
   status: number;
+  statusCode: number;
+  statusMessage?: string;
   headers?: Record<string, string>;
 }
 
@@ -173,6 +191,9 @@ async function lxFetch(
     return {
       body: parse(res.data),
       status: res.status,
+      // 脚本普遍按洛雪协议读 resp.statusCode（不是 status），缺这个字段
+      // 会让它们把每个 200 响应都当成失败，直接抛「接口状态 undefined」
+      statusCode: res.status,
       headers: res.headers as Record<string, string>,
     };
   }
@@ -180,7 +201,12 @@ async function lxFetch(
   const target = import.meta.env.PROD ? getProxyUrl(url) : url;
   const res = await fetchWithTimeout(target, { method, headers, body }, 15000);
   const text = await res.text();
-  return { body: parse(text), status: res.status };
+  return {
+    body: parse(text),
+    status: res.status,
+    statusCode: res.status,
+    statusMessage: res.statusText,
+  };
 }
 
 /* ---------------- 运行时 ---------------- */
@@ -253,11 +279,16 @@ function createUtils() {
     },
     crypto,
     zlib: {
-      inflate: async () => {
-        throw new Error("zlib.inflate 未实现");
+      // 参数可能是 Uint8Array，也可能是脚本自己造的 buffer 风格对象
+      inflate: async (data: Uint8Array | string) => {
+        const bytes =
+          typeof data === "string" ? toBytes(data, "base64") : toBytes(data);
+        return createBuffer(unzlibSync(bytes));
       },
-      deflate: async () => {
-        throw new Error("zlib.deflate 未实现");
+      deflate: async (data: Uint8Array | string) => {
+        const bytes =
+          typeof data === "string" ? toBytes(data, "utf8") : toBytes(data);
+        return createBuffer(zlibSync(bytes));
       },
     },
   };
@@ -359,7 +390,8 @@ export function getLxRuntime(
     // 用 Object.create 保留宿主全局（setTimeout 等），只额外挂 lx
     const sandboxGlobal = Object.create(globalThis);
     sandboxGlobal.lx = lx;
-    const fn = new Function("globalThis", "lx", `with(lx){ ${script} }`);
+    const code = decodeLxScript(script);
+    const fn = new Function("globalThis", "lx", `with(lx){ ${code} }`);
     fn(sandboxGlobal, lx);
   } catch (error) {
     // 官方语义：inited 之后抛的错不算初始化失败（脚本已经可用，属于运行期错误）

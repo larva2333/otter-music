@@ -117,7 +117,7 @@ export const createUiSlice: StateCreator<MusicState, [], [], UiSlice> = (
   set
 ) => ({
   quality: "192",
-  searchSource: "all",
+  searchSource: "kuwo",
   sourceConfigs: DEFAULT_SOURCE_CONFIGS,
   lastPlaylistCategory: DEFAULT_BROWSE_POSITION.lastPlaylistCategory,
   lastMineTab: "created",

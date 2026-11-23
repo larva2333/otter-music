@@ -1,10 +1,12 @@
 import { describe, expect, it } from "vitest";
+import { strToU8, zlibSync } from "fflate";
 import {
   getLxRuntime,
   lxSearch,
   lxGetUrl,
   pickLxQuality,
   clearLxRuntime,
+  decodeLxScript,
 } from "./lx-sandbox";
 
 const SAMPLE_SCRIPT = `
@@ -143,5 +145,22 @@ describe("lx-sandbox", () => {
     expect(rt.inited).not.toBeNull();
     expect(rt.initError).toBeUndefined();
     clearLxRuntime(id);
+  });
+
+  it("gz_ 压缩脚本能被解压后执行", () => {
+    const code =
+      "globalThis.lx.send(globalThis.lx.EVENT_NAMES.inited, { sources: { tx: {} } })";
+    const b64 = Buffer.from(zlibSync(strToU8(code))).toString("base64");
+    expect(decodeLxScript(`gz_${b64}`)).toBe(code);
+
+    const id = "imp_test_" + Math.random().toString(36).slice(2);
+    const rt = getLxRuntime(id, `gz_${b64}`, "tx");
+    expect(rt.initError).toBeUndefined();
+    expect(rt.inited).not.toBeNull();
+    clearLxRuntime(id);
+  });
+
+  it("明文脚本原样返回", () => {
+    expect(decodeLxScript(SAMPLE_SCRIPT)).toBe(SAMPLE_SCRIPT);
   });
 });

@@ -144,7 +144,7 @@ describe("MusicSearchView", () => {
     vi.clearAllMocks();
 
     useMusicStore.setState({
-      searchSource: "all",
+      searchSource: "kuwo",
       searchQuery: "",
       searchIntent: null,
       searchResults: [],
@@ -297,8 +297,9 @@ describe("MusicSearchView", () => {
     await keyDown("ArrowDown");
     await keyDown("Enter");
 
-    expect(musicApiMocks.searchAll).toHaveBeenLastCalledWith(
+    expect(musicApiMocks.search).toHaveBeenLastCalledWith(
       "Beta",
+      "kuwo",
       1,
       20,
       expect.any(AbortSignal),
@@ -313,8 +314,9 @@ describe("MusicSearchView", () => {
 
     await keyDown("Enter");
 
-    expect(musicApiMocks.searchAll).toHaveBeenLastCalledWith(
+    expect(musicApiMocks.search).toHaveBeenLastCalledWith(
       "keyword",
+      "kuwo",
       1,
       20,
       expect.any(AbortSignal),

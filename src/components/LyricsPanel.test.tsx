@@ -12,25 +12,28 @@ vi.mock("@/lib/music-api", () => ({
   },
 }));
 
-const { mockSeek, mockSetLyricAlign, mockSetLyricFontSize } = vi.hoisted(
-  () => ({
+const { mockSeek, mockSetLyricAlign, mockSetLyricFontSize, mockStoreState } =
+  vi.hoisted(() => ({
     mockSeek: vi.fn(),
     mockSetLyricAlign: vi.fn(),
     mockSetLyricFontSize: vi.fn(),
-  })
-);
+    mockStoreState: { currentAudioTime: 0, lyricOffset: -0.5 },
+  }));
 
 vi.mock("@/store/music-store", () => ({
-  useMusicStore: vi.fn(() => ({
-    currentAudioTime: 0,
-    seek: mockSeek,
-    seekTimestamp: 0,
-    lyricAlign: "center",
-    lyricFontSize: 18,
-    lyricOffset: -0.5,
-    setLyricAlign: mockSetLyricAlign,
-    setLyricFontSize: mockSetLyricFontSize,
-  })),
+  useMusicStore: Object.assign(
+    vi.fn(() => ({
+      currentAudioTime: mockStoreState.currentAudioTime,
+      seek: mockSeek,
+      seekTimestamp: 0,
+      lyricAlign: "center",
+      lyricFontSize: 18,
+      lyricOffset: mockStoreState.lyricOffset,
+      setLyricAlign: mockSetLyricAlign,
+      setLyricFontSize: mockSetLyricFontSize,
+    })),
+    { getState: () => mockStoreState }
+  ),
 }));
 
 const bilibiliTrack: MusicTrack = {
@@ -66,6 +69,8 @@ describe("LyricsPanel", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    mockStoreState.currentAudioTime = 0;
+    mockStoreState.lyricOffset = -0.5;
     // jsdom 未实现 Element.scrollTo，歌词自动滚动依赖该 API
     Element.prototype.scrollTo = () => {};
     (
@@ -131,6 +136,74 @@ describe("LyricsPanel", () => {
     );
     expect(container?.textContent).toContain("第一句歌词");
     expect(container?.textContent).not.toContain("加载歌词中...");
+    cleanup();
+  });
+
+  it("当前行带逐字时间戳时按字拆分渲染", async () => {
+    mockStoreState.currentAudioTime = 0;
+    mockStoreState.lyricOffset = 0;
+    const audio = document.createElement("audio");
+    document.body.appendChild(audio);
+
+    vi.mocked(musicApi.getLyric).mockResolvedValue({
+      lyric: "[00:01.00]<0,165>海<165,156>风",
+      tlyric: "",
+    });
+
+    renderPanel(neteaseTrack);
+    await act(async () => {
+      await Promise.resolve();
+      await new Promise((resolve) => setTimeout(resolve, 80));
+    });
+
+    const main = container?.querySelector(".lyric-main");
+    expect(main?.textContent).toBe("海风");
+    const chars = main?.querySelectorAll(":scope > span");
+    expect(chars?.length).toBe(2);
+    expect(chars?.[0].textContent).toBe("海");
+    expect(chars?.[1].textContent).toBe("风");
+    // 行还没开始，两字都未唱，没有高亮覆盖层
+    expect(main?.querySelector("span[aria-hidden='true']")).toBeNull();
+
+    audio.currentTime = 1.05;
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    });
+    const fill = main?.querySelector(
+      "span[aria-hidden='true']"
+    ) as HTMLElement | null;
+    expect(fill?.textContent).toBe("海");
+    // 固定宽度 + clip-path 裁切，不再改 width（改 width 会让带尾空格的字重排抖动）
+    expect(fill?.style.clipPath).toBe("inset(0 70% 0 0)");
+
+    audio.remove();
+    cleanup();
+  });
+
+  it("歌词里的空格 token 并入前字，不单独占高亮步避免重影", async () => {
+    mockStoreState.currentAudioTime = 0;
+    mockStoreState.lyricOffset = 0;
+    const audio = document.createElement("audio");
+    document.body.appendChild(audio);
+
+    vi.mocked(musicApi.getLyric).mockResolvedValue({
+      lyric: "[00:01.00]<0,100>海<100,50> <150,100>风",
+      tlyric: "",
+    });
+
+    renderPanel(neteaseTrack);
+    await act(async () => {
+      await Promise.resolve();
+      await new Promise((resolve) => setTimeout(resolve, 60));
+    });
+
+    const spans = container?.querySelectorAll(".lyric-main > span");
+    // 空格被并进「海」，只剩两个逐字 span，且文本仍是「海 风」
+    expect(spans?.length).toBe(2);
+    // 未唱时覆盖层还没渲染，textContent 只有底层的一份
+    expect(container?.querySelector(".lyric-main")?.textContent).toBe("海 风");
+
+    audio.remove();
     cleanup();
   });
 

@@ -25,8 +25,9 @@ import type { AudioOrigin } from "@/store/music-store/playback-slice";
 import type { MusicSource, MusicTrack } from "@/types/music";
 import { IS_NATIVE } from "@/lib/api/config";
 
-/** 洛雪接管的最长等待时间，超时就回落内置平台的直链 */
-const LX_RESOLVE_TIMEOUT = 8000;
+/** 洛雪接管的最长等待时间，超时就回落内置平台的直链。
+ *  真机 fish 冷启动 + 取链实测超过 16s，16s 会误杀，给 24s */
+const LX_RESOLVE_TIMEOUT = 24000;
 
 /**
  * 官方接口取链的最长等待时间。
@@ -34,6 +35,14 @@ const LX_RESOLVE_TIMEOUT = 8000;
  * 最坏能挂 40 秒以上，表现就是「一直加载中」。超时即转洛雪兜底。
  */
 const OFFICIAL_URL_TIMEOUT = 8000;
+
+/**
+ * 同一首歌的取链 in-flight 去重。
+ * 搜索页后台预取和用户点歌可能撞在一起，fish 取链要十几秒，
+ * 不去重就会并发跑两遍 —— 既慢又可能拿到两条不同的 vkey。
+ * key 用 cache key（含音质），值就是那次 resolveTrackUrl 的 Promise。
+ */
+const inflightResolves = new Map<string, ReturnType<typeof resolveTrackUrl>>();
 
 function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T | null> {
   return new Promise((resolve) => {
@@ -108,6 +117,38 @@ async function fillMissingNeteasePrivilege(
  *        避免把已过期的签名直链原样返回导致二次失败
  */
 export async function resolveTrackUrl(
+  track: MusicTrack,
+  quality: number,
+  options?: { forceRefresh?: boolean }
+): Promise<{
+  url: string;
+  dlKey?: string;
+  fromLx?: boolean;
+  origin?: AudioOrigin;
+}> {
+  const { id: trackId, source, url_id: urlId } = track;
+  const trackKey = buildUrlCacheKey(source, trackId, urlId, String(quality));
+
+  // 强制刷新必须走新请求，不能复用预取 / 上一次的 in-flight
+  if (!options?.forceRefresh) {
+    const running = inflightResolves.get(trackKey);
+    if (running) return running;
+  }
+
+  const task = resolveTrackUrlInner(track, quality, options);
+  if (!options?.forceRefresh) {
+    inflightResolves.set(trackKey, task);
+    // 无论成功失败都要清掉，否则一次失败会让后续所有取链都复用那个失败的 Promise。
+    // 用 .then 的两个回调而非 .finally：后者返回的 Promise 会把 rejection 再抛一次。
+    void task.then(
+      () => inflightResolves.delete(trackKey),
+      () => inflightResolves.delete(trackKey)
+    );
+  }
+  return task;
+}
+
+async function resolveTrackUrlInner(
   track: MusicTrack,
   quality: number,
   options?: { forceRefresh?: boolean }

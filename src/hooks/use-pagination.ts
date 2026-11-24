@@ -124,6 +124,9 @@ export function usePagination<T>({
 
   const restore = useCallback(
     (data: { items: T[]; offset: number; hasMore: boolean }) => {
+      // 切分类时若还有上一类的请求在飞，抢先后其结果不再覆盖恢复的列表
+      fetchIdRef.current++;
+      fetchingRef.current = false;
       setItems(data.items);
       setOffset(data.offset);
       setHasMore(data.hasMore);

@@ -30,6 +30,7 @@ export type {
   CookieItem,
   SearchSuggestResult,
   NeteaseCommentUser,
+  NeteaseBeReplied,
   NeteaseComment,
   NeteaseCommentResult,
   NeteaseNewCommentResult,

@@ -2,6 +2,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 /** 下滑收起的手势阈值（px） */
 const CLOSE_THRESHOLD = 80;
+/** 上滑唤出评论的手势阈值（px） */
+const OPEN_COMMENTS_THRESHOLD = 80;
 /** 横滑切歌的手势阈值（px） */
 const SWIPE_THRESHOLD = 56;
 /** 主轴相对副轴的最小倍数：斜向滑动不误触，避免边下拉边横移时同时命中两种操作 */
@@ -61,7 +63,7 @@ const ARM_SETTLE_TRANSITION =
 /** 切歌入场动画的起始偏移，取屏宽的比例：整屏太重，太小又看不出是“滑进来”的 */
 const SLIDE_IN_RATIO = 0.5;
 
-type Axis = "none" | "horizontal" | "vertical" | "ignored";
+type Axis = "none" | "horizontal" | "vertical" | "up" | "ignored";
 
 /**
  * 触摸落在按钮/链接这类可交互元素上时不参与轻点判定。
@@ -171,6 +173,8 @@ interface UsePlayerSwipeGesturesOptions {
   onClose: () => void;
   onPrev: () => void;
   onNext: () => void;
+  /** 上滑唤出评论 */
+  onSwipeUp?: () => void;
   /** 提供后横滑跟手走 DOM 直写（无每帧重渲染）；不提供则回退到 state */
   dragRefs?: SwipeDragRefs;
   /**
@@ -213,7 +217,7 @@ interface UsePlayerSwipeGesturesResult {
 /**
  * 全屏播放页的滑动手势：
  * - 下滑收起播放页
- * - 上滑不响应（交给内容区自己处理）
+ * - 上滑唤出评论（封面页；歌词页由 enabled=false 交给列表滚动）
  * - 左滑看下一首、右滑回上一首（自然方向，与翻页一致）
  *
  * 只在主内容区（封面）绑定，进度条、按钮、抽屉都不在手势区域内。
@@ -224,6 +228,7 @@ export function usePlayerSwipeGestures({
   onClose,
   onPrev,
   onNext,
+  onSwipeUp,
   onTap,
   containerRef,
   dragRefs,
@@ -470,8 +475,12 @@ export function usePlayerSwipeGestures({
           gesture.axis = "horizontal";
         } else if (dy > 0 && dy > Math.abs(dx) * DIRECTION_RATIO) {
           gesture.axis = "vertical";
+        } else if (dy < 0 && -dy > Math.abs(dx) * DIRECTION_RATIO) {
+          // 上滑：留给唤出评论，跟手阶段不做位移，松手达标才触发
+          gesture.axis = "up";
+          return;
         } else {
-          // 上滑 / 斜向滑动：既不收起也不切歌
+          // 斜向滑动：既不收起也不切歌
           gesture.axis = "ignored";
           return;
         }
@@ -536,12 +545,23 @@ export function usePlayerSwipeGestures({
 
       /**
        * 只有手势真正触发了动作，才拦一次紧随其后的 click（否则会误切到歌词页）。
-       * 上滑、斜向滑动、距离不足这些没有产生动作的手势一律不拦，
+       * 斜向滑动、距离不足这些没有产生动作的手势一律不拦，
        * 不然用户滑完再点一下会发现点击「被吃掉」。
        */
       const markClickSuppression = () => {
         suppressClickUntilRef.current = Date.now() + CLICK_SUPPRESS_WINDOW;
       };
+
+      if (axis === "up") {
+        const shouldOpen =
+          -dy >= OPEN_COMMENTS_THRESHOLD || (isFling && -dy >= FLING_DISTANCE);
+        if (shouldOpen && onSwipeUp) {
+          markClickSuppression();
+          onSwipeUp();
+        }
+        reset();
+        return;
+      }
 
       if (axis === "vertical") {
         const shouldClose =
@@ -635,6 +655,7 @@ export function usePlayerSwipeGestures({
       onClose,
       onNext,
       onPrev,
+      onSwipeUp,
       onTap,
       reset,
       cancelDragFrame,

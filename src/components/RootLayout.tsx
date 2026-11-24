@@ -1,8 +1,8 @@
 import {
-  Outlet,
   useLocation,
   useNavigate,
   useNavigationType,
+  useOutlet,
 } from "react-router-dom";
 import { MusicLayout } from "@/components/MusicLayout";
 import { MusicNowPlayingBar } from "@/components/MusicNowPlayingBar";
@@ -16,7 +16,15 @@ import { useExitLayer } from "@/hooks/useExitLayer";
 import { useTapTopToScrollTop } from "@/hooks/useTapTopToScrollTop";
 import { useScrollRestoration } from "@/hooks/useScrollRestoration";
 import { App as CapacitorApp } from "@capacitor/app";
-import { useEffect, useCallback, useRef, lazy, Suspense, useMemo } from "react";
+import {
+  useEffect,
+  useCallback,
+  useRef,
+  lazy,
+  Suspense,
+  useMemo,
+  type ReactNode,
+} from "react";
 import { IS_NATIVE } from "@/lib/api/config";
 
 const FullScreenPlayer = lazy(() =>
@@ -53,6 +61,10 @@ const BACK_MINIMIZE_PATHS = ["/", "/search", "/favorites", "/mine"] as const;
  */
 const HOME_PATH = "/search";
 
+function isRootTabPathname(path: string) {
+  return ROOT_TAB_PATHS.includes(path as (typeof ROOT_TAB_PATHS)[number]);
+}
+
 export function RootLayout() {
   const location = useLocation();
   const navigate = useNavigate();
@@ -70,8 +82,12 @@ export function RootLayout() {
   // 全屏播放器里也要接管：歌词页的列表同样是 data-page-scroll 容器。
   useTapTopToScrollTop();
 
-  // 返回二级页时恢复上次的滚动位置（回收站 → 设置页等），前进/新开页面仍从顶部
-  useScrollRestoration(location.pathname, navigationType);
+  // 返回二级页时恢复上次的滚动位置；底部 tab 之间切换同样保留各自位置。
+  useScrollRestoration(
+    location.pathname,
+    navigationType,
+    isRootTabPathname(location.pathname)
+  );
 
   // Back Button Logic
   const locationRef = useRef(location);
@@ -219,6 +235,21 @@ export function RootLayout() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [location.pathname]);
 
+  // 底部 tab 保活：把每个 tab 的 outlet 留在本组件里，切走时只是隐藏而不是卸载。
+  // 这样搜索结果、歌单展开/滚动、设置面板状态都能回到离开时的样子。
+  const outlet = useOutlet();
+  const tabPagesRef = useRef<Map<string, ReactNode>>(new Map());
+  const activeIsTab = isRootTabPathname(location.pathname);
+  if (activeIsTab && outlet) {
+    tabPagesRef.current.set(location.pathname, outlet);
+  }
+  const pages: Array<[string, ReactNode]> = Array.from(
+    tabPagesRef.current.entries()
+  );
+  if (!activeIsTab && outlet) {
+    pages.push([location.pathname, outlet]);
+  }
+
   return (
     <>
       <MusicLayout
@@ -233,9 +264,22 @@ export function RootLayout() {
         }
         tabBar={<MusicTabBar />}
       >
-        <div key={location.pathname} className={cn("h-full", pageAnimClass)}>
-          <Outlet />
-        </div>
+        {pages.map(([path, page]) => {
+          const active = path === location.pathname;
+          return (
+            <div
+              key={path}
+              data-page-route={path}
+              className={cn(
+                "h-full",
+                active ? "block" : "hidden",
+                active && pageAnimClass
+              )}
+            >
+              {page}
+            </div>
+          );
+        })}
       </MusicLayout>
 
       <GlobalMusicPlayer />

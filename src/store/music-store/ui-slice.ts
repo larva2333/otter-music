@@ -1,5 +1,6 @@
 import type { StateCreator } from "zustand";
 import type { MusicState } from "./types";
+import type { CommentSourcePreference } from "@/lib/comments/options";
 import {
   DEFAULT_SOURCE_CONFIGS,
   type MusicSource,
@@ -31,6 +32,9 @@ export interface AutoMatchContext {
 
 export interface UiSlice {
   quality: string;
+  /** 评论来源偏好：auto 自动降级，或固定某平台 */
+  commentSource: CommentSourcePreference;
+  setCommentSource: (source: CommentSourcePreference) => void;
   searchSource: MusicSource;
   sourceConfigs: SourceConfig[];
   lastPlaylistCategory: string;
@@ -117,6 +121,7 @@ export const createUiSlice: StateCreator<MusicState, [], [], UiSlice> = (
   set
 ) => ({
   quality: "192",
+  commentSource: "auto",
   searchSource: "kuwo",
   sourceConfigs: DEFAULT_SOURCE_CONFIGS,
   lastPlaylistCategory: DEFAULT_BROWSE_POSITION.lastPlaylistCategory,
@@ -149,6 +154,7 @@ export const createUiSlice: StateCreator<MusicState, [], [], UiSlice> = (
   desktopLyricColor: "#FFFFFF",
   isFullScreenPlayer: false,
   setQuality: (quality) => set({ quality }),
+  setCommentSource: (commentSource) => set({ commentSource }),
   setSearchSource: (searchSource) => set({ searchSource }),
   setSourceConfigs: (sourceConfigs) =>
     set((state) => {

@@ -1,5 +1,6 @@
 "use client";
 
+import { forwardRef } from "react";
 import { PageHeader } from "./PageHeader";
 import { cn } from "@/lib/utils";
 import { useNavigate } from "react-router-dom";
@@ -15,33 +16,32 @@ interface PageLayoutProps {
   showBack?: boolean;
 }
 
-export function PageLayout({
-  title,
-  onBack,
-  action,
-  children,
-  className,
-  showBack = true,
-}: PageLayoutProps) {
-  const navigate = useNavigate();
+/** ref 转发到根容器，供横滑跟手时连同标题栏一起平移（标题与内容不分头） */
+export const PageLayout = forwardRef<HTMLDivElement, PageLayoutProps>(
+  function PageLayout(
+    { title, onBack, action, children, className, showBack = true },
+    ref
+  ) {
+    const navigate = useNavigate();
 
-  const handleBack = () => {
-    if (onBack) {
-      onBack();
-    } else {
-      navigate(-1);
-    }
-  };
+    const handleBack = () => {
+      if (onBack) {
+        onBack();
+      } else {
+        navigate(-1);
+      }
+    };
 
-  return (
-    <div className={cn("flex flex-col h-full", className)}>
-      <PageHeader
-        title={title}
-        onBack={handleBack}
-        action={action}
-        showBack={showBack}
-      />
-      {children}
-    </div>
-  );
-}
+    return (
+      <div ref={ref} className={cn("flex flex-col h-full", className)}>
+        <PageHeader
+          title={title}
+          onBack={handleBack}
+          action={action}
+          showBack={showBack}
+        />
+        {children}
+      </div>
+    );
+  }
+);

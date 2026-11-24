@@ -1,4 +1,5 @@
 import { fetchWithTimeout, getProxyUrl, IS_NATIVE } from "@/lib/api/config";
+import { decodeLxScript } from "./lx-codec";
 import type { ProbeResult } from "./types";
 
 const GITHUB_API = "https://api.github.com";
@@ -29,8 +30,52 @@ function remote(url: string) {
   return !IS_NATIVE && import.meta.env.PROD ? getProxyUrl(url) : url;
 }
 
+/**
+ * 判断一段文本是不是洛雪音源脚本。
+ *
+ * 真实的洛雪脚本写法五花八门，早期只认 `globalThis.lx` / `EVENT_NAMES`，
+ * 导致很多 JS 直链被误判成「无法识别」。这里把常见形态都覆盖：
+ * - `gz_` 前缀的压缩脚本（桌面端导出的形态，先解压再判）
+ * - `const { EVENT_NAMES, ... } = globalThis.lx` 解构
+ * - `globalThis.lx.on(...)` / `self.lx` / `lx.EVENT_NAMES`
+ * - 压缩后的脚本里 `@name` 注释仍在，配合 action 关键字也能认出
+ *
+ * 只要命中「LX 宿主接口」或「头部注释 + action 关键字」两类特征之一即可。
+ */
 function isLxScript(text: string) {
-  return /globalThis\s*\.\s*lx/.test(text) || /EVENT_NAMES/.test(text);
+  const raw = text.trim();
+  if (!raw) return false;
+  // 压缩脚本：解压后再按明文规则判断
+  const script = raw.startsWith("gz_") ? safeDecode(raw) : raw;
+  if (!script) return false;
+
+  // 宿主接口特征
+  if (
+    /globalThis\s*\.\s*lx\b/.test(script) ||
+    /\bself\s*\.\s*lx\b/.test(script) ||
+    /\bwindow\s*\.\s*lx\b/.test(script) ||
+    /\blx\s*\.\s*EVENT_NAMES\b/.test(script) ||
+    /\bEVENT_NAMES\b/.test(script) ||
+    /\blx\s*\.\s*(?:on|send|request)\s*\(/.test(script)
+  ) {
+    return true;
+  }
+
+  // 压缩脚本里宿主变量名会被混淆，但头部注释和 action 名通常保留
+  const hasHeader = /@name\s+\S/.test(script) || /@version\s+\S/.test(script);
+  if (!hasHeader) return false;
+  return ACTIONS.some((a) =>
+    new RegExp(`['"\`]${a}['"\`]|\\b${a}\\s*\\(`).test(script)
+  );
+}
+
+/** 解压失败时返回空串，交给调用方报「无法识别」而不是抛异常 */
+function safeDecode(text: string): string {
+  try {
+    return decodeLxScript(text);
+  } catch {
+    return "";
+  }
 }
 
 /** 把 GitHub 仓库/文件页 URL 转成 raw 直链；其它 URL 原样返回 */
@@ -309,12 +354,17 @@ const ACTIONS = [
 ];
 
 /** 解析洛雪脚本头部注释里的 @name / @version，以及支持的 action */
-function parseLxScript(script: string): ProbeResult | null {
-  if (!isLxScript(script)) return null;
+function parseLxScript(input: string): ProbeResult | null {
+  const script = input.trim().startsWith("gz_")
+    ? safeDecode(input.trim())
+    : input;
+  if (!script || !isLxScript(script)) return null;
 
-  const nameMatch = script.match(
-    /@name\s+(?:[\u4e00-\u9fa5A-Za-z0-9_\-. ]+?)(?:\s|$)/
-  );
+  const nameMatch =
+    script.match(/@name\s+([^\s@*/]+)/) ??
+    script.match(/@name\s*=\s*["']?([^"'\s]+)/);
+  // 真实注释形如 /* @name 测试音源 @version v1.0 */，版本用于更新提示
+  const versionMatch = script.match(/@version\s+([^\s@*/]+)/);
 
   // 真实脚本大多被压缩过，action 常写成对象方法简写（musicUrl(r,e){...}）
   // 或带引号的字符串，两种都要认。
@@ -323,20 +373,18 @@ function parseLxScript(script: string): ProbeResult | null {
     const re = new RegExp(`['"\`]${action}['"\`]|\\b${action}\\s*\\(`);
     if (re.test(script)) capabilities.push(action);
   }
-  // 至少实现了搜索或取链，才算能用的播放音源
-  if (
-    !capabilities.includes("musicInfo") &&
-    !capabilities.includes("musicUrl")
-  ) {
-    return null;
-  }
+  // 洛雪自定义源官方只提供播放链路（musicUrl/lyric/pic），搜索由客户端完成。
+  // 只要确认是洛雪脚本就允许导入；具体能力以运行时 send(inited) 上报为准，
+  // 不再硬性要求 musicInfo/musicUrl —— 否则只实现取链的脚本会被误杀。
 
   return {
     kind: "lx",
-    name: nameMatch?.[0]?.replace(/^@name\s+/, "").trim() || "洛雪音源",
+    name: (nameMatch?.[1] ?? "").trim() || "洛雪音源",
+    // 保存解压后的明文，运行时 sandbox 直接可用
     script,
     capabilities,
     sourceCode: detectSourceCode(script),
+    version: versionMatch?.[1]?.trim() || undefined,
   };
 }
 
@@ -452,8 +500,9 @@ export async function probeSourceCandidates(
   const raw = input.trim();
   if (!raw) return { ok: false, reason: "empty" };
 
-  // 直接粘贴了脚本内容
-  if (raw.length > 80 && isLxScript(raw)) {
+  // 直接粘贴了脚本内容（明文或 gz_ 压缩形态）
+  // 用「看起来是不是 URL」来分流，不再靠长度阈值——短脚本也应能直接导入
+  if (!/^https?:\/\//i.test(raw) && isLxScript(raw)) {
     const parsed = parseLxScript(raw);
     return parsed
       ? { ok: true, candidates: [parsed] }

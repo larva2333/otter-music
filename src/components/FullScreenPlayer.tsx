@@ -26,6 +26,7 @@ import {
   Pause,
   SquareArrowOutUpRight,
   Maximize2,
+  MessageCircleMore,
 } from "lucide-react";
 import { Spinner } from "@/components/ui/spinner";
 import { useMounted } from "@/hooks/use-mounted";
@@ -33,6 +34,7 @@ import { usePlayerActions } from "@/hooks/usePlayerActions";
 import { usePlayerUIState } from "@/hooks/usePlayerUIState";
 import { PlayerQueueDrawer } from "./PlayerQueueDrawer";
 import { MusicTrackMobileMenu } from "./MusicTrackMobileMenu";
+import { MusicCommentsDrawer } from "./MusicCommentsDrawer";
 import { AddToPlaylistDrawer } from "./AddToPlaylistDrawer";
 import { QualityDrawer } from "./settings/QualityDrawer";
 import { downloadMusicTrack } from "@/lib/utils/download";
@@ -461,6 +463,13 @@ export function FullScreenPlayer({
 
   const [isCoverPreviewOpen, setIsCoverPreviewOpen] = useState(false);
   const [isStyleMenuOpen, setIsStyleMenuOpen] = useState(false);
+  /** 评论抽屉：收藏旁的评论按钮、上滑手势共用同一个入口 */
+  const [commentsOpen, setCommentsOpen] = useState(false);
+  /**
+   * 歌词样式面板开关（受控）。播放页「更多」菜单里的「歌词调整」与长按歌词
+   * 共用这一个状态，LyricsPanel 不再自己持有。
+   */
+  const [lyricStyleOpen, setLyricStyleOpen] = useState(false);
   /** 风格菜单刚关闭的时刻：紧接着的那次点击只用于关菜单，不要切歌词页 */
   const styleMenuClosedAtRef = useRef(0);
 
@@ -647,6 +656,7 @@ export function FullScreenPlayer({
     onClose,
     onPrev: handlePrev,
     onNext: handleNext,
+    onSwipeUp: () => setCommentsOpen(true),
     // 轻点在 touchend 里处理：不依赖 click，避免上滑/滚动后点击被 WebView 吞掉
     onTap: (target) => {
       // 长按抬手补发的 tap 只用于弹菜单，不要顺带切到/切回歌词页
@@ -800,8 +810,9 @@ export function FullScreenPlayer({
           </Button>
         </div>
         {/* h-12 必须写死：header 是 items-center，本格内没有流内元素，
-            高度会塌成 0 */}
-        <div className="flex justify-center h-12">
+            高度会塌成 0。items-center 让 h-8 的音质按钮与左右 h-12 按钮
+            视觉居中对齐，否则按钮会贴着顶边显得偏上 */}
+        <div className="flex items-center justify-center h-12">
           {showLyrics ? null : (
             <Button
               variant="ghost"
@@ -913,7 +924,12 @@ export function FullScreenPlayer({
       >
         {showLyrics ? (
           <div className="w-full h-full">
-            <LyricsPanel track={currentTrack} active={isFullScreen} />
+            <LyricsPanel
+              track={currentTrack}
+              active={isFullScreen}
+              stylePanelOpen={lyricStyleOpen}
+              onStylePanelOpenChange={setLyricStyleOpen}
+            />
           </div>
         ) : showCover ? (
           <div
@@ -1033,6 +1049,19 @@ export function FullScreenPlayer({
                 )}
               />
             </Button>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-10 w-10 text-white/70 hover:bg-white/10 hover:text-white"
+              aria-label="评论"
+              title="评论"
+              onClick={(e) => {
+                e.stopPropagation();
+                setCommentsOpen(true);
+              }}
+            >
+              <MessageCircleMore className="h-6 w-6" />
+            </Button>
             {currentTrack && (
               <>
                 <MusicTrackMobileMenu
@@ -1053,11 +1082,22 @@ export function FullScreenPlayer({
                   onNavigate={() => {
                     onClose();
                   }}
+                  onOpenPlayerStyle={() => setIsStyleMenuOpen(true)}
+                  onOpenLyricStyle={() => {
+                    // 从「更多」菜单进歌词调整：先切到歌词页，再弹面板
+                    setShowLyrics(true);
+                    setLyricStyleOpen(true);
+                  }}
                 />
                 <AddToPlaylistDrawer
                   open={isAddToPlaylistOpen}
                   onOpenChange={setIsAddToPlaylistOpen}
                   track={currentTrack}
+                />
+                <MusicCommentsDrawer
+                  track={currentTrack}
+                  open={commentsOpen}
+                  onOpenChange={setCommentsOpen}
                 />
               </>
             )}

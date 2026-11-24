@@ -1,6 +1,9 @@
 import { fetchWithTimeout, getProxyUrl, IS_NATIVE } from "@/lib/api/config";
-import { strFromU8, unzlibSync, zlibSync } from "fflate";
+import { unzlibSync, zlibSync } from "fflate";
 import type { MusicTrack, SearchPageResult, SongLyric } from "@/types/music";
+import { decodeLxScript } from "./lx-codec";
+
+export { decodeLxScript } from "./lx-codec";
 
 /**
  * 洛雪音乐脚本沙箱。
@@ -73,15 +76,6 @@ const EVENT_NAMES = {
  * 注入前解压；不处理会让 `new Function(script)` 直接语法报错，脚本永远
  * 注册不上 handler —— 表现就是所有洛雪源「一条链接都拿不到」。
  */
-export function decodeLxScript(script: string): string {
-  if (!script.startsWith("gz_")) return script;
-  const b64 = script.slice(3).trim();
-  const bin = atob(b64);
-  const bytes = new Uint8Array(bin.length);
-  for (let i = 0; i < bin.length; i += 1) bytes[i] = bin.charCodeAt(i);
-  return strFromU8(unzlibSync(bytes));
-}
-
 function toBytes(
   input: string | ArrayBuffer | Uint8Array,
   encoding = "utf8"

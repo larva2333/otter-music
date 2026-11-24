@@ -29,6 +29,7 @@ import { useTabReclick } from "@/hooks/use-tab-reclick";
 import { PullRefreshIndicator } from "@/components/PullRefreshIndicator";
 import { useMarketSession } from "@/store/session/market-session";
 import { PlaylistGrid, PlaylistGridSkeleton } from "./PlaylistGrid";
+import { getCategoryIndicator } from "./category-indicator";
 import { PodcastSection } from "./PodcastSection";
 import { AlistSection } from "./AlistSection";
 import { BillboardSection } from "./BillboardSection";
@@ -38,17 +39,20 @@ import { RadarSection } from "./RadarSection";
 import { ArtistSection } from "./ArtistSection";
 import { logger } from "@/lib/logger";
 
-const PAGE_SIZE = 30;
 /**
- * 首页同时保留在 DOM 里的分类网格数量（含当前）。
- *
- * 以前是 4：切到第 5 个分类就会把最早的网格整块卸载，网格里的 <img> 节点
- * 跟着被销毁。再切回去时节点要重建，封面就得重新读缓存/重新解码，
- * 表现出来就是「来回切分类，封面又一张张加载一遍」。
- * 顶部常驻栏总共十来个分类，干脆全部留着（上限仍留一点余量），
- * 非当前网格是 display:none，不参与布局也不影响滚动。
+ * 歌单广场每页条数：手机 4 列 = 3 行。
+ * 原来是 30，一次请求/渲染 30 张卡片；配上触底自动加载，滚几屏就能堆到几百张，
+ * 切到设置页时这些卡片仍挂在保活的 /search 页上，来回切直接卡住。
+ * 保留原来的触底加载交互，只把一页的数量压小。
  */
-const MAX_KEPT_GRIDS = 16;
+const PAGE_SIZE = 12;
+/**
+ * 同时保留在 DOM 里的分类网格数量（含当前）。
+ * 默认常驻栏只有「歌单广场 / 排行榜」两个 browse 分类，留 4 份足够覆盖
+ * 页内筛选来回切；再多只是给设置页徒增几百个节点。封面解码交给
+ * CachedImage 的离屏池，网格重建不会重新闪一遍。
+ */
+const MAX_KEPT_GRIDS = 4;
 
 const getSnapshotKey = (category: string) => `market-snapshot:${category}`;
 
@@ -155,7 +159,8 @@ export function PlaylistMarket() {
         const category = effectiveCategory;
         if (NON_BROWSE_CATEGORIES.has(category)) return null;
         const isToplist = category === "toplist";
-        const cacheKey = `market-playlist:v2:${category || "all"}:${isToplist ? 0 : offset}`;
+        // v2→v3：旧缓存里一页是 30 条且数据追加式累积，分页改版后不再复用
+        const cacheKey = `market-playlist:v3:${category || "all"}:${isToplist ? 0 : offset}`;
 
         const force = forceRefreshRef.current && offset === 0;
         const res = await cachedFetch<MarketPlaylist[]>(
@@ -310,29 +315,30 @@ export function PlaylistMarket() {
   // 极窄屏仍放不下时靠横滑兜底，并把选中项滚到可视区。
   const measureIndicator = useCallback(() => {
     const bar = scrollContainerRef.current;
-    const btn = bar?.querySelector<HTMLElement>(
-      `[data-category-id="${activeCategory}"]`
-    );
-    if (!bar || !btn) {
-      setIndicator(null);
-      return;
-    }
-    setIndicator({
-      left: btn.offsetLeft,
-      top: btn.offsetTop,
-      width: btn.offsetWidth,
-    });
+    const position = getCategoryIndicator(bar, activeCategory);
+    setIndicator(position);
+    if (!bar || !position) return;
     // 只滚胶囊容器本身；不能用 scrollIntoView，否则会把外层页面一起带跑
-    const target = btn.offsetLeft - (bar.clientWidth - btn.offsetWidth) / 2;
+    const target = position.left - (bar.clientWidth - position.width) / 2;
     bar.scrollLeft = Math.max(0, target);
   }, [activeCategory]);
 
   useEffect(() => {
     const raf = requestAnimationFrame(measureIndicator);
     window.addEventListener("resize", measureIndicator);
+    // 从搜索结果/专辑详情侧滑回首页时，分类栏由 display:none 变回可见，
+    // rAF 那次测量发生在隐藏期间会拿到 0 宽度。监听栏 itself 的尺寸变化，
+    // 显示回来后重新测量，胶囊才能重新落到「推荐」上。
+    const bar = scrollContainerRef.current;
+    const resizeObserver =
+      bar && typeof ResizeObserver !== "undefined"
+        ? new ResizeObserver(measureIndicator)
+        : null;
+    if (bar) resizeObserver?.observe(bar);
     return () => {
       cancelAnimationFrame(raf);
       window.removeEventListener("resize", measureIndicator);
+      resizeObserver?.disconnect();
     };
   }, [measureIndicator, displayFilters]);
 

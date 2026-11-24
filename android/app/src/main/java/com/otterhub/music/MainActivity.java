@@ -36,6 +36,7 @@ public class MainActivity extends BridgeActivity {
         registerPlugin(WebViewLoginPlugin.class);
         registerPlugin(DesktopLyricPlugin.class);
         registerPlugin(AppInstallerPlugin.class);
+        registerPlugin(CacheManagerPlugin.class);
         super.onCreate(savedInstanceState);
         useTransientSystemBars();
         applyWebViewBackground();

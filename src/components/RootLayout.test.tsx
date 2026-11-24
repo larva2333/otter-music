@@ -218,6 +218,28 @@ describe("RootLayout", () => {
     expect(useMusicStore.getState().isFullScreenPlayer).toBe(false);
   });
 
+  it("keeps visited root tab pages mounted when switching tabs", async () => {
+    const { router } = renderLayout(["/search", "/mine"]);
+
+    expect(container?.textContent).toContain("Search Page");
+    expect(container?.textContent).not.toContain("Mine Page");
+
+    await act(async () => {
+      await router.navigate("/mine");
+    });
+
+    expect(container?.textContent).toContain("Search Page");
+    expect(container?.textContent).toContain("Mine Page");
+
+    const routes = Array.from(
+      container!.querySelectorAll<HTMLElement>("[data-page-route]")
+    );
+    const searchPage = routes.find((el) => el.dataset.pageRoute === "/search");
+    const minePage = routes.find((el) => el.dataset.pageRoute === "/mine");
+    expect(searchPage?.classList.contains("hidden")).toBe(true);
+    expect(minePage?.classList.contains("hidden")).toBe(false);
+  });
+
   it("closes the fullscreen player on real Escape without registering popstate handling", async () => {
     const addEventListenerSpy = vi.spyOn(window, "addEventListener");
     useMusicStore.setState({ isFullScreenPlayer: true });

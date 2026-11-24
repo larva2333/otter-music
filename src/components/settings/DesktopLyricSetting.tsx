@@ -38,9 +38,8 @@ export function DesktopLyricSetting() {
       ?.expandDesktopLyric === true;
   const [expanded, setExpanded] = useState(fromDeepLink);
 
-  // 深链进入时把整项滚动到视口中央：SettingItem 自带的 scrollIntoView 在
-  // 展开动画（200ms）完成前就计算位置，条目只能勉强贴到屏幕底部边缘，
-  // 展开内容看不到；等动画结束后再居中滚动即可完整呈现
+  // 深链进入（双击悬浮歌词）时把整项滚动到视口中央，确保能直接看到设置。
+  // 普通点击展开不走这里：SettingItem 已取消自动滚动，展开时保持当前位置。
   const itemRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (!fromDeepLink) return;

@@ -4,6 +4,7 @@ import { PageLayout } from "./PageLayout";
 import { useNavigate } from "react-router-dom";
 import { ThemeToggle } from "./ThemeToggle";
 import { QualitySelect } from "./settings/QualitySelect";
+import { CommentSourceSelect } from "./settings/CommentSourceSelect";
 import { AggregatedSourceSelect } from "./settings/AggregatedSourceSelect";
 import { SyncConfig } from "./settings/SyncConfig";
 import { NeteaseLogin } from "./settings/NeteaseLogin";
@@ -91,15 +92,20 @@ export function SettingsPage({ onBack }: SettingsPageProps) {
   const navigate = useNavigate();
   const [dataBackupOpen, setDataBackupOpen] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const pageRef = useRef<HTMLDivElement>(null);
 
   // 设置是链尾：右滑回歌单最后一个 type，左滑无下一页。
   // 左滑方向不跟手——否则整页内容会被拖出去再弹回来。
+  // touch 监听仍挂在滚动容器上，但跟手位移作用于整页 pageRef：
+  // 标题栏和内容一起平移，不会出现内容滑、标题不动的分头。
   useSwipeCategories(scrollRef, {
     ids: ["settings"],
     activeId: "settings",
     onChange: () => {},
     onEdge: useRootTabSwipe("settings"),
     canFollow: (dir) => dir === "prev",
+    followRef: pageRef,
+    keepOffsetOnEdge: true,
   });
 
   // 再次点击底部「设置」tab：依次滚到下一个分组，最后一组之后再点回到顶部
@@ -170,11 +176,11 @@ export function SettingsPage({ onBack }: SettingsPageProps) {
   );
 
   return (
-    <PageLayout title="系统设置" onBack={onBack} showBack={false}>
+    <PageLayout ref={pageRef} title="系统设置" onBack={onBack} showBack={false}>
       <div
         ref={scrollRef}
         data-page-scroll=""
-        className="flex-1 p-4 pb-bottom-stack overflow-y-auto"
+        className="flex-1 p-4 pb-bottom-stack overflow-y-auto [overflow-anchor:none]"
       >
         <SettingsSection title="常用设置">
           <AggregatedSourceSelect />
@@ -198,6 +204,7 @@ export function SettingsPage({ onBack }: SettingsPageProps) {
             }
           />
           <QualitySelect />
+          <CommentSourceSelect />
           {IS_NATIVE && (
             <SettingItem
               icon={Music4}
@@ -275,6 +282,7 @@ export function SettingsPage({ onBack }: SettingsPageProps) {
           <QqMusicLogin />
           <BilibiliLogin />
           <SyncConfig />
+          <StreamCacheSetting />
           <SettingItem
             icon={Database}
             title="数据备份"
@@ -321,7 +329,6 @@ export function SettingsPage({ onBack }: SettingsPageProps) {
             }
           />
           <AutoMatchSetting />
-          <StreamCacheSetting />
           <WebDavBackup />
         </SettingsSection>
 

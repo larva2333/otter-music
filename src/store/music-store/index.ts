@@ -98,6 +98,7 @@ export const useMusicStore = create<MusicState>()(
         currentAudioTime: state.currentAudioTime,
         duration: state.duration,
         quality: state.quality,
+        commentSource: state.commentSource,
         searchSource: state.searchSource,
         sourceConfigs: state.sourceConfigs,
         lastMineTab: state.lastMineTab,

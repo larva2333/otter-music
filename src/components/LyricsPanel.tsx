@@ -37,6 +37,12 @@ import {
 interface LyricsPanelProps {
   track: MusicTrack | null;
   active?: boolean;
+  /**
+   * 歌词样式面板开关（受控）。播放页「更多」菜单的「歌词调整」和长按歌词
+   * 共用这一个状态，由调用方持有。不传时组件自己管理（横屏播放/单测）。
+   */
+  stylePanelOpen?: boolean;
+  onStylePanelOpenChange?: (open: boolean) => void;
 }
 
 /**
@@ -254,15 +260,28 @@ const LyricLineView = memo(function LyricLineView({
   );
 });
 
-export function LyricsPanel({ track, active = true }: LyricsPanelProps) {
+export function LyricsPanel({
+  track,
+  active = true,
+  stylePanelOpen: controlledStylePanelOpen,
+  onStylePanelOpenChange,
+}: LyricsPanelProps) {
   const [lyrics, setLyrics] = useState<LyricLine[]>([]);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
   const [isUserScrolling, setIsUserScrolling] = useState(false);
   const [centerLineIndex, setCenterLineIndex] = useState(-1);
   const [baselineVisible, setBaselineVisible] = useState(false);
-  // 长按歌词弹出的样式面板
-  const [stylePanelOpen, setStylePanelOpen] = useState(false);
+  // 长按歌词弹出的样式面板：外部受控时用 props，否则自己管理
+  const [internalStylePanelOpen, setInternalStylePanelOpen] = useState(false);
+  const stylePanelOpen = controlledStylePanelOpen ?? internalStylePanelOpen;
+  const setStylePanelOpen = useCallback(
+    (open: boolean) => {
+      if (onStylePanelOpenChange) onStylePanelOpenChange(open);
+      else setInternalStylePanelOpen(open);
+    },
+    [onStylePanelOpenChange]
+  );
   // 样式面板的黑色遮罩会铺到状态栏底下，弹出期间状态栏图标改成浅色
   useScrimSystemBars(stylePanelOpen);
   // 点了状态栏「回顶」之后暂停跟随播放进度，否则下一句一到就把视图拽回去
@@ -389,7 +408,7 @@ export function LyricsPanel({ track, active = true }: LyricsPanelProps) {
         navigator.vibrate?.(10);
       }, LONG_PRESS_DELAY);
     },
-    [cancelLongPress]
+    [cancelLongPress, setStylePanelOpen]
   );
 
   const handleLyricPointerMove = useCallback(

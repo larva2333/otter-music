@@ -120,6 +120,23 @@ describe("checkSourceHealth", () => {
     expect(result.status).toBe("fail");
   });
 
+  it("单个音源超过总时限就返回未判定，不再无限等待", async () => {
+    vi.useFakeTimers();
+    try {
+      // 探测请求永不返回；内部每一步的超时加起来会远超总时限
+      search.mockImplementation(() => new Promise(() => {}));
+      const pending = checkSourceHealth("slow" as never, 25);
+      await vi.advanceTimersByTimeAsync(30);
+      const result = await pending;
+
+      expect(result.status).toBe("unknown");
+      expect(result.reason).toBe("检测超时");
+      expect(result.latencyMs).toBeLessThan(100);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("洛雪源用换播放链接判定，不靠搜索", async () => {
     getImportedSource.mockReturnValue(LX_SOURCE);
     getLxRuntime.mockReturnValue(lxRuntime());

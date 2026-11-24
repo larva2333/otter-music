@@ -46,7 +46,10 @@ describe("useSwipeCategories 首页分类左右滑动", () => {
     activeId: string,
     onChange: (id: string) => void,
     onEdge?: (dir: "next" | "prev") => void,
-    extra?: { canFollow?: (dir: "next" | "prev") => boolean }
+    extra?: {
+      canFollow?: (dir: "next" | "prev") => boolean;
+      keepOffsetOnEdge?: boolean;
+    }
   ) => {
     function Harness() {
       const ref = useRef<HTMLDivElement>(null);
@@ -242,6 +245,39 @@ describe("useSwipeCategories 首页分类左右滑动", () => {
     });
     expect(onChange).not.toHaveBeenCalled();
     expect(onEdge).toHaveBeenCalledWith("prev");
+  });
+
+  it("keepOffsetOnEdge 时越界右滑不回弹，但切页后清除位移（tab 保活）", () => {
+    const onChange = vi.fn();
+    const onEdge = vi.fn();
+    const surface = mountSurface(["设置"], "设置", onChange, onEdge, {
+      canFollow: (dir) => dir === "prev",
+      keepOffsetOnEdge: true,
+    });
+
+    act(() => {
+      surface.dispatchEvent(
+        makeTouchEvent("touchstart", [
+          { clientX: 120, clientY: 200, target: surface },
+        ])
+      );
+      surface.dispatchEvent(
+        makeTouchEvent("touchmove", [{ clientX: 280, clientY: 200 }])
+      );
+    });
+    expect(surface.style.transform).toBe("translateX(88px)");
+
+    act(() => {
+      surface.dispatchEvent(
+        makeTouchEvent("touchend", [], [{ clientX: 280, clientY: 200 }])
+      );
+    });
+
+    expect(onChange).not.toHaveBeenCalled();
+    expect(onEdge).toHaveBeenCalledWith("prev");
+    // 根 tab 保活，旧页不会卸载：位移必须立即清掉，否则切回来整页还偏着
+    expect(surface.style.transform).toBe("");
+    expect(surface.style.transition).toBe("");
   });
 
   it("内部横向滚动区域上的横滑交给该元素处理", () => {

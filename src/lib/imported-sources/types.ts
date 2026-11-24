@@ -26,6 +26,10 @@ export interface ImportedSource {
   enabled: boolean;
   visible: boolean;
   addedAt: number;
+  /** 洛雪脚本头部的 @version，更新时用于提示 */
+  version?: string;
+  /** 最近一次导入 / 从地址更新的时间 */
+  updatedAt?: number;
 }
 
 /** 探测结果：URL 指向的内容被识别成哪种音源 */
@@ -36,4 +40,6 @@ export interface ProbeResult {
   script?: string;
   capabilities?: string[];
   sourceCode?: string;
+  /** 洛雪脚本头部的 @version */
+  version?: string;
 }

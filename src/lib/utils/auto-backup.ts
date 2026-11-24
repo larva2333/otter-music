@@ -7,6 +7,7 @@ import { logger } from "@/lib/logger";
 import { IS_NATIVE } from "@/lib/api/config";
 import { storeKey } from "@/store/store-keys";
 import { useMusicStore } from "@/store/music-store";
+import { applyFontScale } from "@/store/ui-prefs-store";
 
 /**
  * 自动备份：每天把持久化状态落一份 JSON 到公共下载目录。
@@ -49,6 +50,18 @@ const BACKUP_KEYS: storeKey[] = [
   storeKey.UiPrefsStore,
 ];
 
+/**
+ * 同样属于「用户设置」但存在 localStorage 的项（ui-prefs-store 的 fontSize、
+ * next-themes 的主题、导入音源与搜索历史）。这些不经过 idbStorage，
+ * readStores() 用 idb-keyval 读不到，必须单独读取并随备份一起写回。
+ */
+const LOCAL_STORAGE_KEYS = [
+  storeKey.UiPrefsStore,
+  "theme",
+  "otter_imported_sources",
+  "otter_search_history",
+] as const;
+
 export interface AutoBackupSummary {
   favorites: number;
   playlists: number;
@@ -71,8 +84,10 @@ interface AutoBackupEnvelope {
   type: "otter-music-auto-backup";
   exportedAt: number;
   summary: AutoBackupSummary;
-  /** key → 持久化层原始 JSON 字符串 */
+  /** key → 持久化层原始 JSON 字符串（IndexedDB） */
   stores: Record<string, string>;
+  /** key → localStorage 原始值（主题/字体/导入音源/搜索历史） */
+  localStorage?: Record<string, string>;
 }
 
 /** 本地时区的日期键。不能用 toISOString：UTC 会比本地晚 8 小时，跨零点会记错日期 */
@@ -135,6 +150,45 @@ async function readStores(): Promise<Record<string, string>> {
     })
   );
   return Object.fromEntries(entries.filter(Boolean) as [string, string][]);
+}
+
+/** 读取存在 localStorage 里的设置项原始值 */
+function readLocalStorage(): Record<string, string> {
+  const result: Record<string, string> = {};
+  for (const key of LOCAL_STORAGE_KEYS) {
+    try {
+      const raw = localStorage.getItem(key);
+      if (raw !== null) result[key] = raw;
+    } catch {
+      // localStorage 不可用（隐私模式）时跳过，不影响 IndexedDB 部分
+    }
+  }
+  return result;
+}
+
+/** 把 localStorage 设置写回并即时生效（字体/主题需要刷新 DOM） */
+function restoreLocalStorage(values: Record<string, string>): void {
+  for (const [key, raw] of Object.entries(values)) {
+    try {
+      localStorage.setItem(key, raw);
+    } catch {
+      // 存储不可用时跳过，不阻断其余设置恢复
+    }
+  }
+  // 字体档位写回后要立刻同步到 <html data-font-scale>，否则要重启才见效
+  const uiRaw = values[storeKey.UiPrefsStore];
+  if (uiRaw) {
+    try {
+      const parsed = JSON.parse(uiRaw) as { state?: { fontScale?: string } };
+      const scale = parsed.state?.fontScale;
+      if (scale === "small" || scale === "standard" || scale === "large") {
+        applyFontScale(scale);
+      }
+    } catch {
+      // 值坏掉就交给 provider 的 onRehydrate 兜底
+    }
+  }
+  // 主题由 Provider 在 reload 后从 localStorage["theme"] 读取，无需额外同步
 }
 
 async function ensureBackupDir(): Promise<void> {
@@ -225,6 +279,7 @@ async function writeBackup(
     exportedAt: Date.now(),
     summary,
     stores,
+    localStorage: readLocalStorage(),
   };
 
   await Filesystem.writeFile({
@@ -362,7 +417,13 @@ export async function restoreAutoBackup(
   await Promise.all(
     Object.entries(envelope.stores).map(([key, value]) => set(key, value))
   );
+  // 主题/字体/导入音源/搜索历史存在 localStorage，恢复时覆盖写回
+  if (envelope.localStorage) {
+    restoreLocalStorage(envelope.localStorage);
+  }
 
+  // 导入音源 store 是模块级内存缓存，写回 localStorage 后需重新加载页面才会重读。
+  // 恢复流程本来就会 reload，这里交给它即可。
   logger.warn("auto-backup", `已从 ${fileName} 恢复数据，准备重载页面`);
   return envelope.summary;
 }

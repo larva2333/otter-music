@@ -16,11 +16,13 @@ import {
   CornerDownRight,
   User,
   Disc,
-  MessageSquareQuote,
   Link2,
   Check,
   Folder,
   Zap,
+  Palette,
+  Type,
+  MessageCircleMore,
 } from "lucide-react";
 import { ReactNode, useEffect, useState, useMemo } from "react";
 import { MusicCover } from "./MusicCover";
@@ -83,6 +85,10 @@ interface MusicTrackMobileMenuProps {
   customActions?: ReactNode;
   triggerClassName?: string;
   onNavigate?: () => void;
+  /** 打开播放器风格面板（封面样式/背景/黑胶颜色） */
+  onOpenPlayerStyle?: () => void;
+  /** 打开歌词调整面板（对齐/字号） */
+  onOpenLyricStyle?: () => void;
 }
 
 const ActionButton = ({
@@ -121,6 +127,8 @@ export function MusicTrackMobileMenu({
   customActions,
   triggerClassName,
   onNavigate,
+  onOpenPlayerStyle,
+  onOpenLyricStyle,
 }: MusicTrackMobileMenuProps) {
   const coverUrl = useMusicCover(track, open);
   const navigate = useNavigate();
@@ -466,18 +474,40 @@ export function MusicTrackMobileMenu({
               </ActionButton>
             )}
 
-            {/* 如果支持评论，显示评论入口 */}
-            {provider?.getComments && (
+            {/* 播放器风格 / 歌词调整：仅播放页接入（长按封面/歌词的快捷方式） */}
+            {onOpenPlayerStyle && (
               <ActionButton
-                icon={MessageSquareQuote}
+                icon={Palette}
                 onClick={() => {
+                  onOpenPlayerStyle();
                   onOpenChange(false);
-                  setShowComments(true);
                 }}
               >
-                评论
+                播放器风格
               </ActionButton>
             )}
+            {onOpenLyricStyle && (
+              <ActionButton
+                icon={Type}
+                onClick={() => {
+                  onOpenLyricStyle();
+                  onOpenChange(false);
+                }}
+              >
+                歌词调整
+              </ActionButton>
+            )}
+
+            {/* 评论入口：评论抽屉用歌曲 id 取数据，取不到会显示「暂无评论」 */}
+            <ActionButton
+              icon={MessageCircleMore}
+              onClick={() => {
+                onOpenChange(false);
+                setShowComments(true);
+              }}
+            >
+              评论
+            </ActionButton>
 
             {/* 除播客/Alist 外，有歌手即显示歌手入口 */}
             {track.source !== "podcast" &&

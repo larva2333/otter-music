@@ -1,6 +1,14 @@
-import { describe, it, expect, beforeEach, vi } from "vitest";
-import { serializeStoreData, importStoreData } from "./data-backup";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import {
+  serializeStoreData,
+  importStoreData,
+  validateBackupData,
+} from "./data-backup";
 import { useMusicStore } from "@/store/music-store";
+
+vi.mock("@/store/ui-prefs-store", () => ({
+  applyFontScale: vi.fn(),
+}));
 
 // Mock dependencies
 vi.mock("@/lib/storage-adapter", () => ({
@@ -42,7 +50,12 @@ const DEFAULTS = {
 describe("data-backup", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    localStorage.clear();
     useMusicStore.setState({ favorites: [], playlists: [], ...DEFAULTS });
+  });
+
+  afterEach(() => {
+    localStorage.clear();
   });
 
   describe("serializeStoreData", () => {
@@ -59,6 +72,22 @@ describe("data-backup", () => {
       expect(data.lyricAlign).toBe("left");
       expect(data.lyricFontSize).toBe(22);
       expect(data.lyricOffset).toBe(0.3);
+    });
+
+    it("should include localStorage settings (theme / font / sources / history)", () => {
+      localStorage.setItem("theme", "dark");
+      localStorage.setItem(
+        "oh_ui_prefs_store",
+        JSON.stringify({ state: { fontScale: "large" }, version: 0 })
+      );
+      localStorage.setItem("otter_imported_sources", '[{"id":"a"}]');
+      localStorage.setItem("otter_search_history", '["周杰伦"]');
+
+      const { data } = JSON.parse(serializeStoreData());
+      expect(data.theme).toBe("dark");
+      expect(data.uiPrefs).toContain("large");
+      expect(data.importedSources).toBe('[{"id":"a"}]');
+      expect(data.searchHistory).toBe('["周杰伦"]');
     });
   });
 
@@ -105,6 +134,34 @@ describe("data-backup", () => {
       expect(state.lyricAlign).toBe(DEFAULTS.lyricAlign);
       expect(state.lyricFontSize).toBe(DEFAULTS.lyricFontSize);
       expect(state.lyricOffset).toBe(DEFAULTS.lyricOffset);
+    });
+
+    it("should restore localStorage settings and validate them", () => {
+      const backup = {
+        version: 1,
+        type: "otter-music-backup",
+        data: {
+          favorites: [],
+          playlists: [],
+          theme: "light",
+          uiPrefs: JSON.stringify({
+            state: { fontScale: "small" },
+            version: 0,
+          }),
+          importedSources: '[{"id":"lx-1"}]',
+          searchHistory: '["林俊杰"]',
+        },
+      };
+      const validated = validateBackupData(JSON.stringify(backup));
+      expect(validated.valid).toBe(true);
+      if (!validated.valid) return;
+
+      importStoreData(validated.data);
+      expect(localStorage.getItem("theme")).toBe("light");
+      expect(localStorage.getItem("otter_imported_sources")).toBe(
+        '[{"id":"lx-1"}]'
+      );
+      expect(localStorage.getItem("otter_search_history")).toBe('["林俊杰"]');
     });
   });
 });

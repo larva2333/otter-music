@@ -10,7 +10,8 @@ import { useEffect, useLayoutEffect } from "react";
  *
  * 这里按「pathname + 容器在页面里的出现顺序」记账：
  * - 滚动时持续记录（rAF 合并，避免每一帧都写 Map）；
- * - 路由变化后只在 POP（返回/前进）时恢复，PUSH（点进新页面）仍然从顶部开始；
+ * - 路由变化后在 POP（返回/前进）时恢复，底部 tab 的 PUSH 可通过 preserveOnPush 也恢复；
+ *   PUSH 进入二级页仍然从顶部开始；
  * - 内容异步加载时容器可能还不够高，恢复会连续补几帧，直到真的滚到目标位置。
  */
 
@@ -48,7 +49,8 @@ export function clearRememberedScroll(pathname?: string) {
 
 export function useScrollRestoration(
   pathname: string,
-  navigationType: "POP" | "PUSH" | "REPLACE"
+  navigationType: "POP" | "PUSH" | "REPLACE",
+  preserveOnPush = false
 ) {
   // 记录：capture 阶段监听 document，内层滚动容器的事件也会冒到这里
   useEffect(() => {
@@ -77,7 +79,8 @@ export function useScrollRestoration(
   }, [pathname]);
 
   useLayoutEffect(() => {
-    const restore = navigationType === "POP";
+    // 底部 tab 虽然通常是 PUSH，但页面本身保活，位置也应该保留
+    const restore = navigationType === "POP" || preserveOnPush;
 
     let cancelled = false;
     let frames = 0;
@@ -124,5 +127,5 @@ export function useScrollRestoration(
       if (raf) cancelAnimationFrame(raf);
       cleanup();
     };
-  }, [pathname, navigationType]);
+  }, [pathname, navigationType, preserveOnPush]);
 }

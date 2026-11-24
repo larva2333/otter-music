@@ -311,12 +311,24 @@ export interface NeteaseCommentUser {
   avatarUrl: string;
 }
 
+/** 被回复的原评论（洛雪评论区同样把它引用出来） */
+export interface NeteaseBeReplied {
+  beRepliedCommentId: number;
+  content: string;
+  user: NeteaseCommentUser;
+  ipLocation?: { location?: string };
+}
+
 export interface NeteaseComment {
   user: NeteaseCommentUser;
   commentId: number;
   content: string;
   time: number;
   likedCount: number;
+  /** 评论者的 IP 属地，网易云原样返回，洛雪在评论行尾展示 */
+  ipLocation?: { location?: string };
+  /** 回复某条评论时带上，洛雪会把它引用在正文上方 */
+  beReplied?: NeteaseBeReplied[];
 }
 
 export interface NeteaseCommentResult {

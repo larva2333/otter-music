@@ -6,7 +6,7 @@ import {
   type ChangeEvent,
   type KeyboardEvent,
 } from "react";
-import { useNavigate } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import { useShallow } from "zustand/react/shallow";
 import toast from "react-hot-toast";
 import { Search, X, Loader2 } from "lucide-react";
@@ -124,6 +124,13 @@ export function MusicSearchView({
     suggestions: SearchSuggestionItem[];
   } | null>(null);
   const navigate = useNavigate();
+  const location = useLocation();
+  /**
+   * 发现页在底部 tab 切走后仍保活，但此时它注册的「清空搜索」退出层不能生效：
+   * 从搜索结果点进专辑详情再侧滑返回，应当先回到搜索结果，
+   * 而不是被这个层吃掉返回键、把搜索词和结果全清掉（表现为直接回首页）。
+   */
+  const isSearchActive = location.pathname === "/search";
 
   /* ---------------- 搜索建议 ---------------- */
   const [suggestions, setSuggestions] = useState<SearchSuggestionItem[]>([]);
@@ -397,7 +404,7 @@ export function MusicSearchView({
   const hasSearchContent = Boolean(searchQuery.trim());
   const { push: pushExitLayer, pop: popExitLayer } = useExitLayer();
   useEffect(() => {
-    if (!hasSearchContent) return;
+    if (!hasSearchContent || !isSearchActive) return;
     const baseId = pushExitLayer({ close: () => resetSearch() });
     const drillId = drilledFromSuggestions
       ? pushExitLayer({ close: () => restoreSuggestions() })
@@ -408,6 +415,7 @@ export function MusicSearchView({
     };
   }, [
     hasSearchContent,
+    isSearchActive,
     drilledFromSuggestions,
     pushExitLayer,
     popExitLayer,
@@ -416,15 +424,16 @@ export function MusicSearchView({
   ]);
 
   useEffect(() => {
-    if (!showHistory || searchQuery.trim()) return;
+    if (!showHistory || searchQuery.trim() || !isSearchActive) return;
     const id = pushExitLayer({ close: closeHistory });
     return () => popExitLayer(id);
-  }, [showHistory, searchQuery, pushExitLayer, popExitLayer]);
+  }, [showHistory, searchQuery, isSearchActive, pushExitLayer, popExitLayer]);
 
   // 输入框聚焦时返回键不退出发现页：一次返回就清空搜索词并收起键盘。
   // 有内容时直接复用 resetSearch（清空结果 + 失焦），和「有内容」那层行为一致，
   // 只是把「收键盘 / 清空」两步合成一步。
   useSearchBackClear({
+    enabled: isSearchActive,
     focused: isInputFocused,
     value: searchQuery,
     onClear: () => resetSearch(),
@@ -665,7 +674,7 @@ export function MusicSearchView({
               onClick={openHistory}
               onBlur={handleInputBlur}
               placeholder="搜索音乐、歌手或专辑..."
-              className="h-full flex-1 border-0 bg-transparent! px-3 text-sm shadow-none focus-visible:ring-0 placeholder:text-muted-foreground/60"
+              className="h-full flex-1 border-0 bg-transparent! px-3 text-sm shadow-none focus-visible:ring-0 placeholder:text-placeholder"
             />
 
             {/* 清空按钮 */}

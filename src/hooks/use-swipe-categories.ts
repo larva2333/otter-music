@@ -50,6 +50,12 @@ interface UseSwipeCategoriesOptions {
   canFollow?: (dir: "next" | "prev") => boolean;
   /** 关闭跟手位移（只保留松手切换判定），默认开启 */
   disableFollow?: boolean;
+  /**
+   * 越过边界交给 onEdge 切页时，不做归位回弹动画（位移仍会立即清掉）。
+   * 用于整页跟手的设置页：原来假设旧页会被路由卸载、把位移留在 DOM 上，
+   * 但根 tab 是保活的，切回来后整页会一直偏着，所以这里改成同步清除。
+   */
+  keepOffsetOnEdge?: boolean;
 }
 
 /**
@@ -236,9 +242,19 @@ export function useSwipeCategories(
       // 左滑（dx < 0）→ 下一个分类；右滑 → 上一个
       const nextIndex = dx < 0 ? index + 1 : index - 1;
       if (nextIndex < 0 || nextIndex >= ids.length) {
-        // 边界外：归位后交给 tab 级滑动处理
+        const dir: "next" | "prev" = dx < 0 ? "next" : "prev";
+        if (latest.current.keepOffsetOnEdge && latest.current.onEdge) {
+          // 整页跟手的边界页：不做回弹动画，直接切页。
+          // 根 tab 保活，旧页不会卸载 —— 必须同步清掉 inline transform，
+          // 否则切回来整页（含标题栏）还停在跟手时的位移上。
+          clearSettleTimer();
+          latest.current.onEdge(dir);
+          settle(false);
+          return;
+        }
+        // 其余场景仍先归位，再交给 tab 级滑动处理
         settle(true);
-        latest.current.onEdge?.(dx < 0 ? "next" : "prev");
+        latest.current.onEdge?.(dir);
         return;
       }
       // 有效切换：立即清除跟手位移，让调用方的进入动画接管

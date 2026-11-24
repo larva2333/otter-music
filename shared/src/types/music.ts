@@ -59,6 +59,7 @@ export const aggregatedSourceOptions: {
   label: string;
   description: string;
 }[] = [
+  { value: "kuwo", label: "酷我音乐", description: "搜索固定使用" },
   {
     value: "higequ",
     label: "Higequ",
@@ -107,7 +108,11 @@ export interface SourceConfig {
   healthDisabled?: boolean;
 }
 
+/** 搜索/基础能力依赖，界面上不允许关闭 */
+export const LOCKED_SOURCES: MusicSource[] = ["kuwo"];
+
 export const DEFAULT_SOURCE_CONFIGS: SourceConfig[] = [
+  { source: "kuwo", enabled: true, visible: true },
   { source: "higequ", enabled: true, visible: true },
   { source: "_netease", enabled: true, visible: true },
   { source: "qq", enabled: true, visible: true },

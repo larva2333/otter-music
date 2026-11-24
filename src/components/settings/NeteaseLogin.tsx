@@ -338,7 +338,7 @@ export function NeteaseLogin() {
                   placeholder="粘贴 MUSIC_U 或完整 Cookie 字符串..."
                   value={cookieInput}
                   onChange={(e) => setCookieInput(e.target.value)}
-                  className="h-[140px] w-full resize-none overflow-y-auto rounded-xl border-0 bg-muted/20 p-4 font-mono text-sm leading-relaxed whitespace-pre-wrap break-all wrap-anywhere placeholder:text-muted-foreground/50 focus-visible:ring-1 focus-visible:ring-primary/20"
+                  className="h-[140px] w-full resize-none overflow-y-auto rounded-xl border-0 bg-muted/20 p-4 font-mono text-sm leading-relaxed whitespace-pre-wrap break-all wrap-anywhere placeholder:text-placeholder focus-visible:ring-1 focus-visible:ring-primary/20"
                 />
 
                 <div className="bg-muted/30 rounded-lg p-3 space-y-1.5">

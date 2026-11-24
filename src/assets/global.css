@@ -73,6 +73,8 @@
   --secondary-foreground: hsl(205 25% 13%);
   --muted: hsl(205 75% 94%);
   --muted-foreground: hsl(205 11% 34%);
+  /* 输入框提示文字：比正文浅得多，避免看着像已经填了内容 */
+  --placeholder: hsl(212 12% 64%);
   --accent: hsl(158 100% 31%);
   --accent-foreground: hsl(0 0% 100%);
   --destructive: hsl(359 71% 55%);
@@ -107,6 +109,8 @@
   --secondary-foreground: hsl(213 14% 87%);
   --muted: hsl(215 18% 13%);
   --muted-foreground: hsl(215 7% 65%);
+  /* 深色底上的提示文字：同为浅灰，但比正文暗一档，和真输入区分开 */
+  --placeholder: hsl(214 12% 58%);
   --accent: hsl(170 37% 49%);
   --accent-foreground: hsl(223 24% 6%);
   --destructive: hsl(0 74% 61%);
@@ -139,6 +143,7 @@
   --color-secondary-foreground: var(--secondary-foreground);
   --color-muted: var(--muted);
   --color-muted-foreground: var(--muted-foreground);
+  --color-placeholder: var(--placeholder);
   --color-accent: var(--accent);
   --color-accent-foreground: var(--accent-foreground);
   --color-destructive: var(--destructive);

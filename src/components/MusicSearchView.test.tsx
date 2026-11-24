@@ -1,7 +1,7 @@
 import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
 import { act, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { MemoryRouter } from "react-router-dom";
+import { MemoryRouter, useNavigate } from "react-router-dom";
 
 import { MusicSearchView } from "./MusicSearchView";
 import { useMusicStore } from "@/store/music-store";
@@ -133,6 +133,29 @@ const suggestions: SearchSuggestionItem[] = [
   { text: "Gamma", type: "album", source: "_netease", id: "3" },
 ];
 
+/** 测试用路由探针：模拟从搜索结果点进专辑详情、再侧滑返回 */
+function RouteProbe() {
+  const navigate = useNavigate();
+  return (
+    <>
+      <button
+        type="button"
+        data-testid="go-album"
+        onClick={() => navigate("/netease-album/1")}
+      >
+        go album
+      </button>
+      <button
+        type="button"
+        data-testid="back-search"
+        onClick={() => navigate("/search")}
+      >
+        back search
+      </button>
+    </>
+  );
+}
+
 describe("MusicSearchView", () => {
   let root: Root | undefined;
   let container: HTMLDivElement | undefined;
@@ -196,8 +219,9 @@ describe("MusicSearchView", () => {
 
     act(() => {
       root!.render(
-        <MemoryRouter>
+        <MemoryRouter initialEntries={["/search"]}>
           <MusicSearchView onPlay={vi.fn()} />
+          <RouteProbe />
         </MemoryRouter>
       );
     });
@@ -371,6 +395,32 @@ describe("MusicSearchView", () => {
     expect(input.value).toBe("");
     expect(document.activeElement).not.toBe(input);
     expect(useExitLayerStore.getState().stack).toHaveLength(0);
+  });
+
+  it("从搜索结果进专辑详情时撤掉清空搜索的退出层，返回后结果还在", async () => {
+    renderView();
+    const input = await setInputValue("keyword");
+    await keyDown("Enter");
+    await flushEffects();
+
+    expect(useMusicStore.getState().searchQuery).toBe("keyword");
+    expect(useMusicStore.getState().searchResults).toHaveLength(1);
+    expect(useExitLayerStore.getState().stack).toHaveLength(1);
+
+    // 进入二级页：清空搜索的层必须撤掉，否则侧滑返回会先清空结果
+    await click(
+      container!.querySelector('[data-testid="go-album"]') as Element
+    );
+    expect(useExitLayerStore.getState().stack).toHaveLength(0);
+    expect(useMusicStore.getState().searchQuery).toBe("keyword");
+    expect(useMusicStore.getState().searchResults).toHaveLength(1);
+
+    // 返回发现页后搜索态恢复，下一次返回仍按原规则清空搜索
+    await click(
+      container!.querySelector('[data-testid="back-search"]') as Element
+    );
+    expect(input.value).toBe("keyword");
+    expect(useExitLayerStore.getState().stack).toHaveLength(1);
   });
 
   it("聚焦空搜索框时用整页展示搜索历史，返回后回到发现", async () => {

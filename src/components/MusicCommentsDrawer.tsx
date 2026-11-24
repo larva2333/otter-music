@@ -6,13 +6,22 @@ import {
 } from "@/components/ui/drawer";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { MusicTrack } from "@/types/music";
-import { useEffect, useState } from "react";
-import { getHotComments } from "@/lib/netease/netease-api";
-import { NeteaseComment } from "@/lib/netease/netease-raw-types";
-import { format } from "date-fns";
-import { MessageSquareQuote } from "lucide-react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { getTrackComments, type CommentTab } from "@/lib/comments";
+import type { FormattedComment } from "@/lib/netease/comment-format";
+import { MusicCover } from "./MusicCover";
+import { Heart, Loader2, MessageCircleMore } from "lucide-react";
 import { logger } from "@/lib/logger";
 import { t2s } from "@/lib/utils/t2s";
+import { cn } from "@/lib/utils";
+import { formatCount } from "@/lib/utils/format-count";
+import { useTabSwipe } from "@/hooks/use-tab-swipe";
+import {
+  COMMENT_SOURCE_LABEL,
+  getCommentSourceShort,
+} from "@/lib/comments/options";
+import { useMusicStore } from "@/store/music-store";
+import { CommentSourceDrawer } from "./settings/CommentSourceDrawer";
 
 interface MusicCommentsDrawerProps {
   track: MusicTrack | null;
@@ -20,103 +29,368 @@ interface MusicCommentsDrawerProps {
   onOpenChange: (open: boolean) => void;
 }
 
+const TABS = ["hot", "new"] as const;
+/** 每页条数：首屏要快，20 条足够 */
+const PAGE_SIZE = 20;
+
+interface TabState {
+  comments: FormattedComment[];
+  total: number;
+  source: string | null;
+  page: number;
+  hasMore: boolean;
+  /** 首屏加载中 */
+  loading: boolean;
+  /** 加载下一页中 */
+  loadingMore: boolean;
+}
+
+const emptyTab = (): TabState => ({
+  comments: [],
+  total: 0,
+  source: null,
+  page: 0,
+  hasMore: true,
+  loading: false,
+  loadingMore: false,
+});
+
 export function MusicCommentsDrawer({
   track,
   open,
   onOpenChange,
 }: MusicCommentsDrawerProps) {
-  const [comments, setComments] = useState<NeteaseComment[]>([]);
-  const [loading, setLoading] = useState(false);
+  const [tab, setTab] = useState<CommentTab>("hot");
+  const [hot, setHot] = useState<TabState>(emptyTab);
+  const [fresh, setFresh] = useState<TabState>(emptyTab);
+  const [sourceDrawerOpen, setSourceDrawerOpen] = useState(false);
+  const commentSource = useMusicStore((s) => s.commentSource);
 
+  const state = tab === "hot" ? hot : fresh;
+  const stateRef = useRef(state);
   useEffect(() => {
-    if (!open || !track) return;
+    stateRef.current = state;
+  }, [state]);
 
-    let isMounted = true;
+  // 评论总数：热门接口的 total 只是热评条数，最新接口的 total 是全部评论数。
+  // 取两者较大值作为权威总数（不同平台口径可能不同）。
+  const totalCount = Math.max(hot.total, fresh.total);
 
-    // 将 setState 放入内部异步函数中，避免同步触发渲染
-    const fetchComments = async () => {
-      setLoading(true);
+  // 用 ref 持有最新 state，避免 fetch 回调闭包拿到旧值
+  const fetchPage = useCallback(
+    async (which: CommentTab, page: number, append: boolean) => {
+      if (!track) return;
+      const setStateFor = which === "hot" ? setHot : setFresh;
+      const current = stateRef.current;
+
+      if (append) {
+        if (current.loadingMore || !current.hasMore) return;
+        setStateFor((s) => ({ ...s, loadingMore: true }));
+      } else {
+        setStateFor((s) => ({ ...s, loading: true }));
+      }
+
       try {
-        const res = await getHotComments(track.id, 30);
-        if (isMounted) {
-          setComments(res?.hotComments || []);
+        const res = await getTrackComments(
+          track,
+          which,
+          PAGE_SIZE,
+          page,
+          commentSource
+        );
+        if (append) {
+          setStateFor((s) => {
+            // 按 id 去重，避免平台分页重复返回同一条
+            const seen = new Set(s.comments.map((c) => String(c.id)));
+            const added = res.comments.filter((c) => !seen.has(String(c.id)));
+            const total = res.total || s.total;
+            const loaded = s.comments.length + added.length;
+            return {
+              comments: [...s.comments, ...added],
+              total,
+              source: res.source ?? s.source,
+              page,
+              hasMore: added.length > 0 && loaded < total,
+              loadingMore: false,
+              loading: false,
+            };
+          });
+        } else {
+          setStateFor({
+            comments: res.comments,
+            total: res.total,
+            source: res.source,
+            page,
+            hasMore:
+              res.comments.length > 0 && res.comments.length < (res.total || 0),
+            loading: false,
+            loadingMore: false,
+          });
         }
       } catch (err) {
         logger.error("MusicCommentsDrawer", "Fetch comments failed", err, {
           trackId: track.id,
           source: track.source,
+          which,
+          page,
         });
-      } finally {
-        if (isMounted) {
-          setLoading(false);
-        }
+        setStateFor((s) => ({
+          ...s,
+          loading: false,
+          loadingMore: false,
+          hasMore: false,
+        }));
       }
-    };
+    },
+    [track, commentSource]
+  );
 
-    fetchComments();
-
+  // 打开抽屉 / 切歌时重置两页，并行拉两页首页：
+  // 热门接口的 total 是「热评条数」，最新接口的 total 才是「评论总数」，
+  // 两页都拿到后顶部才能显示权威总数，切 Tab 也不用再等请求。
+  useEffect(() => {
+    if (!open || !track) return;
+    let cancelled = false;
+    // 放到微任务里，避免在 effect 体内同步 setState（会触发级联渲染）
+    queueMicrotask(() => {
+      if (cancelled) return;
+      setHot(emptyTab());
+      setFresh(emptyTab());
+      fetchPage("hot", 0, false);
+      fetchPage("new", 0, false);
+    });
+    // tab 变化不在这里重置，交给 handleTabChange
     return () => {
-      isMounted = false;
+      cancelled = true;
     };
-  }, [open, track]);
+  }, [open, track, fetchPage]);
+
+  // 切 Tab：两页首页在打开时已并行加载，这里只切显示
+  const handleTabChange = useCallback((next: CommentTab) => setTab(next), []);
+
+  // 触底加载：用 IntersectionObserver 观察列表底部的哨兵元素。
+  // 比 scroll 数学更可靠——Drawer + Radix ScrollArea 的滚动容器在 portal 里，
+  // scrollHeight/scrollTop 判定容易失灵；哨兵进入视口即触发。
+  const viewportRef = useRef<HTMLDivElement>(null);
+  const sentinelRef = useRef<HTMLDivElement>(null);
+  const observerDataRef = useRef({
+    tab,
+    page: state.page,
+    hasMore: state.hasMore,
+  });
+
+  useEffect(() => {
+    observerDataRef.current = { tab, page: state.page, hasMore: state.hasMore };
+  }, [tab, state.page, state.hasMore]);
+
+  useEffect(() => {
+    const root = viewportRef.current;
+    const sentinel = sentinelRef.current;
+    // 哨兵只在评论加载完成后才渲染，所以依赖里必须带 comments.length/loading，
+    // 否则首次 effect 运行时哨兵还是 null，observer 永远不会建立。
+    if (!open || !root || !sentinel) return;
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (!entries[0]?.isIntersecting) return;
+        const { tab: t, page, hasMore } = observerDataRef.current;
+        const s = stateRef.current;
+        if (!hasMore || s.loading || s.loadingMore) return;
+        fetchPage(t, page + 1, true);
+      },
+      { root, rootMargin: "120px" }
+    );
+    observer.observe(sentinel);
+    return () => observer.disconnect();
+  }, [
+    open,
+    tab,
+    state.hasMore,
+    state.comments.length,
+    state.loading,
+    fetchPage,
+  ]);
 
   return (
-    <Drawer open={open} onOpenChange={onOpenChange}>
-      <DrawerContent className="h-[85vh] flex flex-col p-0 gap-0 rounded-t-3xl border-none bg-background/95 backdrop-blur-xl outline-none">
-        <DrawerHeader className="px-6 py-5 pb-2 border-none text-left">
-          <DrawerTitle className="text-lg font-semibold tracking-tight">
-            {track?.name ? `${t2s(track.name)} · 评论` : "评论"}
-          </DrawerTitle>
-        </DrawerHeader>
-
-        <div className="flex-1 min-h-0 w-full">
-          <ScrollArea className="h-full px-6">
-            <div className="flex flex-col pb-12">
-              {loading ? (
-                <div className="flex flex-col gap-6 pt-4 animate-pulse">
-                  {Array.from({ length: 6 }).map((_, i) => (
-                    <div key={i} className="space-y-3">
-                      <div className="h-3 w-20 bg-muted/60 rounded-full" />
-                      <div className="h-4 w-full bg-muted/60 rounded-md" />
-                      <div className="h-4 w-2/3 bg-muted/60 rounded-md" />
-                    </div>
-                  ))}
-                </div>
-              ) : comments.length === 0 ? (
-                <div className="flex flex-col items-center justify-center py-24 text-muted-foreground/40">
-                  <MessageSquareQuote
-                    className="w-10 h-10 mb-4 opacity-20"
-                    strokeWidth={1.2}
-                  />
-                  <p className="text-sm tracking-widest font-light">暂无评论</p>
-                </div>
-              ) : (
-                <div className="flex flex-col">
-                  {comments.map((comment) => (
-                    <div
-                      key={comment.commentId}
-                      className="flex flex-col gap-2 py-3 px-0.5 border-b border-border/20 last:border-0 group"
-                    >
-                      <div className="flex justify-between items-center">
-                        <span className="text-sm font-medium text-foreground/60 group-hover:text-foreground/80 transition-colors">
-                          {comment.user.nickname}
-                        </span>
-                        <span className="text-xs text-muted-foreground/40 font-light tracking-wide">
-                          {format(comment.time, "yyyy.MM.dd")}
-                        </span>
-                      </div>
-
-                      <p className="text-sm leading-relaxed text-foreground/90 whitespace-pre-wrap wrap-break-word font-normal">
-                        {comment.content}
-                      </p>
-                    </div>
-                  ))}
-                </div>
+    <>
+      <Drawer open={open} onOpenChange={onOpenChange}>
+        <DrawerContent className="h-[85vh] flex flex-col p-0 gap-0 rounded-t-3xl border-none bg-background/95 backdrop-blur-xl outline-none">
+          <DrawerHeader className="px-6 py-5 pb-2 border-none text-left">
+            <div className="flex items-baseline gap-2">
+              <DrawerTitle className="text-lg font-semibold tracking-tight">
+                {track?.name ? `${t2s(track.name)} · 评论` : "评论"}
+              </DrawerTitle>
+              {/* 评论总数只显示一次，取自最新评论接口（热门接口的 total 只是热评条数） */}
+              {totalCount > 0 && (
+                <span className="text-xs text-muted-foreground/50 font-light">
+                  {formatCount(totalCount)} 条
+                </span>
               )}
+              {/* 来源切换按钮：与音质按钮同款低调样式，显示当前来源 */}
+              <button
+                type="button"
+                onClick={() => setSourceDrawerOpen(true)}
+                className="ml-auto -my-1 rounded-full px-2.5 py-1 text-xs text-muted-foreground/60 transition-colors hover:bg-muted/40 hover:text-foreground"
+                aria-label="切换评论来源"
+                title="切换评论来源"
+              >
+                {commentSource === "auto"
+                  ? `自动${state.source ? ` · ${COMMENT_SOURCE_LABEL[state.source] ?? state.source}` : ""}`
+                  : getCommentSourceShort(commentSource)}
+              </button>
             </div>
-          </ScrollArea>
+            {/* 热门 / 最新切换；左右滑动也能切 */}
+            <div className="mt-4 flex gap-5 border-b border-border/30">
+              {(
+                [
+                  { key: "hot", label: "热门评论" },
+                  { key: "new", label: "最新评论" },
+                ] as const
+              ).map(({ key, label }) => (
+                <button
+                  key={key}
+                  type="button"
+                  onClick={() => handleTabChange(key)}
+                  className={cn(
+                    "relative pb-2.5 text-sm transition-colors",
+                    tab === key
+                      ? "font-medium text-foreground"
+                      : "text-muted-foreground/60 hover:text-muted-foreground"
+                  )}
+                >
+                  {label}
+                  {tab === key && (
+                    <span className="absolute inset-x-0 -bottom-px h-0.5 rounded-full bg-primary" />
+                  )}
+                </button>
+              ))}
+            </div>
+          </DrawerHeader>
+
+          <div
+            className="flex-1 min-h-0 w-full"
+            {...useTabSwipe({
+              tabs: TABS,
+              value: tab,
+              onChange: handleTabChange,
+            })}
+            style={{ touchAction: "pan-y" }}
+          >
+            <ScrollArea className="h-full px-6" viewportRef={viewportRef}>
+              <div className="flex flex-col pb-12">
+                {state.loading ? (
+                  <div className="flex flex-col gap-6 pt-4 animate-pulse">
+                    {Array.from({ length: 6 }).map((_, i) => (
+                      <div key={i} className="flex gap-3">
+                        <div className="h-9 w-9 shrink-0 rounded-full bg-muted/60" />
+                        <div className="flex-1 space-y-3">
+                          <div className="h-3 w-20 bg-muted/60 rounded-full" />
+                          <div className="h-4 w-full bg-muted/60 rounded-md" />
+                          <div className="h-4 w-2/3 bg-muted/60 rounded-md" />
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : state.comments.length === 0 ? (
+                  <div className="flex flex-col items-center justify-center py-24 text-muted-foreground/40">
+                    <MessageCircleMore
+                      className="w-10 h-10 mb-4 opacity-20"
+                      strokeWidth={1.2}
+                    />
+                    <p className="text-sm tracking-widest font-light">
+                      暂无评论
+                    </p>
+                  </div>
+                ) : (
+                  <div className="flex flex-col">
+                    {state.comments.map((comment, i) => (
+                      <CommentRow
+                        key={`${comment.id}-${i}`}
+                        comment={comment}
+                      />
+                    ))}
+                    {/* 触底哨兵：进入视口即加载下一页 */}
+                    {state.hasMore && (
+                      <div ref={sentinelRef} className="h-px" />
+                    )}
+                    {/* 分页状态提示 */}
+                    <div className="py-5 text-center text-xs text-muted-foreground/40">
+                      {state.loadingMore ? (
+                        <span className="inline-flex items-center gap-2">
+                          <Loader2 className="h-3.5 w-3.5 animate-spin" />{" "}
+                          加载中
+                        </span>
+                      ) : state.hasMore ? (
+                        <button
+                          type="button"
+                          onClick={() => fetchPage(tab, state.page + 1, true)}
+                          className="px-3 py-1.5 rounded-full border border-border/30 hover:bg-muted/40"
+                        >
+                          加载更多
+                        </button>
+                      ) : (
+                        <span>
+                          已加载全部 {formatCount(state.comments.length)} 条
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                )}
+              </div>
+            </ScrollArea>
+          </div>
+        </DrawerContent>
+      </Drawer>
+      <CommentSourceDrawer
+        open={sourceDrawerOpen}
+        onOpenChange={setSourceDrawerOpen}
+      />
+    </>
+  );
+}
+
+function CommentRow({ comment }: { comment: FormattedComment }) {
+  return (
+    <div className="flex gap-3 py-3.5 px-0.5 border-b border-border/20 last:border-0">
+      <MusicCover
+        src={comment.avatar}
+        alt={comment.userName}
+        className="h-9 w-9 shrink-0 flex-[0_0_36px] min-w-9 min-h-9 rounded-full"
+        iconClassName="h-5 w-5"
+      />
+      <div className="min-w-0 flex-1">
+        <div className="flex items-center justify-between gap-2">
+          <span className="text-sm font-medium truncate text-foreground/70">
+            {comment.userName}
+          </span>
+          <span className="shrink-0 text-xs text-muted-foreground/40 font-light">
+            {comment.timeStr}
+          </span>
         </div>
-      </DrawerContent>
-    </Drawer>
+
+        {comment.reply && (
+          <p className="mt-1.5 rounded-md bg-muted/40 px-2.5 py-1.5 text-xs leading-relaxed text-muted-foreground wrap-break-word">
+            <span className="text-foreground/70">
+              @{comment.reply.userName}：
+            </span>
+            {comment.reply.text}
+          </p>
+        )}
+
+        <p className="mt-1.5 text-sm leading-relaxed text-foreground/90 whitespace-pre-wrap wrap-break-word font-normal">
+          {comment.text}
+        </p>
+
+        <div className="mt-2 flex items-center gap-3 text-xs text-muted-foreground/50">
+          {comment.likedCount > 0 && (
+            <span className="flex items-center gap-1">
+              <Heart className="h-3.5 w-3.5" />
+              {formatCount(comment.likedCount)}
+            </span>
+          )}
+          {comment.location && <span>{comment.location}</span>}
+        </div>
+      </div>
+    </div>
   );
 }

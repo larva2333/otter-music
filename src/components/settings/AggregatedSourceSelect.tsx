@@ -1,10 +1,20 @@
 import { useMusicStore } from "@/store/music-store";
 import { useShallow } from "zustand/react/shallow";
-import { aggregatedSourceOptions, type SourceConfig } from "@/types/music";
+import {
+  aggregatedSourceOptions,
+  LOCKED_SOURCES,
+  type SourceConfig,
+} from "@/types/music";
 import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { cn } from "@/lib/utils";
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import {
   Radio,
   GripVertical,
@@ -12,10 +22,16 @@ import {
   Pencil,
   Loader2,
   ScanSearch,
+  RefreshCw,
 } from "lucide-react";
 import { SourceImport } from "./SourceImport";
+import { sortConfigsByHealth, sortLxConfigs } from "./health-sort";
 import { useImportedSourcesStore } from "@/lib/imported-sources/store";
 import { probeSource, normalizeSourceUrl } from "@/lib/imported-sources/probe";
+import {
+  duplicateReasonText,
+  findDuplicateSource,
+} from "@/lib/imported-sources/rules";
 import {
   checkSourcesHealth,
   type SourceHealthResult,
@@ -60,6 +76,31 @@ import {
 import { CSS } from "@dnd-kit/utilities";
 import { restrictToVerticalAxis } from "@dnd-kit/modifiers";
 
+/**
+ * 底部 4 个 tab 切换会卸载设置页，组件内的 useState 会全部回到初始值。
+ * 音源面板的展开状态、检测结果等属于「切回来应当还在」的界面状态，
+ * 统一放在模块级缓存里（进程内有效，重启 App 重新来过）。
+ */
+const uiStateCache = new Map<string, unknown>();
+
+function useStickyState<T>(key: string, initial: T) {
+  const [value, setValue] = useState<T>(() =>
+    uiStateCache.has(key) ? (uiStateCache.get(key) as T) : initial
+  );
+  const set = useCallback(
+    (next: T | ((prev: T) => T)) => {
+      setValue((prev) => {
+        const resolved =
+          typeof next === "function" ? (next as (p: T) => T)(prev) : next;
+        uiStateCache.set(key, resolved);
+        return resolved;
+      });
+    },
+    [key]
+  );
+  return [value, set] as const;
+}
+
 /** 延迟文案：小于 1 秒给毫秒，超过给一位小数的秒 */
 function formatLatency(ms?: number): string {
   if (ms == null || !Number.isFinite(ms)) return "";
@@ -72,9 +113,20 @@ interface SourceItemProps {
   onRename: () => void;
   /** 检测结果：含状态与本次检测耗时 */
   health?: SourceHealthResult;
+  /** 最近一次更新结果 */
+  updateResult?: string;
+  /** 搜索等基础能力依赖，开关锁定 */
+  locked?: boolean;
 }
 
-function SourceItem({ config, onToggle, onRename, health }: SourceItemProps) {
+function SourceItem({
+  config,
+  onToggle,
+  onRename,
+  health,
+  updateResult,
+  locked,
+}: SourceItemProps) {
   const imported = useImportedSourcesStore((s) =>
     s.sources.find((x) => x.id === config.source)
   );
@@ -102,19 +154,23 @@ function SourceItem({ config, onToggle, onRename, health }: SourceItemProps) {
         <span className="text-sm text-foreground">{label}</span>
         {health?.status === "fail" ? (
           <span className="text-xs text-destructive">
-            {on ? "上次检测不可用" : "检测不可用，已停用"}
-            {latency && ` · ${latency}`}
+            不可用{latency && ` · ${latency}`}
           </span>
         ) : health?.status === "unknown" ? (
-          <span className="text-xs text-amber-600 dark:text-amber-500">
-            缺少可验证的曲目，未判定
-            {latency && ` · ${latency}`}
+          <span
+            className="text-xs text-amber-600 dark:text-amber-500"
+            title="检测没能确认可用或不可用（如换链落空、上游限流），不会自动停用"
+          >
+            未判定{latency && ` · ${latency}`}
           </span>
         ) : (
           <span className="text-xs text-muted-foreground">
             {description}
             {latency && ` · 延迟 ${latency}`}
           </span>
+        )}
+        {updateResult && (
+          <span className="text-xs text-primary">{updateResult}</span>
         )}
       </div>
 
@@ -132,7 +188,8 @@ function SourceItem({ config, onToggle, onRename, health }: SourceItemProps) {
       <Switch
         checked={on}
         onCheckedChange={onToggle}
-        aria-label={on ? "停用音源" : "启用音源"}
+        disabled={locked}
+        aria-label={locked ? "搜索音源不可关闭" : on ? "停用音源" : "启用音源"}
       />
     </div>
   );
@@ -176,15 +233,21 @@ function ImportedSourceItem({
   config,
   onToggle,
   onRename,
+  onUpdate,
   onDelete,
+  updating,
   health,
+  updateResult,
 }: {
   source: ImportedSource;
   config: SourceConfig;
   onToggle: (next: boolean) => void;
   onRename: () => void;
+  onUpdate: () => void;
   onDelete: () => void;
+  updating?: boolean;
   health?: SourceHealthResult;
+  updateResult?: string;
 }) {
   const label = config.alias?.trim() || source.name;
   const on = config.enabled && config.visible;
@@ -192,12 +255,13 @@ function ImportedSourceItem({
   const platforms = getLxSourcePlatforms(source)
     .map((p) => LX_PLATFORM_LABELS[p] || p)
     .filter(Boolean);
+  const canUpdate = /^https?:\/\//i.test(source.url ?? "");
   const description =
     source.kind === "gd"
       ? "GD 兼容 API"
       : platforms.length > 0
-        ? `仅兜底 ${platforms.join("/")} 取链 · 不参与搜索`
-        : "洛雪 JS 脚本 · 不参与搜索";
+        ? `支持平台：${platforms.join("/")}`
+        : "支持平台：未识别";
   return (
     <div className="flex items-center gap-2 py-2">
       {/* 与内置源一致：整行长按可拖，图标只作提示 */}
@@ -214,19 +278,23 @@ function ImportedSourceItem({
         <span className="text-sm text-foreground truncate">{label}</span>
         {health?.status === "fail" ? (
           <span className="text-xs text-destructive">
-            {on ? "上次检测不可用" : "检测不可用，已停用"}
-            {latency && ` · ${latency}`}
+            不可用{latency && ` · ${latency}`}
           </span>
         ) : health?.status === "unknown" ? (
-          <span className="text-xs text-amber-600 dark:text-amber-500">
-            {description} · 本次未判定
-            {latency && ` · ${latency}`}
+          <span
+            className="text-xs text-amber-600 dark:text-amber-500"
+            title="检测没能确认可用或不可用（如换链落空、上游限流），不会自动停用"
+          >
+            未判定{latency && ` · ${latency}`}
           </span>
         ) : (
           <span className="text-xs text-muted-foreground">
             {description}
             {latency && ` · 延迟 ${latency}`}
           </span>
+        )}
+        {updateResult && (
+          <span className="text-xs text-primary">{updateResult}</span>
         )}
       </div>
 
@@ -239,6 +307,26 @@ function ImportedSourceItem({
         title="编辑音源与别名"
       >
         <Pencil className="h-4 w-4" />
+      </button>
+
+      <button
+        className="shrink-0 text-muted-foreground hover:text-foreground p-1 disabled:opacity-40"
+        onClick={(e) => {
+          e.stopPropagation();
+          onUpdate();
+        }}
+        disabled={!canUpdate || updating}
+        title={
+          !canUpdate
+            ? "粘贴脚本导入的音源没有更新地址"
+            : "从原地址重新拉取最新脚本"
+        }
+      >
+        {updating ? (
+          <Loader2 className="h-4 w-4 animate-spin" />
+        ) : (
+          <RefreshCw className="h-4 w-4" />
+        )}
       </button>
 
       <Switch
@@ -269,7 +357,11 @@ export function AggregatedSourceSelect() {
     }))
   );
   const importedSources = useImportedSourcesStore((s) => s.sources);
-  const [showSourcePicker, setShowSourcePicker] = useState(false);
+  const [showSourcePicker, setShowSourcePicker] = useStickyState(
+    "showSourcePicker",
+    false
+  );
+  const [sourceTab, setSourceTab] = useStickyState("sourceTab", "builtin");
   const [activeId, setActiveId] = useState<string | null>(null);
   const [editor, setEditor] = useState<{
     source: string;
@@ -282,34 +374,96 @@ export function AggregatedSourceSelect() {
   // 开关与数据分开：关闭时只关 open，保留 editor 内容，
   // 否则 200ms 的关闭动画里标题会退回「设置别名」、地址框被卸载（看着像高度先缩一下）
   const [editorOpen, setEditorOpen] = useState(false);
-  /** 一键检测结果：source → 状态与延迟。只在本次展开期间保留 */
-  const [health, setHealth] = useState<Record<string, SourceHealthResult>>({});
+  /** 一键检测结果：source → 状态与延迟。底部 tab 切换后仍保留 */
+  const [health, setHealth] = useStickyState<
+    Record<string, SourceHealthResult>
+  >("health", {});
   const [checking, setChecking] = useState(false);
   const [checkProgress, setCheckProgress] = useState({ done: 0, total: 0 });
-  const [checkSummary, setCheckSummary] = useState<string | null>(null);
+  const [checkSummary, setCheckSummary] = useStickyState<string | null>(
+    "checkSummary",
+    null
+  );
   const checkRunRef = useRef(0);
+  /** 正在从原地址更新的音源 id */
+  const [updatingId, setUpdatingId] = useState<string | null>(null);
+  const [updatingAll, setUpdatingAll] = useState(false);
+  const [updateProgress, setUpdateProgress] = useState({ done: 0, total: 0 });
+  const [updateSummary, setUpdateSummary] = useStickyState<string | null>(
+    "updateSummary",
+    null
+  );
+  /** 每个音源的最近一次更新结果，直接显示在对应行下面 */
+  const [sourceUpdateResults, setSourceUpdateResults] = useStickyState<
+    Record<string, string>
+  >("sourceUpdateResults", {});
 
   const isImported = (id: string) => id.startsWith("imp_");
 
-  /** 导入/删除音源后，同步 sourceConfigs（排序/开关列表） */
-  const syncImportedToConfigs = () => {
+  /**
+   * 导入/删除/切换/更新后，按 store 的最新状态对齐 sourceConfigs（保留顺序与别名）。
+   * 返回对齐后的列表，供检测流程继续排序/启用，避免重复读 store。
+   */
+  const syncImportedToConfigs = (base?: SourceConfig[]): SourceConfig[] => {
     const imported = useImportedSourcesStore.getState().sources;
     const ids = new Set(imported.map((s) => s.id));
-    const next = sourceConfigs.filter(
+    const next = (base ?? useMusicStore.getState().sourceConfigs).filter(
       (c) => !isImported(c.source) || ids.has(c.source)
     );
     imported.forEach((s) => {
-      if (!next.some((c) => c.source === s.id)) {
-        // 可见与启用已合并成一个开关，新补的条目按「两者都开」才算开启
-        const on = s.enabled && s.visible;
+      // 可见与启用已合并成一个开关，两者都开才算开启
+      const on = s.enabled && s.visible;
+      const idx = next.findIndex((c) => c.source === s.id);
+      if (idx === -1) {
         next.push({
           source: s.id as SourceConfig["source"],
           enabled: on,
           visible: on,
         });
+      } else {
+        next[idx] = { ...next[idx], enabled: on, visible: on };
       }
     });
     setSourceConfigs(next);
+    return next;
+  };
+
+  /**
+   * 检测结束后，若某个分组（默认 / GD API / LX Script）一个启用的源都没有，
+   * 自动启用排序最靠前的可用源；洛雪走 store 的单启规则，只会开一个。
+   * 全组都没有 ok/unknown 时不动，避免把一个已确认失效的源强行打开。
+   */
+  const autoEnableFirstPerGroup = (
+    ordered: SourceConfig[],
+    results: Record<string, SourceHealthResult>
+  ): SourceConfig[] => {
+    const imported = useImportedSourcesStore.getState().sources;
+    const groupOf = (c: SourceConfig) =>
+      isImported(c.source)
+        ? (imported.find((s) => s.id === c.source)?.kind ?? "imported")
+        : "builtin";
+    let base = ordered;
+    Array.from(new Set(base.map(groupOf))).forEach((group) => {
+      const rows = base.filter((c) => groupOf(c) === group);
+      if (rows.some((c) => c.enabled && c.visible)) return;
+      const pick =
+        rows.find((c) => results[c.source]?.status === "ok") ??
+        rows.find((c) => results[c.source]?.status === "unknown");
+      if (!pick) return;
+      if (isImported(pick.source)) {
+        useImportedSourcesStore
+          .getState()
+          .update(pick.source, { enabled: true, visible: true });
+        base = syncImportedToConfigs(base);
+      } else {
+        base = base.map((c) =>
+          c.source === pick.source
+            ? { ...c, enabled: true, visible: true, healthDisabled: false }
+            : c
+        );
+      }
+    });
+    return base;
   };
 
   // 老数据里 enabled 与 visible 可能不一致（旧版「眼睛」和「对勾」是分开的），
@@ -409,33 +563,50 @@ export function AggregatedSourceSelect() {
     const activeCount = current.filter((c) => c.enabled && c.visible).length;
     const target = current.find((c) => c.source === source);
     if (!target) return;
+    if (!next && LOCKED_SOURCES.includes(source as SourceConfig["source"])) {
+      toast.error("酷我是搜索音源，不能关闭");
+      return;
+    }
     if (!next && target.enabled && activeCount <= 1) {
       toast.error("至少保留一个音源");
       return;
     }
-    setSourceConfigs(
-      current.map((c) =>
-        c.source === source
-          ? // 手动操作后不再算「被检测停用」，避免下次检测擅自改回来
-            { ...c, enabled: next, visible: next, healthDisabled: false }
-          : c
-      )
+    // 手动操作后不再算「被检测停用」，避免下次检测擅自改回来
+    const base = current.map((c) =>
+      c.source === source ? { ...c, healthDisabled: false } : c
     );
+
     if (isImported(source)) {
-      useImportedSourcesStore
+      const { disabled } = useImportedSourcesStore
         .getState()
         .update(source, { enabled: next, visible: next });
+      // 洛雪单启在 store 里收敛，界面按最新状态对齐（含被自动停用的旧脚本）
+      syncImportedToConfigs(base);
+      if (next && disabled.length > 0) {
+        const label =
+          target.alias?.trim() ||
+          importedSources.find((s) => s.id === source)?.name ||
+          source;
+        toast.success(
+          `已切换到「${label}」，已停用原洛雪脚本「${disabled.map((s) => s.name).join("、")}」`
+        );
+      }
+      return;
     }
+
+    setSourceConfigs(
+      base.map((c) =>
+        c.source === source ? { ...c, enabled: next, visible: next } : c
+      )
+    );
   };
 
   /** 一键检测：失败的音源自动停用；全部失败时按网络异常处理，不改配置 */
   const runHealthCheck = async () => {
     if (checking) return;
-    // 内置源只测开启的；导入源全测，才能把上次误停用的恢复回来
-    const importedIds = new Set(importedSources.map((s) => s.id));
+    // 全部音源都测：停用的也要给出延迟，方便判断是不是网络问题导致没启用
     const targets = sourceConfigs
       .filter((c) => !EXCLUDED_FOR_SEARCH.includes(c.source))
-      .filter((c) => (c.enabled && c.visible) || importedIds.has(c.source))
       .map((c) => c.source);
     if (targets.length === 0) return;
 
@@ -443,10 +614,14 @@ export function AggregatedSourceSelect() {
     setChecking(true);
     setHealth({});
     setCheckSummary(null);
+    setUpdateSummary(null);
+    setSourceUpdateResults({});
     setCheckProgress({ done: 0, total: targets.length });
 
     try {
       const results = await checkSourcesHealth(targets, {
+        // 一键检测全并发：不计较少量限流，换取整体等待时间最短
+        concurrency: targets.length,
         onProgress: (done, total) => {
           if (checkRunRef.current === runId) setCheckProgress({ done, total });
         },
@@ -465,12 +640,11 @@ export function AggregatedSourceSelect() {
       const failed = results
         .filter((r) => r.status === "fail")
         .map((r) => r.source);
-      const unknownCount = results.filter((r) => r.status === "unknown").length;
       const okCount = okList.length;
-      const tail = unknownCount > 0 ? ` · ${unknownCount} 个未判定` : "";
+      const unavailableCount = targets.length - okCount;
 
       if (okCount === 0 && failed.length === 0) {
-        setCheckSummary(`无法验证，未改动配置${tail}`);
+        setCheckSummary("无法验证，未改动配置");
         return;
       }
 
@@ -481,8 +655,17 @@ export function AggregatedSourceSelect() {
       }
 
       if (failed.length === 0) {
-        setCheckSummary(`${okCount} 个全部可用${tail} · 已按延迟排序`);
-        toast.success(`检测完成：${okCount} 个音源全部可用`);
+        // 全部可用也要真正重排（以前这里只写了「已按延迟排序」却没排序）
+        const sorted = sortConfigsByHealth(
+          useMusicStore.getState().sourceConfigs,
+          map
+        );
+        const final = autoEnableFirstPerGroup(sorted, map);
+        useMusicStore.getState().setSourceConfigs(final);
+        setCheckSummary(`${okCount} 个可用 · ${unavailableCount} 个不可用`);
+        toast.success(
+          `检测完成：${okCount} 个可用，${unavailableCount} 个不可用`
+        );
         return;
       }
 
@@ -492,6 +675,9 @@ export function AggregatedSourceSelect() {
       const latest = useMusicStore.getState().sourceConfigs;
       const mapped = latest.map((c) => {
         if (failedSet.has(c.source)) {
+          // 搜索依赖的锁定源、以及本来就手动停用的源都不自动停
+          if (LOCKED_SOURCES.includes(c.source) || !(c.enabled && c.visible))
+            return c;
           return { ...c, enabled: false, visible: false, healthDisabled: true };
         }
         // 之前被检测停用、这次恢复了：自动开回来
@@ -501,23 +687,8 @@ export function AggregatedSourceSelect() {
         return c;
       });
 
-      // 检测完成后按延迟升序重排。序位同时决定「全部」聚合搜索的源权重，
-      // 所以让快的源排在前面：启用且可用的按延迟从快到慢，未启用 /
-      // 失败的沉底（它们不参与搜索，位置只影响列表观感）。
-      const tested = new Set(targets);
-      const rankOf = (c: SourceConfig) => {
-        const r = map[c.source];
-        const on = c.enabled && c.visible;
-        if (!on) return 4e9 + (r?.latencyMs ?? 1e8);
-        if (!r || r.status === "fail") return 3e9 + (r?.latencyMs ?? 1e8);
-        if (r.status === "unknown") return 2e9 + (r.latencyMs ?? 1e8);
-        return r.latencyMs ?? 0;
-      };
-      const testedRows = mapped
-        .filter((c) => tested.has(c.source))
-        .sort((a, b) => rankOf(a) - rankOf(b));
-      const restRows = mapped.filter((c) => !tested.has(c.source));
-      useMusicStore.getState().setSourceConfigs([...testedRows, ...restRows]);
+      // 序位同时决定「全部」聚合搜索的源权重：可用且快的在前，停用/失败沉底
+      const sorted = sortConfigsByHealth(mapped, map);
       const imported = useImportedSourcesStore.getState();
       failed.forEach((id) => {
         if (isImported(id)) {
@@ -532,16 +703,14 @@ export function AggregatedSourceSelect() {
           }
         }
       });
-      const restored = okList.filter(
-        (id) => latest.find((c) => c.source === id)?.healthDisabled
-      ).length;
-      setCheckSummary(
-        `${okCount} 个可用 · ${failed.length} 个已停用${
-          restored > 0 ? ` · ${restored} 个已恢复` : ""
-        }${tail} · 已按延迟排序`
-      );
+      // 每组都没有启用源时，自动开排序第一的可用源（洛雪走单启规则）
+      const final = autoEnableFirstPerGroup(sorted, map);
+      useMusicStore.getState().setSourceConfigs(final);
+      // 恢复启用的洛雪脚本可能触发单启规则停掉另一个，按最新 store 对齐（保留排序）
+      syncImportedToConfigs(final);
+      setCheckSummary(`${okCount} 个可用 · ${unavailableCount} 个不可用`);
       toast.success(
-        `检测完成：${okCount} 个可用，${failed.length} 个无效已自动停用`
+        `检测完成：${okCount} 个可用，${unavailableCount} 个不可用`
       );
     } finally {
       if (checkRunRef.current === runId) setChecking(false);
@@ -551,6 +720,136 @@ export function AggregatedSourceSelect() {
   const deleteImported = (source: ImportedSource) => {
     useImportedSourcesStore.getState().remove(source.id);
     syncImportedToConfigs();
+  };
+
+  type UpdateResult = {
+    status: "updated" | "unchanged" | "failed" | "duplicate" | "no-url";
+    label: string;
+  };
+
+  /** 从保存的地址（多数是 latest.js）重新拉取脚本，单个更新与一键更新共用 */
+  const refreshImported = async (
+    source: ImportedSource
+  ): Promise<UpdateResult> => {
+    const record = (text: string) =>
+      setSourceUpdateResults((prev) => ({ ...prev, [source.id]: text }));
+    if (!/^https?:\/\//i.test(source.url ?? "")) {
+      record("无更新地址");
+      return { status: "no-url", label: source.name };
+    }
+    try {
+      const res = await probeSource(source.url);
+      if (!res) {
+        record("更新失败");
+        return { status: "failed", label: source.name };
+      }
+      const label = `${res.name}${res.version ? ` · ${res.version}` : ""}`;
+      const nextUrl = res.url ?? source.url;
+      const dup = findDuplicateSource(
+        useImportedSourcesStore.getState().sources,
+        {
+          name: res.name,
+          url: nextUrl,
+          script: res.script,
+          kind: res.kind,
+        },
+        source.id
+      );
+      if (dup) {
+        record("更新失败：与已有音源重复");
+        return { status: "duplicate", label };
+      }
+      const changed =
+        res.script !== source.script ||
+        res.name !== source.name ||
+        res.version !== source.version ||
+        res.sourceCode !== source.sourceCode;
+      useImportedSourcesStore.getState().update(source.id, {
+        kind: res.kind,
+        name: res.name,
+        url: nextUrl,
+        script: res.script,
+        capabilities: res.capabilities,
+        sourceCode: res.sourceCode,
+        version: res.version,
+        updatedAt: Date.now(),
+      });
+      record(
+        changed ? `已更新${res.version ? ` · ${res.version}` : ""}` : "已是最新"
+      );
+      return { status: changed ? "updated" : "unchanged", label };
+    } catch {
+      record("更新失败");
+      return { status: "failed", label: source.name };
+    }
+  };
+
+  const updateImported = async (source: ImportedSource) => {
+    if (updatingId || updatingAll) return;
+    if (!/^https?:\/\//i.test(source.url ?? "")) {
+      toast.error("该音源是粘贴脚本导入的，没有更新地址，请重新导入");
+      return;
+    }
+    setUpdatingId(source.id);
+    try {
+      const { status, label } = await refreshImported(source);
+      syncImportedToConfigs();
+      if (status === "updated") toast.success(`已更新「${label}」`);
+      else if (status === "unchanged")
+        toast.success(`「${label}」已是最新版本`);
+      else if (status === "duplicate")
+        toast.error(`更新失败：与已有音源重复，未改动`);
+      else toast.error("更新失败：无法从原地址获取有效音源，请检查网络或地址");
+    } finally {
+      setUpdatingId(null);
+    }
+  };
+
+  /** 一键更新所有有地址的导入音源；粘贴脚本导入的没有地址，跳过 */
+  const updateAllImported = async () => {
+    if (updatingAll || updatingId) return;
+    const targets = importedSources.filter((s) =>
+      /^https?:\/\//i.test(s.url ?? "")
+    );
+    if (targets.length === 0) {
+      toast.error("没有可更新的音源（粘贴脚本导入的源没有地址）");
+      return;
+    }
+    setUpdatingAll(true);
+    setUpdateProgress({ done: 0, total: targets.length });
+    setUpdateSummary(null);
+    setCheckSummary(null);
+    setSourceUpdateResults({});
+    let updated = 0;
+    let unchanged = 0;
+    let failed = 0;
+    let done = 0;
+    try {
+      // 全部并发拉取，谁先回来先记进度；refreshImported 内部已吞掉单个失败
+      await Promise.all(
+        targets.map(async (source) => {
+          const { status } = await refreshImported(source);
+          if (status === "updated") updated += 1;
+          else if (status === "unchanged") unchanged += 1;
+          else failed += 1;
+          done += 1;
+          setUpdateProgress({ done, total: targets.length });
+        })
+      );
+      syncImportedToConfigs();
+      // 失败永远排最前，其次才是已更新
+      const summary = [
+        failed > 0 ? `${failed} 个更新失败` : null,
+        updated > 0 ? `${updated} 个已更新` : null,
+        unchanged > 0 ? `${unchanged} 个已是最新` : null,
+      ]
+        .filter(Boolean)
+        .join(" · ");
+      setUpdateSummary(summary);
+      toast.success(`一键更新完成：${summary}`);
+    } finally {
+      setUpdatingAll(false);
+    }
   };
 
   /** 音源默认显示名（没有别名时用它，作为输入框占位提示） */
@@ -589,18 +888,38 @@ export function AggregatedSourceSelect() {
           setEditor((e) => (e ? { ...e, saving: false } : e));
           return;
         }
+        const resolvedUrl = res.url ?? normalizeSourceUrl(nextUrl);
+        const dup = findDuplicateSource(
+          useImportedSourcesStore.getState().sources,
+          {
+            name: res.name,
+            url: resolvedUrl,
+            script: res.script,
+            kind: res.kind,
+          },
+          source
+        );
+        if (dup) {
+          toast.error(
+            `该地址与「${dup.source.name}」${duplicateReasonText(dup.reason)}，未保存`
+          );
+          setEditor((e) => (e ? { ...e, saving: false } : e));
+          return;
+        }
         useImportedSourcesStore.getState().update(source, {
           kind: res.kind,
           name: res.name,
           // 仓库地址会被展开成具体文件直链
-          url: res.url ?? normalizeSourceUrl(nextUrl),
+          url: resolvedUrl,
           script: res.script,
           capabilities: res.capabilities,
           sourceCode: res.sourceCode,
+          version: res.version,
+          updatedAt: Date.now(),
         });
         toast.success("音源地址已更新");
       } catch {
-        toast.error("地址探测失败，请检查网络或链接");
+        toast.error("地址解析失败，请检查网络或链接");
         setEditor((e) => (e ? { ...e, saving: false } : e));
         return;
       }
@@ -651,8 +970,11 @@ export function AggregatedSourceSelect() {
                     source={source}
                     config={config}
                     health={health[source.id]}
+                    updateResult={sourceUpdateResults[source.id]}
                     onToggle={(next) => toggleSource(source.id, next)}
                     onRename={() => openEditor(source.id)}
+                    onUpdate={() => updateImported(source)}
+                    updating={updatingId === source.id}
                     onDelete={() => deleteImported(source)}
                   />
                 </SortableRow>
@@ -663,6 +985,7 @@ export function AggregatedSourceSelect() {
                 <SourceItem
                   config={config}
                   health={health[config.source]}
+                  locked={LOCKED_SOURCES.includes(config.source)}
                   onToggle={(next) => toggleSource(config.source, next)}
                   onRename={() => openEditor(config.source)}
                 />
@@ -679,6 +1002,7 @@ export function AggregatedSourceSelect() {
                   config={activeConfig}
                   onToggle={() => {}}
                   onRename={() => {}}
+                  onUpdate={() => {}}
                   onDelete={() => {}}
                 />
               ) : (
@@ -703,12 +1027,21 @@ export function AggregatedSourceSelect() {
       ? importedSources.find((s) => s.id === activeId)
       : undefined;
 
-  const builtinRows = rows.filter((c) => !isImported(c.source));
-  const gdRows = rows.filter(
-    (c) => importedSources.find((s) => s.id === c.source)?.kind === "gd"
+  const builtinRows = sortConfigsByHealth(
+    rows.filter((c) => !isImported(c.source)),
+    health
   );
-  const lxRows = rows.filter(
-    (c) => importedSources.find((s) => s.id === c.source)?.kind === "lx"
+  const gdRows = sortConfigsByHealth(
+    rows.filter(
+      (c) => importedSources.find((s) => s.id === c.source)?.kind === "gd"
+    ),
+    health
+  );
+  const lxRows = sortLxConfigs(
+    rows.filter(
+      (c) => importedSources.find((s) => s.id === c.source)?.kind === "lx"
+    ),
+    health
   );
 
   return (
@@ -728,15 +1061,14 @@ export function AggregatedSourceSelect() {
         isExpanded={showSourcePicker}
         expandedContent={
           <div>
-            <SourceImport onImported={syncImportedToConfigs} />
-
-            <div className="flex items-center justify-between gap-2 pb-1">
+            <div className="flex flex-wrap items-center gap-2 pb-1">
+              <SourceImport inline onImported={syncImportedToConfigs} />
               <Button
                 variant="outline"
                 size="sm"
                 className="h-7 px-2 text-xs"
                 onClick={runHealthCheck}
-                disabled={checking}
+                disabled={checking || updatingAll}
               >
                 {checking ? (
                   <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" />
@@ -747,16 +1079,40 @@ export function AggregatedSourceSelect() {
                   ? `检测中 ${checkProgress.done}/${checkProgress.total}`
                   : "一键检测"}
               </Button>
-              <span className="text-xs text-muted-foreground truncate">
-                {checkSummary ?? "无效音源将自动停用"}
-              </span>
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-7 px-2 text-xs"
+                onClick={updateAllImported}
+                disabled={updatingAll || checking || Boolean(updatingId)}
+              >
+                {updatingAll ? (
+                  <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <RefreshCw className="mr-1 h-3.5 w-3.5" />
+                )}
+                {updatingAll
+                  ? `更新中 ${updateProgress.done}/${updateProgress.total}`
+                  : "一键更新"}
+              </Button>
+            </div>
+            <div className="truncate pb-1 text-xs text-muted-foreground">
+              {updateSummary ??
+                checkSummary ??
+                (importedSources.length > 0
+                  ? `已导入 ${importedSources.length} 个音源`
+                  : "")}
             </div>
 
-            <Tabs defaultValue="builtin" className="mt-1">
+            <Tabs
+              value={sourceTab}
+              onValueChange={setSourceTab}
+              className="mt-1"
+            >
               <TabsList className="w-full">
                 <TabsTrigger value="builtin">默认</TabsTrigger>
                 <TabsTrigger value="gd">GD API</TabsTrigger>
-                <TabsTrigger value="lx">洛雪音乐</TabsTrigger>
+                <TabsTrigger value="lx">LX Script</TabsTrigger>
               </TabsList>
 
               <TabsContent value="builtin">
@@ -766,7 +1122,7 @@ export function AggregatedSourceSelect() {
                 {renderGroup(gdRows, "还没有导入 GD API 音源")}
               </TabsContent>
               <TabsContent value="lx">
-                {renderGroup(lxRows, "还没有导入洛雪音乐音源")}
+                {renderGroup(lxRows, "还没有导入 LX Script 音源")}
               </TabsContent>
             </Tabs>
           </div>
@@ -787,7 +1143,7 @@ export function AggregatedSourceSelect() {
             </DialogTitle>
             <DialogDescription>
               {editor?.imported
-                ? "可修改地址和显示别名；换地址会先探测，确认是可用的音源才保存。"
+                ? "可修改地址和显示别名；换地址会先解析，确认是可用的音源才保存。"
                 : "只改显示名，不影响音源本身；留空则恢复默认名称。"}
             </DialogDescription>
           </DialogHeader>

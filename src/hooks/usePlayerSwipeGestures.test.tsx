@@ -29,6 +29,7 @@ describe("usePlayerSwipeGestures 播放页手势", () => {
     const onClose = vi.fn();
     const onPrev = vi.fn();
     const onNext = vi.fn();
+    const onSwipeUp = vi.fn();
     const onTap = vi.fn();
 
     let latest: ReturnType<typeof usePlayerSwipeGestures> | undefined;
@@ -39,6 +40,7 @@ describe("usePlayerSwipeGestures 播放页手势", () => {
         onClose,
         onPrev,
         onNext,
+        onSwipeUp,
         onTap,
       });
 
@@ -73,6 +75,7 @@ describe("usePlayerSwipeGestures 播放页手势", () => {
       onClose,
       onPrev,
       onNext,
+      onSwipeUp,
       onTap,
       /** 模拟一次轻点：按下后原地抬起，不产生位移 */
       tap: () =>
@@ -125,13 +128,22 @@ describe("usePlayerSwipeGestures 播放页手势", () => {
     h.cleanup();
   });
 
-  it("上滑不触发任何操作", () => {
+  it("上滑唤出评论，不触发收起或切歌", () => {
     const h = renderGestures();
     h.gesture(200, 400, 202, 200);
 
+    expect(h.onSwipeUp).toHaveBeenCalledTimes(1);
     expect(h.onClose).not.toHaveBeenCalled();
     expect(h.onPrev).not.toHaveBeenCalled();
     expect(h.onNext).not.toHaveBeenCalled();
+    h.cleanup();
+  });
+
+  it("上滑距离不足时不唤出评论", () => {
+    const h = renderGestures();
+    h.gesture(200, 400, 202, 340, 400);
+
+    expect(h.onSwipeUp).not.toHaveBeenCalled();
     h.cleanup();
   });
 
@@ -170,11 +182,11 @@ describe("usePlayerSwipeGestures 播放页手势", () => {
     h.cleanup();
   });
 
-  it("上滑不会吞掉随后的点击", () => {
+  it("上滑唤出评论后拦一次补发的 click", () => {
     const h = renderGestures();
     h.gesture(200, 400, 202, 200);
 
-    expect(h.getLatest().shouldSuppressClick()).toBe(false);
+    expect(h.getLatest().shouldSuppressClick()).toBe(true);
     h.cleanup();
   });
 

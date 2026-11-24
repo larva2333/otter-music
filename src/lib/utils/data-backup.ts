@@ -21,6 +21,17 @@ import { Encoding, Filesystem } from "@capacitor/filesystem";
 import { STORAGE_CONFIG } from "@/lib/storage-manager";
 import { logger } from "@/lib/logger";
 import { IS_NATIVE } from "@/lib/api/config";
+import { storeKey } from "@/store/store-keys";
+import { applyFontScale } from "@/store/ui-prefs-store";
+
+/** 安全读取 localStorage（隐私模式/存储不可用时返回 undefined） */
+function readLocalStorageValue(key: string): string | undefined {
+  try {
+    return localStorage.getItem(key) ?? undefined;
+  } catch {
+    return undefined;
+  }
+}
 
 /** 备份数据版本号 */
 const CURRENT_VERSION = 1;
@@ -107,6 +118,14 @@ interface BackupPayload {
   allowSimultaneousPlayback: boolean;
   rssSources: PodcastRssSource[];
   servers: AlistServer[];
+  /** 主题偏好（system / light / dark），存 localStorage */
+  theme?: "system" | "light" | "dark";
+  /** 字体档位原始 JSON（ui-prefs-store），存 localStorage */
+  uiPrefs?: string;
+  /** 用户导入的音源列表原始 JSON，存 localStorage */
+  importedSources?: string;
+  /** 搜索历史原始 JSON，存 localStorage */
+  searchHistory?: string;
 }
 
 /** 校验成功结果 */
@@ -178,6 +197,14 @@ export function serializeStoreData(): string {
     allowSimultaneousPlayback: useAppStore.getState().allowSimultaneousPlayback,
     rssSources: usePodcastStore.getState().rssSources,
     servers: useAlistStore.getState().servers,
+    theme: readLocalStorageValue("theme") as
+      | "system"
+      | "light"
+      | "dark"
+      | undefined,
+    uiPrefs: readLocalStorageValue(storeKey.UiPrefsStore),
+    importedSources: readLocalStorageValue("otter_imported_sources"),
+    searchHistory: readLocalStorageValue("otter_search_history"),
   };
 
   const envelope: BackupEnvelope = {
@@ -379,5 +406,44 @@ export function importStoreData(payload: BackupPayload): void {
   }
   if (payload.servers) {
     useAlistStore.getState().setServers(payload.servers);
+  }
+
+  // localStorage 里的设置：主题、字体、导入音源、搜索历史。
+  // 只对备份中实际存在的字段写回，旧版备份没有这些字段时保持现状。
+  if (
+    payload.theme === "system" ||
+    payload.theme === "light" ||
+    payload.theme === "dark"
+  ) {
+    writeLocalStorageValue("theme", payload.theme);
+  }
+  if (payload.uiPrefs !== undefined) {
+    writeLocalStorageValue(storeKey.UiPrefsStore, payload.uiPrefs);
+    try {
+      const parsed = JSON.parse(payload.uiPrefs) as {
+        state?: { fontScale?: string };
+      };
+      const scale = parsed.state?.fontScale;
+      if (scale === "small" || scale === "standard" || scale === "large") {
+        applyFontScale(scale);
+      }
+    } catch {
+      // 值坏掉就忽略，下次启动由 provider 兜底
+    }
+  }
+  if (payload.importedSources !== undefined) {
+    writeLocalStorageValue("otter_imported_sources", payload.importedSources);
+  }
+  if (payload.searchHistory !== undefined) {
+    writeLocalStorageValue("otter_search_history", payload.searchHistory);
+  }
+}
+
+/** 安全写入 localStorage（存储不可用时静默跳过） */
+function writeLocalStorageValue(key: string, value: string): void {
+  try {
+    localStorage.setItem(key, value);
+  } catch {
+    // 存储不可用时跳过，不阻断其余设置恢复
   }
 }

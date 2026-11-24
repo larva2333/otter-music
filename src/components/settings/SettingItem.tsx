@@ -1,6 +1,6 @@
 import { LucideIcon, ChevronRight } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { ReactNode, useEffect, useRef } from "react";
+import { ReactNode } from "react";
 
 interface SettingItemProps {
   icon: LucideIcon;
@@ -36,25 +36,6 @@ export function SettingItem({
   onClick,
   children,
 }: SettingItemProps) {
-  const itemRef = useRef<HTMLDivElement>(null);
-
-  // 展开时确保整个条目（含底部滑块）完整进入可视区。
-  //
-  // 必须等展开动画（200ms）跑完再滚：grid-template-rows 的过渡在动画开始时
-  // 高度还是 0，立刻 scrollIntoView 只能看到收起状态的盒子，于是「展开了但
-  // 下面几行还在屏幕外」——全屏播放器、歌词样式这些三行以上的条目尤其明显。
-  useEffect(() => {
-    if (!isExpanded) return;
-
-    const timer = window.setTimeout(() => {
-      itemRef.current?.scrollIntoView({
-        block: "nearest",
-        behavior: "smooth",
-      });
-    }, 220);
-    return () => window.clearTimeout(timer);
-  }, [isExpanded]);
-
   // 既有右侧控件（开关/摘要）又能展开时，箭头跟着标题走：
   // 放在最右边会被开关挤成一个孤立符号，看不出它属于「展开」。
   // 但聚合音源这类摘要可能很长、需要占满右侧，箭头放行尾更自然。
@@ -64,12 +45,9 @@ export function SettingItem({
 
   return (
     <div
-      ref={itemRef}
       onClick={onClick}
       className={cn(
         "px-4 py-3 transition-colors",
-        // 展开后滚动定位时给底部的播放胶囊留出空间
-        "scroll-mb-[calc(var(--now-playing-safe-height,72px)+16px)]",
         onClick && "cursor-pointer hover:bg-muted/20",
         className
       )}

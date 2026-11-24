@@ -5,6 +5,8 @@ import { useExitLayer } from "@/hooks/useExitLayer";
 const KEYBOARD_POP_MS = 350;
 
 interface UseSearchBackClearOptions {
+  /** 发现页是否在当前路由；从搜索结果进二级页后应让返回键走正常返回 */
+  enabled?: boolean;
   /** 输入框是否处于聚焦状态（键盘开着） */
   focused: boolean;
   /** 当前输入内容（用 ref 取最新值，避免每次输入都重建返回键层） */
@@ -26,6 +28,7 @@ interface UseSearchBackClearOptions {
  * 标准交互：第一次返回收键盘，第二次返回才清空搜索。
  */
 export function useSearchBackClear({
+  enabled = true,
   focused,
   value,
   onClear,
@@ -57,7 +60,7 @@ export function useSearchBackClear({
   };
 
   useEffect(() => {
-    if (!focused) return;
+    if (!enabled || !focused) return;
 
     // 聚焦瞬间不要立刻写 store：那一刻输入法正在跑 insets 弹出动画，
     // 任何整页级更新都会让 WebView 重排、打断动画，键盘窗口会停在「可见但空白」
@@ -73,5 +76,5 @@ export function useSearchBackClear({
       if (id) pop(id);
     };
     // exitSearch 只读 ref，引用变化不影响行为
-  }, [focused, push, pop]);
+  }, [enabled, focused, push, pop]);
 }

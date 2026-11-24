@@ -2,6 +2,11 @@ import { create } from "zustand";
 import { persist, createJSONStorage } from "zustand/middleware";
 import type { MarketPlaylist, ArtistAlbum } from "@/lib/netease/netease-types";
 
+/** 快照防御上限：排行榜有 65 项，不能照着普通分页的 12 项砍掉 */
+const MAX_SNAPSHOT_ITEMS = 80;
+/** 访问过的分类快照上限，防止长期使用后 localStorage 里堆几十份列表 */
+const MAX_SNAPSHOT_KEYS = 20;
+
 // 抽离初始状态，便于 clearSession 复用
 const INITIAL_MINE_DATA: MineDataState = {
   recommend: null,
@@ -87,9 +92,23 @@ export const useMarketSession = create<MarketSessionState>()(
         })),
 
       saveListSnapshot: (key, snapshot) =>
-        set((state) => ({
-          listSnapshots: { ...state.listSnapshots, [key]: snapshot },
-        })),
+        set((state) => {
+          const listSnapshots = {
+            ...state.listSnapshots,
+            [key]: {
+              ...snapshot,
+              items: snapshot.items.slice(0, MAX_SNAPSHOT_ITEMS),
+            },
+          };
+          const keys = Object.keys(listSnapshots);
+          for (const oldKey of keys.slice(
+            0,
+            Math.max(0, keys.length - MAX_SNAPSHOT_KEYS)
+          )) {
+            delete listSnapshots[oldKey];
+          }
+          return { listSnapshots };
+        }),
 
       saveSearchCache: (cache) => set({ searchCache: cache }),
 
@@ -148,6 +167,14 @@ export const useMarketSession = create<MarketSessionState>()(
     }),
     {
       name: "market-session-storage",
+      // v2：分页改版后旧快照是「追加式几百条」，留着会一进歌单广场就挂几百张卡片。
+      // 迁移时只丢列表缓存，收藏/登录等 mineData 继续保留。
+      version: 2,
+      migrate: (persisted) => ({
+        ...(persisted as MarketSessionState),
+        listSnapshots: {},
+        searchCache: null,
+      }),
       // 用 localStorage 而不是 sessionStorage：冷启动后切回看过的分类/搜索能直接出缓存，
       // 不再整块 loading。数据本身由接口层 cachedFetch 控制 1 天过期。
       storage: createJSONStorage(() => localStorage),

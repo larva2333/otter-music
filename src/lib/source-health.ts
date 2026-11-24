@@ -33,8 +33,8 @@ const PROBE_KEYWORDS = ["周杰伦", "love"];
 /** 单次请求超时。嗨歌曲实测一次要 8~13 秒，给足 15 秒再判失败 */
 const DEFAULT_TIMEOUT = 15_000;
 
-/** 等脚本发出 inited 的时间。慢脚本要先异步取配置/签名，5 秒太紧容易误杀 */
-const LX_INIT_WAIT = 10_000;
+/** 等脚本发出 inited 的时间，与单次请求超时统一为 15 秒 */
+const LX_INIT_WAIT = 15_000;
 
 /** 洛雪平台代号 → 项目里能搜出该平台曲目的音源 */
 const LX_PROBE_SEARCH_SOURCE: Partial<Record<string, MusicSource>> = {
@@ -239,11 +239,25 @@ export async function checkSourceHealth(
   source: MusicSource,
   timeoutMs = DEFAULT_TIMEOUT
 ): Promise<SourceHealthResult> {
+  const started = Date.now();
   const imported = getImportedSource(source);
-  if (imported?.kind === "lx") {
-    return checkLxSource(source, timeoutMs);
+  const task =
+    imported?.kind === "lx"
+      ? checkLxSource(source, timeoutMs)
+      : checkGdSource(source, timeoutMs);
+  try {
+    // 总时限：单个音源内部会串起「搜索探测曲目 → 脚本换链 → 探活」多步，
+    // 每步各自 15 秒会叠到 40 秒以上。这里给整个音源套一个总闸，
+    // 到点就返回，不再等它跑完；后台请求自己结束，不影响界面。
+    return await withTimeout(task, timeoutMs);
+  } catch {
+    return {
+      source,
+      status: "unknown",
+      reason: "检测超时",
+      latencyMs: Date.now() - started,
+    };
   }
-  return checkGdSource(source, timeoutMs);
 }
 
 /**

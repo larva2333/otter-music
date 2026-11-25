@@ -5,6 +5,7 @@ const {
   search,
   getUrl,
   probeMediaDetail,
+  resolveViaLxPlayback,
   getAggregatedSourcesForMatch,
   logInfo,
   logWarn,
@@ -12,6 +13,7 @@ const {
   search: vi.fn(),
   getUrl: vi.fn(),
   probeMediaDetail: vi.fn(),
+  resolveViaLxPlayback: vi.fn(),
   getAggregatedSourcesForMatch: vi.fn(),
   logInfo: vi.fn(),
   logWarn: vi.fn(),
@@ -30,6 +32,10 @@ vi.mock("@/hooks/use-aggregated-sources", () => ({
 
 vi.mock("@/lib/utils/media-probe", () => ({
   probeMediaDetail: (...args: unknown[]) => probeMediaDetail(...args),
+}));
+
+vi.mock("@/lib/imported-sources/lx-playback", () => ({
+  resolveViaLxPlayback: (...args: unknown[]) => resolveViaLxPlayback(...args),
 }));
 
 vi.mock("@/lib/logger", () => ({
@@ -99,6 +105,8 @@ describe("resolveViaCrossPlatform", () => {
     search.mockReset();
     getUrl.mockReset();
     probeMediaDetail.mockReset();
+    resolveViaLxPlayback.mockReset();
+    resolveViaLxPlayback.mockResolvedValue(null);
     getAggregatedSourcesForMatch.mockReset();
     logInfo.mockReset();
     logWarn.mockReset();
@@ -129,15 +137,54 @@ describe("resolveViaCrossPlatform", () => {
     expect(getUrl).toHaveBeenCalledWith("u2", "_netease", 320);
   });
 
-  it("严格校验失败（翻唱专辑）时返回 null，不取链", async () => {
-    search.mockResolvedValue({
-      items: [candidate({ album: "翻唱集" })],
+  it("官方取链为空时用洛雪补链（酷我场景）", async () => {
+    search.mockImplementation(async (_q, source) => ({
+      items:
+        source === "kuwo"
+          ? [candidate({ source: "kuwo", album: "叶惠美" })]
+          : [],
+    }));
+    getUrl.mockResolvedValue(null);
+    resolveViaLxPlayback.mockResolvedValue({
+      url: "https://cdn/lx.mp3",
+      sourceName: "洛雪音源",
     });
 
     const result = await resolveViaCrossPlatform(original, 320);
 
-    expect(result).toBeNull();
-    expect(getUrl).not.toHaveBeenCalled();
+    expect(resolveViaLxPlayback).toHaveBeenCalledTimes(1);
+    expect(result?.url).toBe("https://cdn/lx.mp3");
+  });
+
+  it("专辑不同但歌名歌手一致的候选用作最后兜底", async () => {
+    search.mockImplementation(async (_q, source) => ({
+      items:
+        source === "kuwo"
+          ? [candidate({ source: "kuwo", album: "另一个专辑版本" })]
+          : [],
+    }));
+
+    const result = await resolveViaCrossPlatform(original, 320);
+
+    expect(result?.url).toBe("https://cdn/x.mp3");
+    expect(getUrl).toHaveBeenCalledTimes(1);
+  });
+
+  it("专辑一致的候选优先于专辑不同的候选", async () => {
+    const strict = candidate({ url_id: "u-strict" });
+    const loose = candidate({ url_id: "u-loose", album: "另一个专辑版本" });
+    search.mockImplementation(async (_q, source) => ({
+      items:
+        source === "_netease" ? [strict] : source === "kuwo" ? [loose] : [],
+    }));
+    getUrl.mockImplementation(async (id: string) =>
+      id === "u-strict" ? "https://cdn/strict.mp3" : "https://cdn/loose.mp3"
+    );
+
+    const result = await resolveViaCrossPlatform(original, 320);
+
+    expect(result?.url).toBe("https://cdn/strict.mp3");
+    expect(getUrl).toHaveBeenCalledTimes(1);
   });
 
   it("探活只给试听片段（<1MB）时不采纳", async () => {

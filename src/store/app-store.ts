@@ -25,8 +25,10 @@ interface AppState {
   latestVersionInfo: UpdateInfo | null;
   hasUpdate: boolean;
   isChecking: boolean;
-  /** toast 里点「发现新版本」后置位，设置页挂载时自动打开更新弹窗（不持久化） */
+  /** toast 里点「发现新版本」或进设置自动弹窗时置位，渲染期直接打开更新弹窗（不持久化） */
   updateDialogRequested: boolean;
+  /** 本次冷启动会话内是否已经自动弹过更新弹窗（不持久化，重启进程重置） */
+  updateDialogAutoShown: boolean;
   /** 启动时是否自动检查更新并提醒 */
   enableUpdateNotify: boolean;
   /** 是否与其他应用同时播放(被其他应用抢占音频焦点时不暂停) */
@@ -38,8 +40,8 @@ interface AppActions {
   syncInstalledVersion: () => Promise<void>;
   checkUpdate: (silent?: boolean) => Promise<void>;
   consumeUpdateDialogRequest: () => void;
-  /** 进设置页时用：有新版本且这一版还没自动弹过，就把弹窗标记置位 */
-  autoOpenUpdateDialogOnce: () => void;
+  /** 进设置页时用：有新版本且本次会话还没自动弹过，就把弹窗标记置位 */
+  autoOpenUpdateDialogOnce: () => boolean;
   resetCheckTime: () => void;
   setEnableUpdateNotify: (enableUpdateNotify: boolean) => void;
   setAllowSimultaneousPlayback: (allowSimultaneousPlayback: boolean) => void;
@@ -52,6 +54,7 @@ const initialState: AppState = {
   hasUpdate: false,
   isChecking: false,
   updateDialogRequested: false,
+  updateDialogAutoShown: false,
   enableUpdateNotify: true,
   allowSimultaneousPlayback: false,
 };
@@ -103,7 +106,7 @@ function dismissUpdateToast() {
 
 /** toast 点击：先置位再跳路由，设置页可能还没挂载，等它挂载后消费这个标记 */
 function openUpdateDialog(set: (partial: Partial<AppState>) => void) {
-  set({ updateDialogRequested: true });
+  set({ updateDialogAutoShown: true, updateDialogRequested: true });
   void import("@/router").then(({ router }) => router.navigate("/settings"));
 }
 
@@ -229,19 +232,12 @@ export const useAppStore = create<AppState & AppActions>()(
       consumeUpdateDialogRequest: () => set({ updateDialogRequested: false }),
 
       autoOpenUpdateDialogOnce: () => {
-        const { hasUpdate, latestVersionInfo } = get();
-        const version = latestVersionInfo?.latestVersion;
-        if (!hasUpdate || !version) return;
-        // 同一个版本只自动弹一次；出了新版本会再弹
-        const key = `otter_update_auto_shown_${version}`;
-        try {
-          if (localStorage.getItem(key)) return;
-          localStorage.setItem(key, "1");
-        } catch {
-          // 存储不可用时不自动弹，用户仍可点版本更新行 / toast 打开
-          return;
-        }
-        set({ updateDialogRequested: true });
+        const { hasUpdate, updateDialogAutoShown } = get();
+        if (!hasUpdate || updateDialogAutoShown) return false;
+        // 去重改用内存态（不持久化），每次冷启动第一次进设置弹一次，
+        // 关闭后同会话不再弹，避免写入 localStorage 后跨会话永久锁死。
+        set({ updateDialogAutoShown: true, updateDialogRequested: true });
+        return true;
       },
 
       resetCheckTime: () => set({ lastCheckTime: 0 }),

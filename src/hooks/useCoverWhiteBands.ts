@@ -34,7 +34,7 @@ interface CropResult {
 
 const NO_CROP: CropResult = { zoom: 1, top: 0, bottom: 0, left: 0, right: 0 };
 
-function measureBands(img: HTMLImageElement): CropResult {
+async function measureBandsAsync(img: HTMLImageElement): Promise<CropResult> {
   const ratio = SAMPLE / Math.max(img.naturalWidth, img.naturalHeight);
   const w = Math.max(8, Math.round(img.naturalWidth * ratio));
   const h = Math.max(8, Math.round(img.naturalHeight * ratio));
@@ -44,7 +44,31 @@ function measureBands(img: HTMLImageElement): CropResult {
   canvas.height = h;
   const ctx = canvas.getContext("2d", { willReadFrequently: true });
   if (!ctx) return NO_CROP;
-  ctx.drawImage(img, 0, 0, w, h);
+
+  // 优先用 createImageBitmap 在后台线程缩放解码，避免主线程 getImageData 卡住 60~100ms
+  let drew = false;
+  if (typeof createImageBitmap === "function") {
+    try {
+      const bitmap = await createImageBitmap(img, {
+        resizeWidth: w,
+        resizeHeight: h,
+      });
+      try {
+        ctx.drawImage(bitmap, 0, 0);
+        drew = true;
+      } finally {
+        bitmap.close();
+      }
+    } catch {
+      // 回退到常规 drawImage
+    }
+  }
+  if (!drew) {
+    if (typeof img.decode === "function") {
+      await img.decode().catch(() => {});
+    }
+    ctx.drawImage(img, 0, 0, w, h);
+  }
 
   let data: Uint8ClampedArray;
   try {
@@ -106,6 +130,9 @@ function measureBands(img: HTMLImageElement): CropResult {
 /** 同一张封面重复进入播放页时避免重复解码 */
 const cache = new Map<string, CropResult>();
 
+/** 避开切歌 600ms 唱臂/滑入动画窗口后再做白边扫描（requestIdleCallback 会在动画帧间隙抢跑） */
+const WHITE_BAND_DELAY_MS = 700;
+
 /**
  * 返回封面需要的放大倍数（用于裁掉图片自带的纯白边）。
  * 未检测完成时返回 1，不影响首帧。
@@ -121,18 +148,25 @@ export function useCoverWhiteBands(url: string | null | undefined): number {
     if (!url || cache.has(url)) return;
 
     let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | null = null;
     const img = new Image();
     img.crossOrigin = "anonymous";
     img.onload = () => {
       if (cancelled) return;
-      const result = measureBands(img);
-      cache.set(url, result);
-      setDetected({ url, zoom: result.zoom });
+      timer = setTimeout(() => {
+        if (cancelled) return;
+        void measureBandsAsync(img).then((result) => {
+          if (cancelled) return;
+          cache.set(url, result);
+          setDetected({ url, zoom: result.zoom });
+        });
+      }, WHITE_BAND_DELAY_MS);
     };
     img.src = url;
 
     return () => {
       cancelled = true;
+      if (timer !== null) clearTimeout(timer);
     };
   }, [url]);
 

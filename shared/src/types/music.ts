@@ -116,7 +116,6 @@ export const DEFAULT_SOURCE_CONFIGS: SourceConfig[] = [
   { source: "higequ", enabled: true, visible: true },
   { source: "_netease", enabled: true, visible: true },
   { source: "qq", enabled: true, visible: true },
-  { source: "kuwo", enabled: true, visible: true },
   { source: "bilibili", enabled: true, visible: true },
 ];
 

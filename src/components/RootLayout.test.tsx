@@ -237,7 +237,42 @@ describe("RootLayout", () => {
     const searchPage = routes.find((el) => el.dataset.pageRoute === "/search");
     const minePage = routes.find((el) => el.dataset.pageRoute === "/mine");
     expect(searchPage?.classList.contains("hidden")).toBe(true);
+    expect(searchPage?.dataset.pageActive).toBe("false");
+    expect(searchPage?.getAttribute("aria-hidden")).toBe("true");
     expect(minePage?.classList.contains("hidden")).toBe(false);
+    expect(minePage?.dataset.pageActive).toBe("true");
+    expect(minePage?.getAttribute("aria-hidden")).toBeNull();
+  });
+
+  it("renders root tab slots in linear chain order inside root pager track", () => {
+    renderLayout(["/search"]);
+
+    const routes = Array.from(
+      container!.querySelectorAll<HTMLElement>(
+        "[data-root-pager-track] [data-page-route]"
+      )
+    );
+    expect(routes.map((el) => el.dataset.pageRoute)).toEqual([
+      "/search",
+      "/favorites",
+      "/mine",
+      "/settings",
+    ]);
+  });
+
+  it("skips page-enter animation when navigated via swipe", async () => {
+    const { router } = renderLayout(["/search"]);
+
+    await act(async () => {
+      await router.navigate("/mine", {
+        state: { pageDir: "forward", fromSwipe: true },
+      });
+    });
+
+    const minePage = container!.querySelector<HTMLElement>(
+      '[data-page-route="/mine"]'
+    );
+    expect(minePage?.classList.contains("page-enter-forward")).toBe(false);
   });
 
   it("closes the fullscreen player on real Escape without registering popstate handling", async () => {

@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { VinylCover } from "./VinylCover";
+import { beginArmCut, cancelArmCut, registerArm } from "@/lib/vinyl-arm";
 
 // 只验证黑胶盘面结构与旋转状态，中心封面由 MusicCover 自己覆盖测试
 vi.mock("./MusicCover", () => ({
@@ -22,9 +23,12 @@ describe("VinylCover", () => {
 
   afterEach(() => {
     if (root) act(() => root?.unmount());
+    cancelArmCut();
+    registerArm(null);
     container?.remove();
     root = undefined;
     container = undefined;
+    vi.useRealTimers();
   });
 
   const render = async (isPlaying: boolean, discColor?: string) => {
@@ -71,12 +75,12 @@ describe("VinylCover", () => {
     expect(disc().style.animationPlayState).toBe("paused");
   });
 
-  it("中心封面约占盘面直径的三分之二（对齐网易）", async () => {
+  it("中心封面直径约为盘面 68%，与网易云实拍比例一致", async () => {
     await render(true);
     const label = document.body.querySelector(
       '[data-testid="vinyl-label"]'
     ) as HTMLDivElement;
-    expect(label.className).toContain("inset-[17%]"); // 直径 66%
+    expect(label.className).toContain("inset-[16%]"); // 直径 68%，黑圈每边 16%
   });
 
   it("盘面用传入颜色，transparent 时透出背景；只有唱臂骨架可被轻点识别", async () => {
@@ -134,16 +138,17 @@ describe("VinylCover", () => {
     ).toHaveLength(2);
   });
 
-  it("唱臂播放时落到盘面、暂停时抬起，走 CSS transition", async () => {
+  it("唱臂播放时落到盘面、暂停时抬起，角度只写在 rotate 单一通道", async () => {
     await render(true);
     const arm = () =>
       document.body.querySelector(
         '[data-testid="vinyl-tonearm"]'
       ) as SVGElement;
 
-    // 播放态整个骨架逆时针偏 4°（绕基座轴心）
-    expect(arm().style.transform).toBe("rotate(-4deg)");
-    expect(arm().style.transition).toContain("transform 350ms");
+    // 播放态绝对角 -4°（绕基座轴心）；transform 不再承载角度
+    expect(arm().style.rotate).toBe("-4deg");
+    expect(arm().style.transform).toBe("");
+    expect(arm().style.willChange).toBe("rotate");
     // 两段直线等长（各约14）+ 拐点 Q 小圆角，不是尖角硬折
     const tube = arm().querySelector("path") as SVGPathElement;
     expect(tube.getAttribute("d")).toBe(
@@ -163,10 +168,14 @@ describe("VinylCover", () => {
       );
     });
     // 暂停抬到 -40°，唱头完全离开盘面并离盘更远（盘心 50,58 半径 43）
-    expect(arm().style.transform).toBe("rotate(-40deg)");
+    expect(arm().style.rotate).toBe("-40deg");
+    expect(arm().style.transform).toBe("");
+    // 稳态切换走 rotate 单通道的过渡
+    expect(arm().style.transition).toBe("rotate 300ms linear");
   });
 
-  it("切歌受控状态 away 只写稳态角，让位量走增量通道，根部轴心始终固定", async () => {
+  it("切歌连续完成抬臂与落针（恒定角速度，不在半空顿住等网络），根部轴心始终固定", async () => {
+    vi.useFakeTimers();
     await render(true);
     const arm = () =>
       document.body.querySelector(
@@ -175,76 +184,122 @@ describe("VinylCover", () => {
     // 轴心与基座 div 的中心重合：left 50% / top -9% + 半高 3% = -6%
     expect(arm().style.transformOrigin).toBe("50% -6%");
 
-    await act(async () => {
-      root?.render(
-        <VinylCover
-          src="https://example.com/cover.jpg"
-          isPlaying={true}
-          armState="away"
-        />
-      );
-    });
-    // 关键：away 不写 -62° 到 transform 上。写了的话 350ms transition 会先
-    // 往让位角滑一段，再被 WAAPI 动画接管 —— 视觉上闪一下。
-    // 稳态角保持播放位，让位量（-62 - (-4) = -58）走在 style.rotate 增量上。
-    expect(arm().style.transform).toBe("rotate(-4deg)");
-    expect(arm().style.rotate).toBe("-58deg");
-    expect(arm().style.transformOrigin).toBe("50% -6%");
+    act(() => beginArmCut());
+    // 36° / 0.12°/ms = 300ms 抬臂
+    expect(arm().style.rotate).toBe("-40deg");
+    expect(arm().style.transition).toBe("rotate 300ms linear");
+
+    // 到达抬臂终点后无需等音源/封面信号，立即以同速匀速落回播放位
+    act(() => vi.advanceTimersByTime(300));
+    expect(arm().style.rotate).toBe("-4deg");
+    expect(arm().style.transition).toBe("rotate 300ms linear");
+    expect(arm().style.transform).toBe("");
     // 基座是独立节点、不参与旋转，所以根部视觉上完全不动
     const base = document.body.querySelector(
       "[data-vinyl-control]"
     ) as HTMLElement;
     expect(base.style.transform).toBe("");
-
-    await act(async () => {
-      root?.render(
-        <VinylCover
-          src="https://example.com/cover.jpg"
-          isPlaying={true}
-          armState="playing"
-        />
-      );
-    });
-    // 新歌切入后唱臂落回沟槽，增量写回 0
-    expect(arm().style.transform).toBe("rotate(-4deg)");
-    expect(arm().style.rotate).toBe("0deg");
-    expect(arm().style.transformOrigin).toBe("50% -6%");
   });
 
-  it("away 时走 WAAPI：760ms 五帧、过冲到 -67 再落回增量 0", async () => {
-    const animate = vi.fn(() => ({
+  it("支持 WAAPI 时用单条连续线性动画完成抬臂与落针，零定时器停顿且中途状态翻转不打断", async () => {
+    const createdAnim = {
       cancel: vi.fn(),
-      finished: Promise.resolve(),
-    }));
-    // jsdom 的 SVGElement 没有 Web Animations API，手动补一个
+      onfinish: null as (() => void) | null,
+      oncancel: null as (() => void) | null,
+    };
+    const animate = vi.fn(() => createdAnim);
     (SVGElement.prototype as unknown as { animate: unknown }).animate = animate;
 
     try {
       await render(true);
+      const arm = () =>
+        document.body.querySelector(
+          '[data-testid="vinyl-tonearm"]'
+        ) as SVGElement;
+
+      act(() => beginArmCut());
+      expect(animate).toHaveBeenCalledTimes(1);
+      expect(animate).toHaveBeenCalledWith(
+        [
+          { rotate: "-4deg" },
+          { rotate: "-40deg", offset: 0.5 },
+          { rotate: "-4deg" },
+        ],
+        { duration: 600, easing: "linear" }
+      );
+      // 提前将 inline 设为终点 -4deg，无 fill:forwards 交接闪烁
+      expect(arm().style.rotate).toBe("-4deg");
+      expect(arm().style.transition).toBe("none");
+
+      // 动画进行中 isPlaying 翻转，不能把唱臂取消或重开
       await act(async () => {
         root?.render(
-          <VinylCover
-            src="https://example.com/cover.jpg"
-            isPlaying={true}
-            armState="away"
-          />
+          <VinylCover src="https://example.com/cover.jpg" isPlaying={false} />
         );
       });
+      expect(createdAnim.cancel).not.toHaveBeenCalled();
 
-      expect(animate).toHaveBeenCalledTimes(1);
-      const [keyframes, options] = animate.mock.calls[0] as unknown as [
-        Array<{ rotate: string; offset: number }>,
-        { duration: number },
-      ];
-      expect(options.duration).toBe(760);
-      expect(keyframes.map((k) => k.offset)).toEqual([0, 0.33, 0.45, 0.59, 1]);
-      // 起手接当前位置 → 过冲（增量 -63，视觉总角 -67，比让位角再多 5 度）
-      // → 顶点停留 -58（视觉 -62）→ 增量回 0
-      expect(keyframes[0].rotate).toBe("0deg");
-      expect(keyframes[1].rotate).toBe("-63deg");
-      expect(keyframes[2].rotate).toBe("-58deg");
-      expect(keyframes[3].rotate).toBe("-58deg");
-      expect(keyframes[4].rotate).toBe("0deg");
+      act(() => createdAnim.onfinish?.());
+      expect(arm().style.rotate).toBe("-40deg");
+    } finally {
+      delete (SVGElement.prototype as unknown as { animate?: unknown }).animate;
+    }
+  });
+
+  it("横滑剩余角度按同角速度折算抬臂时长，保证整段匀速", async () => {
+    const animate = vi.fn(() => ({
+      cancel: vi.fn(),
+      onfinish: null,
+      oncancel: null,
+    }));
+    (SVGElement.prototype as unknown as { animate: unknown }).animate = animate;
+
+    try {
+      await render(true);
+      const arm = () =>
+        document.body.querySelector(
+          '[data-testid="vinyl-tonearm"]'
+        ) as SVGElement;
+      // 模拟横滑松手时唱臂位于 -22°（距 -40° 仅剩 18° = 150ms，回落 36° = 300ms，总 450ms）
+      arm().style.rotate = "-22deg";
+
+      act(() => beginArmCut());
+      expect(animate).toHaveBeenCalledWith(
+        [
+          { rotate: "-22deg" },
+          { rotate: "-40deg", offset: 150 / 450 },
+          { rotate: "-4deg" },
+        ],
+        { duration: 450, easing: "linear" }
+      );
+    } finally {
+      delete (SVGElement.prototype as unknown as { animate?: unknown }).animate;
+    }
+  });
+
+  it("暂停态切歌直接从 -40° 匀速落到 -4°（300ms）", async () => {
+    const createdAnim = {
+      cancel: vi.fn(),
+      onfinish: null as (() => void) | null,
+    };
+    const animate = vi.fn(() => createdAnim);
+    (SVGElement.prototype as unknown as { animate: unknown }).animate = animate;
+
+    try {
+      await render(false);
+      const arm = () =>
+        document.body.querySelector(
+          '[data-testid="vinyl-tonearm"]'
+        ) as SVGElement;
+      expect(arm().style.rotate).toBe("-40deg");
+
+      act(() => beginArmCut({ hasCover: false }));
+      expect(animate).toHaveBeenCalledWith(
+        [{ rotate: "-40deg" }, { rotate: "-4deg" }],
+        { duration: 300, easing: "linear" }
+      );
+      expect(arm().style.rotate).toBe("-4deg");
+      act(() => createdAnim.onfinish?.());
     } finally {
       delete (SVGElement.prototype as unknown as { animate?: unknown }).animate;
     }

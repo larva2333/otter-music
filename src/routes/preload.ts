@@ -9,6 +9,7 @@ export function preloadRouteChunks(): () => void {
     void import("@/components/FavoritesView");
     void import("@/components/MinePage");
     void import("@/components/QueuePage");
+    void import("@/components/SettingsPage");
   };
 
   if ("requestIdleCallback" in window) {

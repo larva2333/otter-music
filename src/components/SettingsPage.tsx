@@ -1,7 +1,7 @@
 "use client";
 
 import { PageLayout } from "./PageLayout";
-import { useNavigate } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import { ThemeToggle } from "./ThemeToggle";
 import { QualitySelect } from "./settings/QualitySelect";
 import { CommentSourceSelect } from "./settings/CommentSourceSelect";
@@ -45,8 +45,9 @@ import { DesktopLyricSetting } from "./settings/DesktopLyricSetting";
 import { FontSizeSetting } from "./settings/FontSizeSetting";
 import { useState, useRef } from "react";
 import { IS_NATIVE } from "@/lib/api/config";
-import { useSwipeCategories } from "@/hooks/use-swipe-categories";
+import { usePagerSwipe } from "@/hooks/use-pager-swipe";
 import { useRootTabSwipe } from "@/hooks/use-root-tab-swipe";
+import { useIsRootTabActive } from "@/hooks/use-root-pager";
 import { useTabReclick } from "@/hooks/use-tab-reclick";
 
 interface SettingsPageProps {
@@ -89,24 +90,31 @@ function SettingsSection({
 }
 
 export function SettingsPage({ onBack }: SettingsPageProps) {
+  const location = useLocation();
   const navigate = useNavigate();
   const [dataBackupOpen, setDataBackupOpen] = useState(false);
+  // tab 保活模式下 /settings 切走后仍挂在 DOM 里：只在真正处于设置页且非悬浮歌词深链时
+  // 允许冷启动异步完成后的更新弹窗自动补弹，避免在后台 tab 偷跑。
+  const isUpdateAutoOpenActive =
+    location.pathname === "/settings" &&
+    !(location.state as { expandDesktopLyric?: boolean } | null)
+      ?.expandDesktopLyric;
   const scrollRef = useRef<HTMLDivElement>(null);
   const pageRef = useRef<HTMLDivElement>(null);
+  const isPageActive = useIsRootTabActive("settings");
 
-  // 设置是链尾：右滑回歌单最后一个 type，左滑无下一页。
-  // 左滑方向不跟手——否则整页内容会被拖出去再弹回来。
-  // touch 监听仍挂在滚动容器上，但跟手位移作用于整页 pageRef：
-  // 标题栏和内容一起平移，不会出现内容滑、标题不动的分头。
-  useSwipeCategories(scrollRef, {
-    ids: ["settings"],
-    activeId: "settings",
-    onChange: () => {},
-    onEdge: useRootTabSwipe("settings"),
-    canFollow: (dir) => dir === "prev",
-    followRef: pageRef,
-    keepOffsetOnEdge: true,
-  });
+  // 设置是链尾：右滑联动根轨道回歌单最后一个 type，左滑无下一页不跟手。
+  usePagerSwipe(
+    { viewportRef: pageRef, stageRef: pageRef },
+    {
+      count: 1,
+      index: 0,
+      onChange: () => {},
+      onEdge: useRootTabSwipe("settings"),
+      rootTab: "settings",
+      isPageActive,
+    }
+  );
 
   // 再次点击底部「设置」tab：依次滚到下一个分组，最后一组之后再点回到顶部
   useTabReclick("settings", () => {
@@ -142,15 +150,12 @@ export function SettingsPage({ onBack }: SettingsPageProps) {
   const {
     volume,
     setVolume,
-    enableAutoMatch,
     enableProxyFallback,
     setEnableProxyFallback,
     bilibiliKeepOriginalMeta,
     setBilibiliKeepOriginalMeta,
     showSourceBadge,
     setShowSourceBadge,
-    highlightCurrentTrack,
-    setHighlightCurrentTrack,
     showBarBackground,
     setShowBarBackground,
     lightThemeLightBackground,
@@ -159,15 +164,12 @@ export function SettingsPage({ onBack }: SettingsPageProps) {
     useShallow((state) => ({
       volume: state.volume,
       setVolume: state.setVolume,
-      enableAutoMatch: state.enableAutoMatch,
       enableProxyFallback: state.enableProxyFallback,
       setEnableProxyFallback: state.setEnableProxyFallback,
       bilibiliKeepOriginalMeta: state.bilibiliKeepOriginalMeta,
       setBilibiliKeepOriginalMeta: state.setBilibiliKeepOriginalMeta,
       showSourceBadge: state.showSourceBadge,
       setShowSourceBadge: state.setShowSourceBadge,
-      highlightCurrentTrack: state.highlightCurrentTrack,
-      setHighlightCurrentTrack: state.setHighlightCurrentTrack,
       showBarBackground: state.showBarBackground,
       setShowBarBackground: state.setShowBarBackground,
       lightThemeLightBackground: state.lightThemeLightBackground,
@@ -240,17 +242,6 @@ export function SettingsPage({ onBack }: SettingsPageProps) {
           />
           <SettingItem
             icon={Music4}
-            title="高亮正在播放的歌曲"
-            subtitle="列表中给正在播放的歌曲整行加背景色高亮"
-            action={
-              <Switch
-                checked={highlightCurrentTrack}
-                onCheckedChange={setHighlightCurrentTrack}
-              />
-            }
-          />
-          <SettingItem
-            icon={Music4}
             title="播放条显示背景"
             subtitle="播放条使用封面取色渐变背景，关闭则显示卡片底色"
             action={
@@ -308,7 +299,6 @@ export function SettingsPage({ onBack }: SettingsPageProps) {
               <Switch
                 checked={bilibiliKeepOriginalMeta}
                 onCheckedChange={setBilibiliKeepOriginalMeta}
-                disabled={!enableAutoMatch}
               />
             }
           />
@@ -344,7 +334,7 @@ export function SettingsPage({ onBack }: SettingsPageProps) {
               />
             }
           />
-          <UpdateCheck />
+          <UpdateCheck isActive={isUpdateAutoOpenActive} />
           <IssueLogs />
         </SettingsSection>
       </div>

@@ -55,7 +55,7 @@ const VINYL_COLORS: { value: string; label: string }[] = [
   { value: TRANSPARENT_VINYL_COLOR, label: "透明" },
 ];
 
-/** Web 端兜底选图：和原生一致压到 1080 / JPEG 75，避免整图 base64 撑爆 store */
+/** Web 端兜底选图：和原生一致压到 2048 / JPEG 88，兼顾清晰度与 store 体积 */
 async function compressImageFile(file: File): Promise<string> {
   const raw = await new Promise<string>((resolve, reject) => {
     const reader = new FileReader();
@@ -69,15 +69,16 @@ async function compressImageFile(file: File): Promise<string> {
     img.onerror = () => reject(new Error("图片解码失败"));
     img.src = raw;
   });
-  const max = 1080;
+  const max = 2048;
   const scale = Math.min(1, max / Math.max(image.width, image.height));
   const canvas = document.createElement("canvas");
   canvas.width = Math.round(image.width * scale);
   canvas.height = Math.round(image.height * scale);
   const ctx = canvas.getContext("2d");
   if (!ctx) throw new Error("Canvas 不可用");
+  ctx.imageSmoothingQuality = "high";
   ctx.drawImage(image, 0, 0, canvas.width, canvas.height);
-  return canvas.toDataURL("image/jpeg", 0.75);
+  return canvas.toDataURL("image/jpeg", 0.88);
 }
 
 /** 长按封面弹出的“修改播放风格”面板 */
@@ -117,7 +118,17 @@ export function CoverStyleMenu({
   }, [open, push, pop, close]);
 
   const applyBackground = useCallback(
-    (dataUrl: string) => {
+    async (dataUrl: string) => {
+      // Android WebView 会在大图 dataUrl 还没解码完时把图层合成成黑色，
+      // 且解码完成后不会主动重绘 —— 表现就是「传完是黑的，摸一下才出现」。
+      // 先解码完再写 store，等图层挂载时图片已经能直接画出来。
+      await new Promise<void>((resolve) => {
+        const img = new Image();
+        img.onload = () => resolve();
+        img.onerror = () => resolve();
+        img.src = dataUrl;
+        if (img.complete) resolve();
+      });
       setCustomBackgroundImage(dataUrl);
       setFullScreenBackgroundMode("photo");
     },
@@ -383,7 +394,8 @@ export function CoverStyleMenu({
           onCancel={() => setCropSrc(null)}
           onConfirm={(dataUrl) => {
             setCropSrc(null);
-            applyBackground(dataUrl);
+            // 等图片解码完成再应用并关面板，避免 WebView 画出黑图层
+            void applyBackground(dataUrl).finally(close);
           }}
         />
       )}

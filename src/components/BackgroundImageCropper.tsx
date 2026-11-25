@@ -15,8 +15,11 @@ interface BackgroundImageCropperProps {
  * 全屏播放器背景图裁剪器。
  *
  * 裁剪框按当前屏幕比例固定，照片在框内拖动平移、双指捏合缩放（桌面滚轮/触摸板也行），
- * 确定时按框内所见导出 1080 宽 JPEG。背景图最终以 cover 铺满全屏，
- * 框的比例跟屏幕一致，所以「框里看到什么，播放器背景就是什么」。
+ * 确定时按框内所见导出 JPEG。背景图最终以 cover 铺满全屏，框的比例跟屏幕一致，
+ * 所以「框里看到什么，播放器背景就是什么」。
+ *
+ * 导出尺寸跟屏幕物理像素走（上限 2048）：以前固定 1080 宽，竖屏手机算下来
+ * 高度只有 ~500px，铺到 2K 屏要放大两倍以上，看起来就发糊。
  */
 export function BackgroundImageCropper({
   src,
@@ -30,6 +33,10 @@ export function BackgroundImageCropper({
   const [frame, setFrame] = useState({ w: 0, h: 0 });
   const [pos, setPos] = useState({ x: 0, y: 0 });
   const [scale, setScale] = useState(1);
+  /** 原图尺寸与「刚好铺满裁剪框」的基准缩放：让 DOM 里的布局尺寸小一点，
+   *  WebView 才不会在放大到几倍时只栅格化局部、露出黑边 */
+  const [imgSize, setImgSize] = useState({ w: 0, h: 0 });
+  const [baseScale, setBaseScale] = useState(1);
 
   // 数学计算走 ref，渲染走 state，避免指针事件里闭包拿到旧值
   const view = useRef({ x: 0, y: 0, s: 1 });
@@ -93,6 +100,9 @@ export function BackgroundImageCropper({
       const fh = f.clientHeight;
       const iw = img.naturalWidth;
       const ih = img.naturalHeight;
+      // 图片可能比裁剪框的首次布局更早 load。此时 fw/fh 还是 0，
+      // 算出来的 cover 也是 0，transform 会变成 scale(0) —— 预览一片黑。
+      if (fw <= 0 || fh <= 0 || iw <= 0 || ih <= 0) return;
       const cover = Math.max(fw / iw, fh / ih);
       const minS = cover;
       const maxS = cover * 5;
@@ -105,17 +115,32 @@ export function BackgroundImageCropper({
     [clamp]
   );
 
-  const onImgLoad = useCallback(() => {
+  /** 用当前裁剪框尺寸初始化缩放。尺寸还没量出来时直接放弃，等下一轮再试 */
+  const initialize = useCallback(() => {
     const img = imgRef.current;
     const f = frameRef.current;
-    if (!img || !f) return;
-    setReady(true);
-    const cover = Math.max(
-      f.clientWidth / img.naturalWidth,
-      f.clientHeight / img.naturalHeight
-    );
+    if (!img || !f) return false;
+    const fw = f.clientWidth;
+    const fh = f.clientHeight;
+    if (fw <= 0 || fh <= 0 || !img.naturalWidth || !img.naturalHeight)
+      return false;
+    const cover = Math.max(fw / img.naturalWidth, fh / img.naturalHeight);
+    setImgSize({ w: img.naturalWidth, h: img.naturalHeight });
+    setBaseScale(cover);
     sync(0, 0, cover);
+    setReady(true);
+    return true;
   }, [sync]);
+
+  const onImgLoad = useCallback(() => {
+    initialize();
+  }, [initialize]);
+
+  // 图片先 load、裁剪框后布局（或反过来）都可能发生，两边都触发一次初始化，
+  // 保证第一次画出来的就是正确缩放，不用等用户摸一下才重绘。
+  useEffect(() => {
+    if (!ready) initialize();
+  }, [ready, frame.w, frame.h, initialize]);
 
   const onPointerDown = useCallback((e: React.PointerEvent) => {
     (e.target as HTMLElement).setPointerCapture?.(e.pointerId);
@@ -190,9 +215,18 @@ export function BackgroundImageCropper({
     const v = view.current;
     const s = v.s;
     if (s <= 0) return;
-    // 导出 1080 宽（横图反之以高为基准），框内所见即所得
-    const outW = fw >= fh ? 1080 : Math.round((1080 * fw) / fh);
-    const outH = fw >= fh ? Math.round((1080 * fh) / fw) : 1080;
+    // 按屏幕物理像素导出（上限 2048，避免低配机 canvas 过大 OOM），框内所见即所得
+    const dpr =
+      typeof window === "undefined"
+        ? 1
+        : Math.min(window.devicePixelRatio || 1, 3);
+    const screenLong =
+      typeof window === "undefined"
+        ? 1080
+        : Math.max(window.innerWidth, window.innerHeight);
+    const target = Math.min(2048, Math.max(1080, Math.round(screenLong * dpr)));
+    const outW = fw >= fh ? target : Math.round((target * fw) / fh);
+    const outH = fw >= fh ? Math.round((target * fh) / fw) : target;
     const canvas = document.createElement("canvas");
     canvas.width = outW;
     canvas.height = outH;
@@ -207,7 +241,7 @@ export function BackgroundImageCropper({
     const sw = fw / s;
     const sh = fh / s;
     ctx.drawImage(img, sx, sy, sw, sh, 0, 0, outW, outH);
-    onConfirm(canvas.toDataURL("image/jpeg", 0.8));
+    onConfirm(canvas.toDataURL("image/jpeg", 0.9));
   }, [onConfirm]);
 
   if (typeof document === "undefined") return null;
@@ -243,9 +277,13 @@ export function BackgroundImageCropper({
             alt=""
             draggable={false}
             onLoad={onImgLoad}
-            className="pointer-events-none absolute left-0 top-0 origin-top-left select-none"
+            className="pointer-events-none absolute left-0 top-0 origin-top-left transform-gpu select-none will-change-transform"
             style={{
-              transform: `translate(${pos.x}px, ${pos.y}px) scale(${scale})`,
+              // 布局尺寸 = 原图 × 基准缩放（约等于裁剪框大小），视觉缩放再叠加
+              // scale/baseScale。总视觉缩放仍是 scale，取链计算不受影响。
+              width: imgSize.w ? imgSize.w * baseScale : undefined,
+              height: imgSize.h ? imgSize.h * baseScale : undefined,
+              transform: `translate(${pos.x}px, ${pos.y}px) scale(${baseScale ? scale / baseScale : scale})`,
               maxWidth: "none",
             }}
           />

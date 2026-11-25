@@ -115,11 +115,13 @@ async function fillMissingNeteasePrivilege(
  * 供 useAudioTrackLoader（主播放）和 useAudioPreloader（预加载）共享使用
  * @param options.forceRefresh 播放错误恢复时使用：绕过全部 URL 缓存重新请求，
  *        避免把已过期的签名直链原样返回导致二次失败
+ * @param options.allowVipPreview 所有替代源都失败时使用：允许会员曲走官方
+ *        接口拿试听片段，作为最终兜底
  */
 export async function resolveTrackUrl(
   track: MusicTrack,
   quality: number,
-  options?: { forceRefresh?: boolean }
+  options?: { forceRefresh?: boolean; allowVipPreview?: boolean }
 ): Promise<{
   url: string;
   dlKey?: string;
@@ -151,7 +153,7 @@ export async function resolveTrackUrl(
 async function resolveTrackUrlInner(
   track: MusicTrack,
   quality: number,
-  options?: { forceRefresh?: boolean }
+  options?: { forceRefresh?: boolean; allowVipPreview?: boolean }
 ): Promise<{
   url: string;
   dlKey?: string;
@@ -204,7 +206,9 @@ async function resolveTrackUrlInner(
 
   // 会员曲 + 当前账号没会员：官方接口只会给 30/45 秒试听片段，
   // 播下去必然是「听半分钟就断」。直接从洛雪开始，取不到就交给上层换源。
-  if (shouldSkipOfficialResolve(workingTrack)) {
+  // 所有替代源都失败后，上层会显式带 allowVipPreview 回来取试听片段，
+  // 那时就不再跳过官方接口。
+  if (shouldSkipOfficialResolve(workingTrack) && !options?.allowVipPreview) {
     // 但先看缓存：洛雪取到的链接两小时内可以直接复用，
     // 不然每次切回这首都要重新跑一遍脚本（还是十几秒）。
     if (!forceRefresh) {

@@ -241,9 +241,10 @@ public class LocalMusicPlugin extends Plugin {
         });
     }
 
-    /** 先读边界算 inSampleSize 再解码，避免大图直接 decode 撑爆 WebView 进程；再缩到 1080/JPEG75 回传 */
+    /** 先读边界算 inSampleSize 再解码，避免大图直接 decode 撑爆 WebView 进程；再缩到 2048/JPEG88 回传 */
     private String compressImageToDataUrl(Uri uri) throws IOException {
-        final int MAX_SIDE = 1080;
+        // 背景要铺满 2K~3K 的屏幕，1080 太糊；2048 是清晰度与内存/桥接体积的折中
+        final int MAX_SIDE = 2048;
         ContentResolver resolver = getContext().getContentResolver();
 
         BitmapFactory.Options bounds = new BitmapFactory.Options();
@@ -255,13 +256,15 @@ public class LocalMusicPlugin extends Plugin {
 
         int sample = 1;
         int maxSide = Math.max(bounds.outWidth, bounds.outHeight);
-        while (maxSide / (sample * 2) >= MAX_SIDE) sample *= 2;
+        // inSampleSize 只能是 2 的幂：解码上限控制在 1.5×目标内，既留足细节给
+        // 后面的高质量缩放，又避免 4000px 原图按 ARGB_8888 全量解码撑爆进程。
+        while (maxSide / sample > MAX_SIDE * 1.5) sample *= 2;
 
         BitmapFactory.Options opts = new BitmapFactory.Options();
         opts.inSampleSize = sample;
-        // JPEG 背景不需要透明通道，RGB_565 比默认 ARGB_8888 省一半内存，
-        // 显著降低大图解码时的 OOM 风险。
-        opts.inPreferredConfig = Bitmap.Config.RGB_565;
+        // 不用 RGB_565：背景是大面积渐变/天空/人像时会出现明显色阶，和「发糊」叠加
+        // 更像画质差。inSampleSize 已经把解码尺寸压住了，ARGB_8888 内存可控。
+        opts.inPreferredConfig = Bitmap.Config.ARGB_8888;
         Bitmap bitmap;
         try (InputStream in = resolver.openInputStream(uri)) {
             bitmap = BitmapFactory.decodeStream(in, null, opts);
@@ -278,7 +281,7 @@ public class LocalMusicPlugin extends Plugin {
         }
 
         ByteArrayOutputStream out = new ByteArrayOutputStream();
-        bitmap.compress(Bitmap.CompressFormat.JPEG, 75, out);
+        bitmap.compress(Bitmap.CompressFormat.JPEG, 88, out);
         bitmap.recycle();
         return "data:image/jpeg;base64," + Base64.encodeToString(out.toByteArray(), Base64.NO_WRAP);
     }

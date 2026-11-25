@@ -15,7 +15,7 @@ import { logger } from "@/lib/logger";
 import { t2s } from "@/lib/utils/t2s";
 import { cn } from "@/lib/utils";
 import { formatCount } from "@/lib/utils/format-count";
-import { useTabSwipe } from "@/hooks/use-tab-swipe";
+import { usePagerSwipe } from "@/hooks/use-pager-swipe";
 import {
   COMMENT_SOURCE_LABEL,
   getCommentSourceShort,
@@ -55,6 +55,115 @@ const emptyTab = (): TabState => ({
   loadingMore: false,
 });
 
+function CommentsTabPane({
+  tab,
+  open,
+  active,
+  state,
+  onLoadMore,
+}: {
+  tab: CommentTab;
+  open: boolean;
+  active: boolean;
+  state: TabState;
+  onLoadMore: (tab: CommentTab, nextPage: number) => void;
+}) {
+  const scrollViewportRef = useRef<HTMLDivElement>(null);
+  const sentinelRef = useRef<HTMLDivElement>(null);
+  const stateRef = useRef(state);
+  useEffect(() => {
+    stateRef.current = state;
+  }, [state]);
+
+  useEffect(() => {
+    const root = scrollViewportRef.current;
+    const sentinel = sentinelRef.current;
+    if (!open || !active || !root || !sentinel) return;
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (!entries[0]?.isIntersecting) return;
+        const s = stateRef.current;
+        if (!s.hasMore || s.loading || s.loadingMore) return;
+        onLoadMore(tab, s.page + 1);
+      },
+      { root, rootMargin: "120px" }
+    );
+    observer.observe(sentinel);
+    return () => observer.disconnect();
+  }, [
+    open,
+    active,
+    tab,
+    state.hasMore,
+    state.comments.length,
+    state.loading,
+    onLoadMore,
+  ]);
+
+  return (
+    <div
+      aria-hidden={!active || undefined}
+      className="h-full w-full shrink-0 overflow-hidden"
+    >
+      <ScrollArea className="h-full px-6" viewportRef={scrollViewportRef}>
+        <div className="flex flex-col pb-12">
+          {state.loading ? (
+            <div className="flex flex-col gap-6 pt-4 animate-pulse">
+              {Array.from({ length: 6 }).map((_, i) => (
+                <div key={i} className="flex gap-3">
+                  <div className="h-9 w-9 shrink-0 rounded-full bg-muted/60" />
+                  <div className="flex-1 space-y-3">
+                    <div className="h-3 w-20 bg-muted/60 rounded-full" />
+                    <div className="h-4 w-full bg-muted/60 rounded-md" />
+                    <div className="h-4 w-2/3 bg-muted/60 rounded-md" />
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : state.comments.length === 0 ? (
+            <div className="flex flex-col items-center justify-center py-24 text-muted-foreground/40">
+              <MessageCircleMore
+                className="w-10 h-10 mb-4 opacity-20"
+                strokeWidth={1.2}
+              />
+              <p className="text-sm tracking-widest font-light">暂无评论</p>
+            </div>
+          ) : (
+            <div className="flex flex-col">
+              {state.comments.map((comment, i) => (
+                <CommentRow key={`${comment.id}-${i}`} comment={comment} />
+              ))}
+              {/* 触底哨兵：进入视口即加载下一页 */}
+              {state.hasMore && <div ref={sentinelRef} className="h-px" />}
+              {/* 分页状态提示 */}
+              <div className="py-5 text-center text-xs text-muted-foreground/40">
+                {state.loadingMore ? (
+                  <span className="inline-flex items-center gap-2">
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" /> 加载中
+                  </span>
+                ) : state.hasMore ? (
+                  <button
+                    type="button"
+                    onClick={() => onLoadMore(tab, state.page + 1)}
+                    className="px-3 py-1.5 rounded-full border border-border/30 hover:bg-muted/40"
+                  >
+                    加载更多
+                  </button>
+                ) : (
+                  <span>
+                    已加载全部 {formatCount(state.comments.length)} 条
+                  </span>
+                )}
+              </div>
+            </div>
+          )}
+        </div>
+      </ScrollArea>
+    </div>
+  );
+}
+
 export function MusicCommentsDrawer({
   track,
   open,
@@ -66,22 +175,25 @@ export function MusicCommentsDrawer({
   const [sourceDrawerOpen, setSourceDrawerOpen] = useState(false);
   const commentSource = useMusicStore((s) => s.commentSource);
 
+  const pagerViewportRef = useRef<HTMLDivElement>(null);
+  const pagerTrackRef = useRef<HTMLDivElement>(null);
+
   const state = tab === "hot" ? hot : fresh;
-  const stateRef = useRef(state);
+  const hotRef = useRef(hot);
+  const freshRef = useRef(fresh);
   useEffect(() => {
-    stateRef.current = state;
-  }, [state]);
+    hotRef.current = hot;
+    freshRef.current = fresh;
+  }, [hot, fresh]);
 
   // 评论总数：热门接口的 total 只是热评条数，最新接口的 total 是全部评论数。
-  // 取两者较大值作为权威总数（不同平台口径可能不同）。
   const totalCount = Math.max(hot.total, fresh.total);
 
-  // 用 ref 持有最新 state，避免 fetch 回调闭包拿到旧值
   const fetchPage = useCallback(
     async (which: CommentTab, page: number, append: boolean) => {
       if (!track) return;
       const setStateFor = which === "hot" ? setHot : setFresh;
-      const current = stateRef.current;
+      const current = which === "hot" ? hotRef.current : freshRef.current;
 
       if (append) {
         if (current.loadingMore || !current.hasMore) return;
@@ -100,7 +212,6 @@ export function MusicCommentsDrawer({
         );
         if (append) {
           setStateFor((s) => {
-            // 按 id 去重，避免平台分页重复返回同一条
             const seen = new Set(s.comments.map((c) => String(c.id)));
             const added = res.comments.filter((c) => !seen.has(String(c.id)));
             const total = res.total || s.total;
@@ -145,13 +256,10 @@ export function MusicCommentsDrawer({
     [track, commentSource]
   );
 
-  // 打开抽屉 / 切歌时重置两页，并行拉两页首页：
-  // 热门接口的 total 是「热评条数」，最新接口的 total 才是「评论总数」，
-  // 两页都拿到后顶部才能显示权威总数，切 Tab 也不用再等请求。
+  // 打开抽屉 / 切歌时重置两页，并行拉两页首页
   useEffect(() => {
     if (!open || !track) return;
     let cancelled = false;
-    // 放到微任务里，避免在 effect 体内同步 setState（会触发级联渲染）
     queueMicrotask(() => {
       if (cancelled) return;
       setHot(emptyTab());
@@ -159,57 +267,32 @@ export function MusicCommentsDrawer({
       fetchPage("hot", 0, false);
       fetchPage("new", 0, false);
     });
-    // tab 变化不在这里重置，交给 handleTabChange
     return () => {
       cancelled = true;
     };
   }, [open, track, fetchPage]);
 
-  // 切 Tab：两页首页在打开时已并行加载，这里只切显示
   const handleTabChange = useCallback((next: CommentTab) => setTab(next), []);
+  const handleLoadMore = useCallback(
+    (which: CommentTab, nextPage: number) => {
+      void fetchPage(which, nextPage, true);
+    },
+    [fetchPage]
+  );
 
-  // 触底加载：用 IntersectionObserver 观察列表底部的哨兵元素。
-  // 比 scroll 数学更可靠——Drawer + Radix ScrollArea 的滚动容器在 portal 里，
-  // scrollHeight/scrollTop 判定容易失灵；哨兵进入视口即触发。
-  const viewportRef = useRef<HTMLDivElement>(null);
-  const sentinelRef = useRef<HTMLDivElement>(null);
-  const observerDataRef = useRef({
-    tab,
-    page: state.page,
-    hasMore: state.hasMore,
-  });
-
-  useEffect(() => {
-    observerDataRef.current = { tab, page: state.page, hasMore: state.hasMore };
-  }, [tab, state.page, state.hasMore]);
-
-  useEffect(() => {
-    const root = viewportRef.current;
-    const sentinel = sentinelRef.current;
-    // 哨兵只在评论加载完成后才渲染，所以依赖里必须带 comments.length/loading，
-    // 否则首次 effect 运行时哨兵还是 null，observer 永远不会建立。
-    if (!open || !root || !sentinel) return;
-
-    const observer = new IntersectionObserver(
-      (entries) => {
-        if (!entries[0]?.isIntersecting) return;
-        const { tab: t, page, hasMore } = observerDataRef.current;
-        const s = stateRef.current;
-        if (!hasMore || s.loading || s.loadingMore) return;
-        fetchPage(t, page + 1, true);
+  const activeIndex = TABS.indexOf(tab);
+  usePagerSwipe(
+    { viewportRef: pagerViewportRef, trackRef: pagerTrackRef },
+    {
+      count: TABS.length,
+      index: activeIndex,
+      onChange: (idx) => {
+        const next = TABS[idx];
+        if (next) setTab(next);
       },
-      { root, rootMargin: "120px" }
-    );
-    observer.observe(sentinel);
-    return () => observer.disconnect();
-  }, [
-    open,
-    tab,
-    state.hasMore,
-    state.comments.length,
-    state.loading,
-    fetchPage,
-  ]);
+      enabled: open,
+    }
+  );
 
   return (
     <>
@@ -220,13 +303,11 @@ export function MusicCommentsDrawer({
               <DrawerTitle className="text-lg font-semibold tracking-tight">
                 {track?.name ? `${t2s(track.name)} · 评论` : "评论"}
               </DrawerTitle>
-              {/* 评论总数只显示一次，取自最新评论接口（热门接口的 total 只是热评条数） */}
               {totalCount > 0 && (
                 <span className="text-xs text-muted-foreground/50 font-light">
                   {formatCount(totalCount)} 条
                 </span>
               )}
-              {/* 来源切换按钮：与音质按钮同款低调样式，显示当前来源 */}
               <button
                 type="button"
                 onClick={() => setSourceDrawerOpen(true)}
@@ -239,7 +320,7 @@ export function MusicCommentsDrawer({
                   : getCommentSourceShort(commentSource)}
               </button>
             </div>
-            {/* 热门 / 最新切换；左右滑动也能切 */}
+            {/* 热门 / 最新切换；左右跟手滑动可见另一侧内容 */}
             <div className="mt-4 flex gap-5 border-b border-border/30">
               {(
                 [
@@ -268,76 +349,29 @@ export function MusicCommentsDrawer({
           </DrawerHeader>
 
           <div
-            className="flex-1 min-h-0 w-full"
-            {...useTabSwipe({
-              tabs: TABS,
-              value: tab,
-              onChange: handleTabChange,
-            })}
+            ref={pagerViewportRef}
+            className="relative flex-1 min-h-0 w-full overflow-hidden"
             style={{ touchAction: "pan-y" }}
           >
-            <ScrollArea className="h-full px-6" viewportRef={viewportRef}>
-              <div className="flex flex-col pb-12">
-                {state.loading ? (
-                  <div className="flex flex-col gap-6 pt-4 animate-pulse">
-                    {Array.from({ length: 6 }).map((_, i) => (
-                      <div key={i} className="flex gap-3">
-                        <div className="h-9 w-9 shrink-0 rounded-full bg-muted/60" />
-                        <div className="flex-1 space-y-3">
-                          <div className="h-3 w-20 bg-muted/60 rounded-full" />
-                          <div className="h-4 w-full bg-muted/60 rounded-md" />
-                          <div className="h-4 w-2/3 bg-muted/60 rounded-md" />
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                ) : state.comments.length === 0 ? (
-                  <div className="flex flex-col items-center justify-center py-24 text-muted-foreground/40">
-                    <MessageCircleMore
-                      className="w-10 h-10 mb-4 opacity-20"
-                      strokeWidth={1.2}
-                    />
-                    <p className="text-sm tracking-widest font-light">
-                      暂无评论
-                    </p>
-                  </div>
-                ) : (
-                  <div className="flex flex-col">
-                    {state.comments.map((comment, i) => (
-                      <CommentRow
-                        key={`${comment.id}-${i}`}
-                        comment={comment}
-                      />
-                    ))}
-                    {/* 触底哨兵：进入视口即加载下一页 */}
-                    {state.hasMore && (
-                      <div ref={sentinelRef} className="h-px" />
-                    )}
-                    {/* 分页状态提示 */}
-                    <div className="py-5 text-center text-xs text-muted-foreground/40">
-                      {state.loadingMore ? (
-                        <span className="inline-flex items-center gap-2">
-                          <Loader2 className="h-3.5 w-3.5 animate-spin" />{" "}
-                          加载中
-                        </span>
-                      ) : state.hasMore ? (
-                        <button
-                          type="button"
-                          onClick={() => fetchPage(tab, state.page + 1, true)}
-                          className="px-3 py-1.5 rounded-full border border-border/30 hover:bg-muted/40"
-                        >
-                          加载更多
-                        </button>
-                      ) : (
-                        <span>
-                          已加载全部 {formatCount(state.comments.length)} 条
-                        </span>
-                      )}
-                    </div>
-                  </div>
-                )}
-              </div>
-            </ScrollArea>
+            <div
+              ref={pagerTrackRef}
+              className="flex h-full will-change-transform"
+            >
+              <CommentsTabPane
+                tab="hot"
+                open={open}
+                active={tab === "hot"}
+                state={hot}
+                onLoadMore={handleLoadMore}
+              />
+              <CommentsTabPane
+                tab="new"
+                open={open}
+                active={tab === "new"}
+                state={fresh}
+                onLoadMore={handleLoadMore}
+              />
+            </div>
           </div>
         </DrawerContent>
       </Drawer>
@@ -363,9 +397,11 @@ function CommentRow({ comment }: { comment: FormattedComment }) {
           <span className="text-sm font-medium truncate text-foreground/70">
             {comment.userName}
           </span>
-          <span className="shrink-0 text-xs text-muted-foreground/40 font-light">
-            {comment.timeStr}
-          </span>
+          {comment.timeStr ? (
+            <span className="shrink-0 text-xs text-muted-foreground/40 font-light">
+              {comment.timeStr}
+            </span>
+          ) : null}
         </div>
 
         {comment.reply && (

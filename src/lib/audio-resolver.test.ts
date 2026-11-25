@@ -319,6 +319,32 @@ describe("resolveTrackUrl 会员曲", () => {
     expect(musicApi.getUrl).not.toHaveBeenCalled();
   });
 
+  it("显式允许试听时，无会员也走官方接口拿片段", async () => {
+    const vip: MusicTrack = {
+      ...localTrack,
+      id: "netease_vip_1",
+      source: "_netease",
+      url_id: "vip-id",
+      privilege: { fee: 1 } as never,
+    };
+    vi.mocked(musicApi.getUrl).mockResolvedValue(
+      "https://official.example.com/preview.mp3"
+    );
+
+    const result = await resolveTrackUrl(vip, 320, {
+      forceRefresh: true,
+      allowVipPreview: true,
+    });
+
+    expect(result.url).toBe("https://official.example.com/preview.mp3");
+    expect(musicApi.getUrl).toHaveBeenCalledWith(
+      "netease_vip_1",
+      "_netease",
+      320,
+      { forceRefresh: true }
+    );
+  });
+
   it("免费曲仍然走官方接口", async () => {
     const free: MusicTrack = {
       ...localTrack,

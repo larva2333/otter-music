@@ -7,18 +7,16 @@ import { useHistoryStore } from "@/store/history-store";
 import { useOfflineStore } from "@/store/offline-store";
 import { MediaSession } from "@jofr/capacitor-media-session";
 import toast from "react-hot-toast";
-import { handleAutoMatch, isNeteaseSampleClip } from "@/lib/audio-match";
 import { logger } from "@/lib/logger";
+import { notifyArmReady } from "@/lib/vinyl-arm";
 
 const PAUSE_CONFIRM_DELAY_MS = 200;
-const MAX_AUTO_MATCH_PER_TRACK = 3;
 
 export function useAudioEventHandlers(
   audioRef: React.RefObject<HTMLAudioElement | null>,
   isSwitchingTrackRef: React.MutableRefObject<boolean>,
   hasRecordedRef: React.MutableRefObject<boolean>
 ) {
-  const autoMatchRef = useRef({ index: -1, count: 0 });
   const recoveryAttemptedRef = useRef(false);
   const pauseTimerRef = useRef<NodeJS.Timeout | null>(null);
 
@@ -63,39 +61,8 @@ export function useAudioEventHandlers(
       }, 1000),
 
       durationchange: () => {
-        const state = getMusicState();
-        const track = state.queue[state.currentIndex];
         const duration = audio.duration || 0;
-        state.setDuration(duration);
-
-        // 检测网易云试听片段（音频时长可能是浮点型）
-        // 片段本身就是会员曲的实证（免费歌能放完整版），不再额外要求
-        // fee 元数据；非会员曲完整播放时不会进这个分支，不会被误替换
-        if (
-          state.enableAutoMatch &&
-          track?.source === "_netease" &&
-          isNeteaseSampleClip(duration, audio.src)
-        ) {
-          const am = autoMatchRef.current;
-          if (am.index !== state.currentIndex) am.count = 0; // 重置计数
-
-          if (am.count < MAX_AUTO_MATCH_PER_TRACK) {
-            am.index = state.currentIndex;
-            am.count++;
-            // 搜索耗时期间原音源可能已恢复正常播放（临时时长被纠正为完整时长），
-            // 此时中止换源，避免误覆盖可正常播放的源
-            void handleAutoMatch(track, undefined, undefined, () => {
-              const musicState = useMusicStore.getState();
-              const current = musicState.queue[musicState.currentIndex];
-              if (current?.id !== track.id) return false;
-              return (
-                !audio.paused &&
-                !audio.error &&
-                !isNeteaseSampleClip(audio.duration || 0, audio.src)
-              );
-            });
-          }
-        }
+        getMusicState().setDuration(duration);
       },
 
       ended: () => {
@@ -200,12 +167,19 @@ export function useAudioEventHandlers(
 
       loadstart: () => toggleLoading(true),
       waiting: () => toggleLoading(true),
-      canplay: () => toggleLoading(false),
+      canplay: () => {
+        toggleLoading(false);
+        notifyArmReady("audio");
+      },
       playing: () => {
         clearPauseTimer();
         toggleLoading(false);
+        notifyArmReady("audio");
       },
-      loadedmetadata: () => toggleLoading(false),
+      loadedmetadata: () => {
+        toggleLoading(false);
+        notifyArmReady("audio");
+      },
     };
 
     Object.entries(handlers).forEach(([event, handler]) =>

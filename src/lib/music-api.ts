@@ -16,11 +16,22 @@ import {
 } from "@/lib/search-categories";
 import { MusicProviderFactory, isAbort } from "./music-provider";
 import { logger } from "@/lib/logger";
+import { withImageSize } from "@/lib/utils/image-url";
 
 // const TTL_SHORT = 60 * 60 * 1000; // 60 minutes
 const TTL_LONG = 7 * 24 * 60 * 60 * 1000; // 7 days
 /** 签名直链时效不定，与 url-cache-store 的内存 TTL 保持一致，过期即重新解析 */
 const TTL_URL = 15 * 60 * 1000; // 15 minutes
+const SYNC_PIC_CACHE_LIMIT = 200;
+const syncPicCache = new Map<string, string>();
+
+function rememberSyncPic(key: string, url: string) {
+  syncPicCache.set(key, url);
+  if (syncPicCache.size > SYNC_PIC_CACHE_LIMIT) {
+    const oldest = syncPicCache.keys().next().value;
+    if (oldest !== undefined) syncPicCache.delete(oldest);
+  }
+}
 
 /**
  * 自动换源时单个音源的搜索时限。
@@ -200,6 +211,24 @@ export const musicApi = {
   /* ---------------- 封面 ---------------- */
 
   /**
+   * 同步获取已知封面 URL：
+   * 1. 已是 HTTP 直链（非 B 站需走代理的封面）直接附带缩略参数同步返回；
+   * 2. 非直链 ID 若本会话已查过，直接命中内存缓存秒回，避免切歌先闪出占位图标。
+   */
+  getSyncPic(
+    idOrUrl: string,
+    source: MusicSource,
+    size: number = 800
+  ): string | null {
+    if (!idOrUrl) return null;
+    if (idOrUrl.startsWith("http") && source !== "bilibili") {
+      return withImageSize(idOrUrl, size) ?? idOrUrl;
+    }
+    const key = `pic:v3:${source}:${idOrUrl}:${size}`;
+    return syncPicCache.get(key) ?? null;
+  },
+
+  /**
    * `trackInfo` 传入完整曲目对象。本地音源必须传：
    * `LocalProvider.getPic` 要靠歌名/歌手去网易云反查封面，只给文件路径查不到。
    * 缓存键已升到 v3，旧版本缓存的空结果（匹配时没有元信息）不会再命中。
@@ -210,11 +239,13 @@ export const musicApi = {
     size: number = 800,
     trackInfo?: MusicTrack | null
   ): Promise<string | null> {
-    if (idOrUrl.startsWith("http") && source !== "bilibili") return idOrUrl;
+    if (idOrUrl.startsWith("http") && source !== "bilibili") {
+      return withImageSize(idOrUrl, size) ?? idOrUrl;
+    }
     // v2：咪咕封面由相对路径改为补全 CDN 域名，旧缓存需作废，避免继续命中失效地址
     // v3：本地曲目改为携带完整元信息在线匹配，旧的「匹配失败」缓存需作废
     const key = `pic:v3:${source}:${idOrUrl}:${size}`;
-    return cachedFetch<string | null>(
+    const resolved = await cachedFetch<string | null>(
       key,
       async () => {
         try {
@@ -232,6 +263,8 @@ export const musicApi = {
       },
       TTL_LONG
     );
+    if (resolved) rememberSyncPic(key, resolved);
+    return resolved;
   },
 
   /* ---------------- 歌词 ---------------- */

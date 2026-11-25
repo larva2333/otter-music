@@ -1,8 +1,10 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   extractColorsOffThread,
+  renderThemeBackgroundOffThread,
   __resetCoverColorWorker,
 } from "@/lib/cover-color-client";
+import { renderThemeBackgroundPixels } from "@/lib/theme-background";
 import {
   extractFromPixels,
   type ColorMode,
@@ -154,5 +156,62 @@ describe("extractColorsOffThread", () => {
     // 第二次：直接走主线程，不会创建新 worker
     await extractColorsOffThread(pixels, "light");
     expect(Fake.instances).toHaveLength(1);
+  });
+});
+
+describe("renderThemeBackgroundOffThread", () => {
+  const sampleColors: SodaColors = {
+    dominant: [80, 120, 200],
+    top: [20, 30, 60],
+    bottom: [8, 12, 24],
+  };
+
+  it("没有 Worker 时同步在主线程合成正确尺寸与 Alpha 的像素", async () => {
+    (globalThis as unknown as { Worker: unknown }).Worker = undefined;
+
+    const pixels = await renderThemeBackgroundOffThread(
+      16,
+      24,
+      sampleColors,
+      0.55
+    );
+
+    expect(pixels.length).toBe(16 * 24 * 4);
+    expect(pixels).toEqual(
+      renderThemeBackgroundPixels(16, 24, sampleColors, 0.55)
+    );
+    expect(pixels[3]).toBe(255);
+  });
+
+  it("worker 可用时走 worker 通道并解包 buffer；异常时降级主线程", async () => {
+    const Fake = installWorker();
+    const expected = renderThemeBackgroundPixels(8, 10, sampleColors, 0.05);
+    Fake.reply = (message) => {
+      const req = message as unknown as { id: number; type?: string };
+      if (req.type === "theme-bg") {
+        const copy = new Uint8ClampedArray(expected);
+        setTimeout(
+          () => Fake.instances[0].emit({ id: req.id, buffer: copy.buffer }),
+          0
+        );
+      }
+    };
+
+    const viaWorker = await renderThemeBackgroundOffThread(
+      8,
+      10,
+      sampleColors,
+      0.05
+    );
+    expect(viaWorker).toEqual(expected);
+
+    Fake.throwOnPost = true;
+    const viaFallback = await renderThemeBackgroundOffThread(
+      8,
+      10,
+      sampleColors,
+      0.05
+    );
+    expect(viaFallback).toEqual(expected);
   });
 });

@@ -1,4 +1,16 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  ARM_FOLLOW_TRANSITION,
+  ARM_PAUSE_ANGLE,
+  ARM_PLAY_ANGLE,
+  beginArmCut,
+  buildArmTransition,
+  cancelArmCut,
+  isArmCutPending,
+  markGestureArmControl,
+  readArmAngle,
+  writeArmAngle,
+} from "@/lib/vinyl-arm";
 
 /** 下滑收起的手势阈值（px） */
 const CLOSE_THRESHOLD = 80;
@@ -31,35 +43,12 @@ const DRAG_RESISTANCE = 0.9;
 /** 横滑跟手系数：横向翻页要跟得紧，太松会显得迟钝 */
 const HORIZONTAL_RESISTANCE = 0.95;
 /**
- * 唱臂的抬臂幅度。
- *
- * svg 上同时有两层旋转：React 写的 `transform: rotate(播放角)` 决定基准位
- * （播放 -4°，暂停 -40°，见 VinylCover 的 TONEARM_ANGLE），这里写的 `rotate`
- * 是叠加在上面的增量。所以「抬到跟暂停一样大」= 增量 36°，视觉总角 -40°。
+ * 唱臂的抬臂幅度：播放位 -4° 到暂停位 -40° 之间是 36°。
+ * 唱臂只有一个绝对角度通道（见 lib/vinyl-arm），这里算的是「还能抬多少」。
  */
-const ARM_LIFT_DELTA = 36;
-/**
- * 抬臂的目标总角度：与 VinylCover 里「暂停」位的 -40° 一致。
- * 播放位是 -4°，需要补 36°；暂停时唱臂已经抬到这儿了，就不该再往上堆。
- */
-const ARM_LIFT_TARGET = -40;
-/** 位移到增量的换算：拖过约 45% 屏宽就抬到满幅，滑一小段也能看出唱臂在动 */
+const ARM_LIFT_DELTA = ARM_PLAY_ANGLE - ARM_PAUSE_ANGLE;
+/** 位移到抬臂量的换算：拖过约 45% 屏宽就抬到满幅 */
 const ARM_FOLLOW_RATIO = ARM_LIFT_DELTA / 0.45;
-/** 唱臂跟手阶段的过渡：只留位移过渡，旋转必须一帧到位才跟手 */
-const ARM_FOLLOW_TRANSITION = "transform 350ms ease-out";
-/**
- * 确认切歌时把唱臂推到切割位的过渡。
- * 比跟手用的短，松手那一刻要有「甩到位置」的干脆感。
- */
-const ARM_CUT_TRANSITION = "rotate 200ms ease-out";
-/**
- * 唱臂停在切割位的时长：新封面从侧边滑进来大约 300ms，
- * 等唱片落位再转回播放位，视觉上是「换好唱片再落针」。
- */
-const ARM_READY_DELAY = 360;
-/** 松手归位：旋转单独给 320ms 缓出，和唱片回弹一起收住 */
-const ARM_SETTLE_TRANSITION =
-  "transform 350ms ease-out, rotate 320ms cubic-bezier(0.22, 1, 0.36, 1)";
 /** 切歌入场动画的起始偏移，取屏宽的比例：整屏太重，太小又看不出是“滑进来”的 */
 const SLIDE_IN_RATIO = 0.5;
 
@@ -73,37 +62,6 @@ type Axis = "none" | "horizontal" | "vertical" | "up" | "ignored";
 /** 写单个元素的位移；抽成独立函数，避免把 hook 参数里的 ref 当成被修改的对象 */
 function writeTranslate(el: HTMLElement | null, x: number) {
   if (el) el.style.translate = x ? `${x}px` : "";
-}
-
-/**
- * 读唱臂当前的基础角（VinylCover 用 transform 写的播放 -4° / 暂停 -40°）。
- * 横滑时要把「再抬多少才等于暂停位」算出来，否则暂停状态下再叠 36° 就冲过头了。
- */
-function readArmBaseAngle(el: SVGSVGElement | null): number {
-  if (!el || typeof getComputedStyle !== "function") return -4;
-  const value = getComputedStyle(el).transform;
-  const matrix = value.match(/matrix\(([^)]+)\)/);
-  if (matrix) {
-    const [a, b] = matrix[1].split(",").map(Number);
-    if (Number.isFinite(a) && Number.isFinite(b) && (a !== 0 || b !== 0)) {
-      return (Math.atan2(b, a) * 180) / Math.PI;
-    }
-    return -4;
-  }
-  // 有些环境（jsdom）不做矩阵展开，直接把 rotate(-40deg) 原样返回
-  const rotated = value.match(/rotate\((-?\d+(?:\.\d+)?)deg\)/);
-  return rotated ? Number(rotated[1]) : -4;
-}
-
-/** 写唱臂的旋转角；同样抽成独立函数，理由同上 */
-function writeArmRotate(
-  el: SVGSVGElement | null,
-  deg: number,
-  transition: string
-) {
-  if (!el) return;
-  el.style.transition = transition;
-  el.style.rotate = deg ? `${deg.toFixed(2)}deg` : "0deg";
 }
 
 function isInteractiveTarget(target: EventTarget | null): boolean {
@@ -251,6 +209,12 @@ export function usePlayerSwipeGestures({
   const dragXDomRef = useRef(0);
   const dragRafRef = useRef<number | null>(null);
   const horizFlagRef = useRef(false);
+  const entryAnimsRef = useRef<Animation[]>([]);
+
+  const cancelEntryAnims = useCallback(() => {
+    entryAnimsRef.current.forEach((anim) => anim.cancel());
+    entryAnimsRef.current = [];
+  }, []);
 
   const writeDragX = useCallback(
     (x: number) => {
@@ -283,76 +247,61 @@ export function usePlayerSwipeGestures({
     }
   }, []);
 
-  /** 本次手势里唱臂还能抬多少（到暂停位为止） */
+  /**
+   * 本次手势里唱臂的起始绝对角，以及还能抬多少（到暂停位为止）。
+   * 播放态起手 -4° 可抬 36°，暂停态起手 -40° 则没有余量，不会往上堆。
+   */
+  const armStartRef = useRef(ARM_PLAY_ANGLE);
   const armRoomRef = useRef(ARM_LIFT_DELTA);
 
   /**
-   * 唱臂角度：只跟「滑了多远」有关，跟方向无关。
-   * 切割动作永远是抬臂（逆时针 = 负角度），所以左右滑都往同一个方向转，
-   * 幅度按位移线性增长，最多抬到与暂停相同的 -40°（播放位 -4° 起补 36°）。
-   * 只写 `rotate`（容器负责反向 translate 让轴心不动）。
+   * 唱臂角度：从起手角度按位移抬臂，左右滑都是逆时针（负方向）。
+   * 写的是绝对角度（与 VinylCover 同一条通道），容器负责反向 translate 让轴心不动。
    */
-  const writeArmAngle = useCallback(
-    (x: number) => {
+  const followArm = useCallback(
+    (x: number, resetTransition = false) => {
       if (!dragRefs) return;
       const width = window.innerWidth || 360;
-      const angle = -Math.min(
+      const lift = Math.min(
         armRoomRef.current,
         (Math.abs(x) / width) * ARM_FOLLOW_RATIO
       );
-      writeArmRotate(
+      writeArmAngle(
         dragRefs.tonearmArm?.current ?? null,
-        angle,
-        ARM_FOLLOW_TRANSITION
+        armStartRef.current - lift,
+        resetTransition ? ARM_FOLLOW_TRANSITION : undefined
       );
     },
     [dragRefs]
   );
 
+  /** 松手归位：按当前角到起手角距离匀速返回（0.12°/ms），避免近距离还拖慢 300ms */
   const settleArm = useCallback(() => {
     if (!dragRefs) return;
-    writeArmRotate(
-      dragRefs.tonearmArm?.current ?? null,
-      0,
-      ARM_SETTLE_TRANSITION
+    const el = dragRefs.tonearmArm?.current ?? null;
+    const current = readArmAngle(el);
+    writeArmAngle(
+      el,
+      armStartRef.current,
+      buildArmTransition(current, armStartRef.current)
     );
   }, [dragRefs]);
 
-  const armTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  const clearArmTimer = useCallback(() => {
-    if (armTimerRef.current !== null) {
-      clearTimeout(armTimerRef.current);
-      armTimerRef.current = null;
-    }
-  }, []);
-
   /**
-   * 确认切歌：唱臂先甩到切割位停住，等新唱片滑进来落位后再转回播放位。
-   * 不再像以前那样松手就立刻归零 —— 那看起来像「还没换片针就落下了」。
+   * 确认切歌：从当前跟手角度按恒定角速度连续演完「抬臂 → 落针」，
+   * 播放页见到横滑标记会跳过自己的切歌命令，避免重播。
    */
   const cutArm = useCallback(() => {
     if (!dragRefs) return;
     markSwipeArmCut();
-    writeArmRotate(
-      dragRefs.tonearmArm?.current ?? null,
-      -armRoomRef.current,
-      ARM_CUT_TRANSITION
-    );
-    clearArmTimer();
-    armTimerRef.current = setTimeout(() => {
-      armTimerRef.current = null;
-      settleArm();
-    }, ARM_READY_DELAY);
-  }, [dragRefs, clearArmTimer, settleArm]);
+    beginArmCut();
+  }, [dragRefs]);
 
-  /** 收手：清掉延迟归位的定时器，把唱臂立刻放回播放位 */
+  /** 收手（没切成歌/下一次触摸）：取消未完成的切歌动画，把唱臂按恒定速度放回起手角 */
   const restArm = useCallback(() => {
-    clearArmTimer();
+    cancelArmCut();
     settleArm();
-  }, [clearArmTimer, settleArm]);
-
-  useEffect(() => clearArmTimer, [clearArmTimer]);
+  }, [settleArm]);
 
   /**
    * 只靠 CSS `touch-action: none` 在部分 WebView 上并不够：
@@ -383,12 +332,15 @@ export function usePlayerSwipeGestures({
     setIsHorizDragging(false);
     setDragX(0);
     if (dragRefs) {
+      const wasHoriz = horizFlagRef.current || dragXDomRef.current !== 0;
       horizFlagRef.current = false;
       cancelDragFrame();
+      cancelEntryAnims();
       writeDragX(0);
-      restArm();
+      // 未进入横滑的普通轻点不打断正在进行的切歌唱臂动画
+      if (wasHoriz) restArm();
     }
-  }, [cancelDragFrame, writeDragX, restArm, dragRefs]);
+  }, [cancelDragFrame, cancelEntryAnims, writeDragX, restArm, dragRefs]);
 
   const handleTouchStart = useCallback(
     (e: React.TouchEvent) => {
@@ -412,17 +364,22 @@ export function usePlayerSwipeGestures({
         setDragX(0);
         setIsHorizDragging(false);
         if (dragRefs) {
+          const hadPendingCut = isArmCutPending();
           horizFlagRef.current = false;
-          // 记下这次手势里唱臂还能抬多少：暂停时唱臂已经在 -40°，
-          // 再叠 36° 就会冲过头，所以只补「到暂停位为止」的差值
-          const base = readArmBaseAngle(dragRefs.tonearmArm?.current ?? null);
-          armRoomRef.current = Math.max(
-            0,
-            Math.min(ARM_LIFT_DELTA, base - ARM_LIFT_TARGET)
-          );
           cancelDragFrame();
+          cancelEntryAnims();
           writeDragX(0);
-          restArm();
+          if (!hadPendingCut) {
+            // 读唱臂当前绝对角作为本次起手角：播放 -4°、暂停 -40°。
+            // 暂停位没有抬臂余量，横滑就直接移动封面、不再把唱臂往上堆。
+            const base = readArmAngle(dragRefs.tonearmArm?.current ?? null);
+            armStartRef.current = base;
+            armRoomRef.current = Math.max(
+              0,
+              Math.min(ARM_LIFT_DELTA, base - ARM_PAUSE_ANGLE)
+            );
+            restArm();
+          }
         }
       }
 
@@ -448,7 +405,15 @@ export function usePlayerSwipeGestures({
         dy: 0,
       };
     },
-    [enabled, onTap, cancelDragFrame, writeDragX, restArm, dragRefs]
+    [
+      enabled,
+      onTap,
+      cancelDragFrame,
+      cancelEntryAnims,
+      writeDragX,
+      restArm,
+      dragRefs,
+    ]
   );
 
   const handleTouchMove = useCallback(
@@ -496,19 +461,34 @@ export function usePlayerSwipeGestures({
         const x = dx * HORIZONTAL_RESISTANCE;
         if (dragRefs) {
           // 方向刚判定的第一帧切一次 transition（关掉过渡才跟手），只此一次
-          if (!horizFlagRef.current) {
+          const isFirstMove = !horizFlagRef.current;
+          if (isFirstMove) {
             horizFlagRef.current = true;
             setIsHorizDragging(true);
+            // 若正好接管了进行中的切歌动画：定格当前视觉角度作为起手，取消剩余切歌动画，
+            // 并把松手未切歌的归位目标设为播放位 -4°。
+            if (isArmCutPending()) {
+              cancelArmCut();
+              const live = readArmAngle(dragRefs.tonearmArm?.current ?? null);
+              armStartRef.current = ARM_PLAY_ANGLE;
+              armRoomRef.current = Math.max(
+                0,
+                Math.min(ARM_LIFT_DELTA, live - ARM_PAUSE_ANGLE)
+              );
+            }
+            // 横滑期间唱臂由手势独占：播放页的播放/暂停 effect 在这段时间让开，
+            // 否则切歌时 isPlaying 翻转会打断动作。
+            markGestureArmControl(1000);
           }
           scheduleDragX(x);
-          writeArmAngle(x);
+          followArm(x, isFirstMove);
         } else {
           setIsHorizDragging(true);
           setDragX(x);
         }
       }
     },
-    [enabled, scheduleDragX, writeArmAngle, dragRefs]
+    [enabled, scheduleDragX, followArm, dragRefs]
   );
 
   const handleTouchEnd = useCallback(
@@ -603,14 +583,52 @@ export function usePlayerSwipeGestures({
 
           // 丢掉跟手阶段还没落盘的写入，避免和入场首帧打架
           cancelDragFrame();
+          const cover = dragRefs.cover?.current ?? null;
+          const tonearm = dragRefs.tonearm?.current ?? null;
+          // 优先走 WAAPI 一步完成新唱片滑入，避免 3 帧 rAF + slideSnap 重渲染导致首帧滞留与卡顿
+          if (cover && typeof cover.animate === "function") {
+            cancelEntryAnims();
+            writeDragX(0);
+            const entryOptions: KeyframeAnimationOptions = {
+              duration: 320,
+              easing: "cubic-bezier(0.22, 1, 0.36, 1)",
+            };
+            const coverAnim = cover.animate(
+              [{ translate: `${entryOffset}px` }, { translate: "0px" }],
+              entryOptions
+            );
+            entryAnimsRef.current.push(coverAnim);
+            coverAnim.finished
+              .then(() => {
+                entryAnimsRef.current = entryAnimsRef.current.filter(
+                  (a) => a !== coverAnim
+                );
+              })
+              .catch(() => {});
+            if (tonearm && typeof tonearm.animate === "function") {
+              const armAnim = tonearm.animate(
+                [{ translate: `${-entryOffset}px` }, { translate: "0px" }],
+                entryOptions
+              );
+              entryAnimsRef.current.push(armAnim);
+              armAnim.finished
+                .then(() => {
+                  entryAnimsRef.current = entryAnimsRef.current.filter(
+                    (a) => a !== armAnim
+                  );
+                })
+                .catch(() => {});
+            }
+            if (dx < 0) onNext();
+            else onPrev();
+            return;
+          }
+
           setSlideSnap(true);
           if (dx < 0) onNext();
           else onPrev();
 
-          // 三帧时序，保证每一帧的 transition 状态都已由 React 落到 DOM：
-          // 第 1 帧关掉过渡后瞬移到进场起点；
-          // 第 2 帧让 React 把过渡写回去；
-          // 第 3 帧归零，由 CSS 过渡把新封面滑到位。
+          // jsdom 兜底：三帧时序
           requestAnimationFrame(() => {
             writeDragX(entryOffset);
             requestAnimationFrame(() => {
@@ -659,6 +677,7 @@ export function usePlayerSwipeGestures({
       onTap,
       reset,
       cancelDragFrame,
+      cancelEntryAnims,
       scheduleDragX,
       writeDragX,
       restArm,

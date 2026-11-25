@@ -1,5 +1,8 @@
 import { commentRequest } from "./http";
-import type { FormattedComment } from "@/lib/netease/comment-format";
+import {
+  formatCommentTime,
+  type FormattedComment,
+} from "@/lib/netease/comment-format";
 import type { CommentPage } from "./types";
 import type { MusicTrack } from "@/types/music";
 
@@ -10,15 +13,6 @@ import type { MusicTrack } from "@/types/music";
  */
 
 const UA = "Dalvik/2.1.0 (Linux; U; Android 9;)";
-
-function formatTime(time: number | string | null | undefined): string {
-  if (time === null || time === undefined || time === "") return "";
-  const t = Number(time);
-  if (!Number.isFinite(t) || t <= 0) return "";
-  const d = new Date(t * 1000);
-  const pad = (n: number) => String(n).padStart(2, "0");
-  return `${d.getFullYear()}.${pad(d.getMonth() + 1)}.${pad(d.getDate())}`;
-}
 
 function buildUrl(
   type: "get_comment" | "get_rec_comment",
@@ -59,7 +53,7 @@ function normalize(list: unknown[]): FormattedComment[] {
       id: Number(item.id ?? index) || index,
       text: String(item.msg ?? ""),
       time: Number(item.time ?? 0) || 0,
-      timeStr: formatTime(item.time as number | string),
+      timeStr: formatCommentTime(item.time as number | string, "s"),
       userName: String(item.u_name ?? ""),
       avatar: item.u_pic as string | undefined,
       likedCount: Number(item.like_num ?? 0) || 0,

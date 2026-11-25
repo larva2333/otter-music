@@ -22,14 +22,19 @@ import { useNavigate } from "react-router-dom";
 import { useMusicStore } from "@/store/music-store";
 import { useScrollSave } from "@/hooks/use-scroll-save";
 import { usePagination } from "@/hooks/use-pagination";
-import { useSwipeCategories } from "@/hooks/use-swipe-categories";
+import { usePagerSwipe } from "@/hooks/use-pager-swipe";
 import { useRootTabSwipe } from "@/hooks/use-root-tab-swipe";
+import { useIsRootTabActive, useRootPager } from "@/hooks/use-root-pager";
+import { useTabIndicatorSync } from "@/hooks/use-tab-indicator-sync";
 import { usePullToRefresh } from "@/hooks/use-pull-to-refresh";
 import { useTabReclick } from "@/hooks/use-tab-reclick";
+import {
+  saveScrollPositions,
+  restoreScrollPositions,
+} from "@/lib/scroll-snapshot";
 import { PullRefreshIndicator } from "@/components/PullRefreshIndicator";
 import { useMarketSession } from "@/store/session/market-session";
 import { PlaylistGrid, PlaylistGridSkeleton } from "./PlaylistGrid";
-import { getCategoryIndicator } from "./category-indicator";
 import { PodcastSection } from "./PodcastSection";
 import { AlistSection } from "./AlistSection";
 import { BillboardSection } from "./BillboardSection";
@@ -39,25 +44,14 @@ import { RadarSection } from "./RadarSection";
 import { ArtistSection } from "./ArtistSection";
 import { logger } from "@/lib/logger";
 
-/**
- * 歌单广场每页条数：手机 4 列 = 3 行。
- * 原来是 30，一次请求/渲染 30 张卡片；配上触底自动加载，滚几屏就能堆到几百张，
- * 切到设置页时这些卡片仍挂在保活的 /search 页上，来回切直接卡住。
- * 保留原来的触底加载交互，只把一页的数量压小。
- */
+/** 歌单广场每页条数：手机 4 列 = 3 行 */
 const PAGE_SIZE = 12;
-/**
- * 同时保留在 DOM 里的分类网格数量（含当前）。
- * 默认常驻栏只有「歌单广场 / 排行榜」两个 browse 分类，留 4 份足够覆盖
- * 页内筛选来回切；再多只是给设置页徒增几百个节点。封面解码交给
- * CachedImage 的离屏池，网格重建不会重新闪一遍。
- */
-const MAX_KEPT_GRIDS = 4;
+/** 同时保留挂载在 DOM 里的分类面板上限（含当前与左右直接邻居） */
+const MAX_KEPT_CATEGORIES = 6;
 
 const getSnapshotKey = (category: string) => `market-snapshot:${category}`;
 
-/** 特殊分类 → 独立 Section 组件；未命中则走下方网易云歌单浏览分支。
- *  播客/Alist/Billboard 不在默认常驻栏，但可通过筛选按钮添加回来。 */
+/** 特殊分类 → 独立 Section 组件；未命中则走下方网易云歌单浏览分支。 */
 const MARKET_SECTIONS: Record<string, ComponentType> = {
   mine: MineSection,
   recommend: RecommendSection,
@@ -68,90 +62,57 @@ const MARKET_SECTIONS: Record<string, ComponentType> = {
   Billboard: BillboardSection,
 };
 
-export function PlaylistMarket() {
-  const navigate = useNavigate();
-  const rawLastCategory = useMusicStore((s) => s.lastPlaylistCategory);
-  // 历史版本 Alist 分类 id 为小写，归一化为大写；
-  // 「精选」已删除，旧持久值回落到「歌单广场」
-  const lastCategory =
-    rawLastCategory === "alist"
-      ? "Alist"
-      : rawLastCategory === "featured"
-        ? "全部"
-        : rawLastCategory;
-  const setActiveCategory = useMusicStore((s) => s.setLastPlaylistCategory);
-  // 仅用于 Billboard 子 tab 的滚动位置 key
-  const billboardGroup = useMusicStore((s) => s.lastBillboardGroup);
-  const playlistCategoryOrder = useMusicStore((s) => s.playlistCategoryOrder);
-  const scrollContainerRef = useRef<HTMLDivElement>(null);
-
-  // 歌单广场页内筛选（不切换顶栏 tab、不往顶栏加标签）
-  const marketFilter = useMarketSession((s) => s.marketFilter);
-  const setMarketFilter = useMarketSession((s) => s.setMarketFilter);
-
-  const saveListSnapshot = useMarketSession((s) => s.saveListSnapshot);
-  const listSnapshots = useMarketSession((s) => s.listSnapshots);
-
-  // 顶栏分类（固定 5 项 + 用户自定义常驻）
-  const barCategories = useMemo(
-    () => resolveBarCategories(playlistCategoryOrder),
-    [playlistCategoryOrder]
+/** 还没挂载过的分类页用轻量骨架占位：手指滑出来时直接有结构、不是一块空白 */
+function MarketPaneSkeleton({ title }: { title: string }) {
+  return (
+    <div className="flex-1 min-h-0 overflow-hidden p-4 pb-bottom-stack">
+      <div className="flex items-center h-8 mb-4 px-1">
+        <h2 className="text-base font-bold text-foreground tracking-wide truncate">
+          {title}
+        </h2>
+      </div>
+      <PlaylistGridSkeleton count={12} />
+    </div>
   );
-  const barIds = useMemo(
-    () =>
-      new Set(
-        [...barCategories.fixed, ...barCategories.residents].map((f) => f.id)
-      ),
-    [barCategories]
-  );
+}
 
-  // 持久值不在顶栏分类里（如旧版本筛选残留的「华语」）→ 回落「歌单广场」
-  const activeCategory = barIds.has(lastCategory) ? lastCategory : "全部";
+interface CategoryPaneProps {
+  barId: string;
+  barName: string;
+  isActive: boolean;
+  marketFilter: string | null;
+  onFilterSelect: (id: string) => void;
+  onOpenPlaylist: (id: string) => void;
+  registerScrollRef: (barId: string, node: HTMLElement | null) => void;
+}
 
-  // 页内实际浏览分类：仅「歌单广场」tab 应用筛选
+/** 单个分类面板：独立拥有纵向滚动容器、分页状态与下拉刷新 */
+function MarketCategoryPane({
+  barId,
+  barName,
+  isActive,
+  marketFilter,
+  onFilterSelect,
+  onOpenPlaylist,
+  registerScrollRef,
+}: CategoryPaneProps) {
   const effectiveCategory =
-    activeCategory === "全部" && marketFilter ? marketFilter : activeCategory;
-
-  const [indicator, setIndicator] = useState<{
-    left: number;
-    top: number;
-    width: number;
-  } | null>(null);
+    barId === "全部" && marketFilter ? marketFilter : barId;
+  const ActiveSection = MARKET_SECTIONS[effectiveCategory];
+  const isBrowseEnabled = !NON_BROWSE_CATEGORIES.has(effectiveCategory);
+  const billboardGroup = useMusicStore((s) => s.lastBillboardGroup);
 
   const snapshotKey = useMemo(
     () => getSnapshotKey(effectiveCategory),
     [effectiveCategory]
   );
 
-  const isBrowseEnabled = !NON_BROWSE_CATEGORIES.has(effectiveCategory);
-
-  // 当前 browse 里的 items 属于哪个快照 key。分类刚切换、effect 还没跑时两者不等，
-  // 此时禁用分页观察器，避免拿新分类的 adapter 去请求旧分类的 offset。
+  // 当前 browse 列表对应的 snapshotKey，避免切换 filter 时拿新 adapter 写旧 key
   const listKeyRef = useRef(snapshotKey);
   const isKeySwitching = listKeyRef.current !== snapshotKey;
-
-  // 下拉刷新时让 browseAdapter 的首次请求绕过磁盘缓存；仅影响当前这一次 fetch(0)
   const forceRefreshRef = useRef(false);
 
-  // 访问过的分类网格保留在 DOM 里（最多 4 个），切换时只切显示状态。
-  // 这样切回去时 <img> 节点不会重新挂载，也就不会重新解码、不会再闪。
-  const [keptKeys, setKeptKeys] = useState<string[]>(() => [snapshotKey]);
-
-  const renderKeys = useMemo(
-    () =>
-      keptKeys.includes(snapshotKey) ? keptKeys : [...keptKeys, snapshotKey],
-    [keptKeys, snapshotKey]
-  );
-
-  useEffect(() => {
-    setKeptKeys((prev) => {
-      if (prev.includes(snapshotKey)) return prev;
-      const next = [...prev, snapshotKey];
-      return next.length > MAX_KEPT_GRIDS
-        ? next.slice(next.length - MAX_KEPT_GRIDS)
-        : next;
-    });
-  }, [snapshotKey]);
+  const saveListSnapshot = useMarketSession((s) => s.saveListSnapshot);
 
   const browseAdapter = useMemo(
     () => ({
@@ -159,7 +120,6 @@ export function PlaylistMarket() {
         const category = effectiveCategory;
         if (NON_BROWSE_CATEGORIES.has(category)) return null;
         const isToplist = category === "toplist";
-        // v2→v3：旧缓存里一页是 30 条且数据追加式累积，分页改版后不再复用
         const cacheKey = `market-playlist:v3:${category || "all"}:${isToplist ? 0 : offset}`;
 
         const force = forceRefreshRef.current && offset === 0;
@@ -190,17 +150,14 @@ export function PlaylistMarket() {
     enabled: isBrowseEnabled && !isKeySwitching,
     onError: (err, offset) =>
       logger.error("PlaylistMarket", "Market load failed", err, {
-        category: activeCategory,
+        category: barId,
         offset,
       }),
   });
 
-  // Save browse snapshots
   useEffect(() => {
-    // 分类刚切换、列表还是上一个分类的旧数据时不要写快照，否则会污染新 key
     if (!isBrowseEnabled || isKeySwitching || browse.items.length === 0) return;
-    const key = getSnapshotKey(effectiveCategory);
-    saveListSnapshot(key, {
+    saveListSnapshot(snapshotKey, {
       items: browse.items,
       offset: browse.offset,
       hasMore: browse.hasMore,
@@ -208,13 +165,10 @@ export function PlaylistMarket() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [browse.items, browse.offset, browse.hasMore]);
 
-  // Category switch
-  // 用 useLayoutEffect：分类切换必须在浏览器绘制前把列表换成新分类的数据，
-  // 否则会先画一帧「上一个分类的歌单」，看起来就是闪一下。
   useLayoutEffect(() => {
     listKeyRef.current = snapshotKey;
 
-    if (NON_BROWSE_CATEGORIES.has(effectiveCategory)) {
+    if (!isBrowseEnabled) {
       forceRefreshRef.current = false;
       return;
     }
@@ -230,164 +184,407 @@ export function PlaylistMarket() {
       return;
     }
 
-    // browse.reset() 内部会同步调用 adapter.fetch 并读取 forceRefreshRef，
-    // 因此这里读完立即复位，不影响后续正常切换
     browse.reset();
     forceRefreshRef.current = false;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [effectiveCategory, snapshotKey]);
+  }, [effectiveCategory, snapshotKey, isBrowseEnabled]);
 
-  // Billboard 子 tab 记忆滚动位置，故 scroll key 附加子 tab 标识
-  const { scrollRef } = useScrollSave(
+  const { scrollRef: paneScrollRef } = useScrollSave(
     `scroll-${snapshotKey}${effectiveCategory === "Billboard" ? `:${billboardGroup}` : ""}`,
-    browse.items.length > 0 || NON_BROWSE_CATEGORIES.has(effectiveCategory)
+    browse.items.length > 0 || !isBrowseEnabled
   );
 
-  const displayFilters = useMemo(
-    () => [...barCategories.fixed, ...barCategories.residents],
-    [barCategories]
+  const setScrollNode = useCallback(
+    (node: HTMLDivElement | null) => {
+      paneScrollRef.current = node;
+      registerScrollRef(barId, node);
+    },
+    [barId, paneScrollRef, registerScrollRef]
   );
 
-  // 内容 wrapper：横滑跟手平移它（而不是滚动容器），避免带动下拉刷新指示器；
-  // 同时是切分类进入动画的载体，两者都在 transform 上、由 hook 先清位移再播动画
-  const contentRef = useRef<HTMLDivElement>(null);
+  // 触发当前 browse 列表强制刷新（下拉刷新 / 筛选重选）
+  const forceReloadBrowse = useCallback(async () => {
+    forceRefreshRef.current = true;
+    try {
+      if (isBrowseEnabled) await browse.reset();
+    } finally {
+      forceRefreshRef.current = false;
+    }
+  }, [isBrowseEnabled, browse]);
 
-  // 内容区左右滑动切换顶栏分类（页内筛选不影响滑动顺序）
-  // 滑到最后一个分类再左滑 → 落到「喜欢」tab；第一个分类右滑不动（链头）
-  const onRootEdge = useRootTabSwipe("search");
-  useSwipeCategories(scrollRef, {
-    ids: displayFilters.map((f) => f.id),
-    activeId: activeCategory,
-    onChange: setActiveCategory,
-    onEdge: onRootEdge,
-    followRef: contentRef,
+  const { status: pullStatus, indicatorRef } = usePullToRefresh(paneScrollRef, {
+    onRefresh: forceReloadBrowse,
+    enabled: isActive && isBrowseEnabled && !isKeySwitching && !ActiveSection,
   });
 
-  /* 切分类的内容动效：以前点顶栏按钮或用横滑切分类时，内容是一帧硬切，
-     没有任何过渡，看着像闪了一下。这里用 Web Animations API 播一次方向感知的
-     进入动画（与根 tab 的 page-enter-* 同参数），方向按分类在顶栏里的位置判断。
-     不能给容器加 key 或切 className 来触发：每个分类的网格要留在 DOM 里
-     （保留 <img> 节点和滚动状态），重挂载就白留了。 */
-  const categoryIndexRef = useRef(-1);
-  useLayoutEffect(() => {
-    const index = displayFilters.findIndex((f) => f.id === activeCategory);
-    const prev = categoryIndexRef.current;
-    categoryIndexRef.current = index;
-    const el = contentRef.current;
-    if (!el || prev < 0 || index < 0 || prev === index) return;
-    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
-    const dir = index > prev ? 1 : -1;
-    el.animate(
-      [
-        { opacity: 0.4, transform: `translateX(${dir * 28}px)` },
-        { opacity: 1, transform: "translateX(0)" },
-      ],
-      { duration: 220, easing: "cubic-bezier(0.32, 0.72, 0, 1)" }
-    );
-  }, [activeCategory, displayFilters]);
-
-  const ActiveSection = MARKET_SECTIONS[effectiveCategory];
-
-  // 再次点击底部「发现」tab：在当前页内循环切换分类（不跳去下一个菜单）
-  useTabReclick("search", () => {
-    const ids = displayFilters.map((f) => f.id);
-    const index = ids.indexOf(activeCategory);
-    const nextId = ids[(index + 1) % ids.length];
-    if (nextId && nextId !== activeCategory) setActiveCategory(nextId);
-    scrollRef.current?.scrollTo({ top: 0, behavior: "smooth" });
-  });
-
-  // 下拉刷新：回到第一页重新加载，并绕过磁盘缓存拿最新数据
-  const { status: pullStatus, indicatorRef } = usePullToRefresh(scrollRef, {
-    onRefresh: async () => {
-      forceRefreshRef.current = true;
-      try {
-        if (isBrowseEnabled) await browse.reset();
-      } finally {
-        forceRefreshRef.current = false;
+  // 在「歌单广场」tab 内选择筛选（或重复点当前筛选强制刷新）
+  const handleFilterPick = useCallback(
+    (id: string) => {
+      onFilterSelect(id);
+      if (id === effectiveCategory) {
+        void forceReloadBrowse();
+      } else {
+        forceRefreshRef.current = true;
       }
     },
-    enabled: isBrowseEnabled && !isKeySwitching && !ActiveSection,
-  });
+    [effectiveCategory, forceReloadBrowse, onFilterSelect]
+  );
 
-  // 选中滑块位置：按按钮在栏内的 offsetLeft/offsetTop 定位（rAF 里测量，
-  // 避免同步 setState 级联渲染）。胶囊本身尺寸不变、只让间距随视口收缩；
-  // 极窄屏仍放不下时靠横滑兜底，并把选中项滚到可视区。
-  const measureIndicator = useCallback(() => {
-    const bar = scrollContainerRef.current;
-    const position = getCategoryIndicator(bar, activeCategory);
-    setIndicator(position);
-    if (!bar || !position) return;
-    // 只滚胶囊容器本身；不能用 scrollIntoView，否则会把外层页面一起带跑
-    const target = position.left - (bar.clientWidth - position.width) / 2;
-    bar.scrollLeft = Math.max(0, target);
-  }, [activeCategory]);
-
-  useEffect(() => {
-    const raf = requestAnimationFrame(measureIndicator);
-    window.addEventListener("resize", measureIndicator);
-    // 从搜索结果/专辑详情侧滑回首页时，分类栏由 display:none 变回可见，
-    // rAF 那次测量发生在隐藏期间会拿到 0 宽度。监听栏 itself 的尺寸变化，
-    // 显示回来后重新测量，胶囊才能重新落到「推荐」上。
-    const bar = scrollContainerRef.current;
-    const resizeObserver =
-      bar && typeof ResizeObserver !== "undefined"
-        ? new ResizeObserver(measureIndicator)
-        : null;
-    if (bar) resizeObserver?.observe(bar);
-    return () => {
-      cancelAnimationFrame(raf);
-      window.removeEventListener("resize", measureIndicator);
-      resizeObserver?.disconnect();
-    };
-  }, [measureIndicator, displayFilters]);
-
-  // 每个保留在 DOM 里的网格对应哪份数据：
-  // 当前分类用分页状态（切 key 的那一帧还没 restore，就先看快照，保证 key 不变、DOM 不重建），
-  // 其余分类用各自的快照。
-  const gridLists = useMemo(() => {
-    const map = new Map<string, MarketPlaylist[]>();
-    for (const key of renderKeys) {
-      const snapshotItems = listSnapshots[key]?.items ?? [];
-      if (key === snapshotKey && !isKeySwitching) {
-        map.set(key, browse.items);
-      } else {
-        map.set(key, snapshotItems);
-      }
-    }
-    return map;
-  }, [renderKeys, snapshotKey, isKeySwitching, listSnapshots, browse.items]);
-
-  const currentGridList = gridLists.get(snapshotKey) ?? [];
-
-  const active = browse;
-
-  const showGridSkeleton =
-    currentGridList.length === 0 && (browse.loading || isKeySwitching);
-
-  // 骨架卡片数量对齐上一屏的条数：切换分类时页面高度不塌，观感上不会「跳一下」
   const lastCountRef = useRef(0);
   useEffect(() => {
     if (browse.items.length > 0) lastCountRef.current = browse.items.length;
   }, [browse.items.length]);
   const skeletonCount = Math.max(12, lastCountRef.current);
 
+  const showGridSkeleton =
+    isBrowseEnabled &&
+    browse.items.length === 0 &&
+    (browse.loading || isKeySwitching);
+
+  const pageTitle = effectiveCategory === "全部" ? "全部" : effectiveCategory;
+
+  return (
+    <div
+      ref={setScrollNode}
+      data-market-pane={barId}
+      data-page-scroll={isActive ? "" : undefined}
+      data-page-active={isActive ? "true" : "false"}
+      aria-hidden={!isActive || undefined}
+      className="flex-1 min-h-0 overflow-y-auto custom-scrollbar"
+    >
+      {isBrowseEnabled && (
+        <PullRefreshIndicator indicatorRef={indicatorRef} status={pullStatus} />
+      )}
+
+      {/* 页内标题行：只在「歌单广场」tab 显示 */}
+      {barId === "全部" && (
+        <div className="flex items-center gap-2 px-5 pt-4 h-12">
+          <PlaylistCategorySelector
+            activeCategory={effectiveCategory}
+            onSelect={handleFilterPick}
+            trigger={
+              <div className="flex items-center gap-2 cursor-pointer select-none">
+                <span className="text-base font-bold text-foreground tracking-wide shrink-0">
+                  {effectiveCategory === "全部" ? barName : pageTitle}
+                </span>
+                <span className="h-8 w-8 rounded-full shrink-0 flex items-center justify-center bg-secondary/50 hover:bg-secondary transition-colors">
+                  <LayoutGrid className="h-4 w-4 text-muted-foreground" />
+                </span>
+              </div>
+            }
+          />
+        </div>
+      )}
+
+      {ActiveSection ? (
+        effectiveCategory === "mine" ? (
+          <MineSection scrollRef={paneScrollRef} />
+        ) : effectiveCategory === "recommend" ? (
+          <RecommendSection scrollRef={paneScrollRef} />
+        ) : (
+          <ActiveSection />
+        )
+      ) : (
+        <div className="p-4 pb-bottom-stack">
+          {barId === "toplist" && (
+            <div className="flex items-center h-8 mb-4 px-1">
+              <h2 className="text-base font-bold text-foreground tracking-wide truncate">
+                排行榜
+              </h2>
+            </div>
+          )}
+
+          {showGridSkeleton ? (
+            <PlaylistGridSkeleton count={skeletonCount} />
+          ) : (
+            <PlaylistGrid list={browse.items} onClick={onOpenPlaylist} />
+          )}
+
+          <div
+            ref={browse.observerTargetRef}
+            className="h-12 w-full mt-6 flex items-center justify-center opacity-80"
+          >
+            {browse.fetching && !browse.loading && (
+              <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                <Loader2 className="h-4 w-4 animate-spin" />
+                <span>加载中...</span>
+              </div>
+            )}
+            {!browse.hasMore && browse.items.length > 0 && (
+              <span className="text-xs text-muted-foreground/50 tracking-wide uppercase">
+                没有更多了-_-
+              </span>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+export function PlaylistMarket() {
+  const navigate = useNavigate();
+  const rawLastCategory = useMusicStore((s) => s.lastPlaylistCategory);
+  // 历史版本 Alist 分类 id 为小写，归一化为大写；
+  // 「精选」已删除，旧持久值回落到「歌单广场」
+  const lastCategory =
+    rawLastCategory === "alist"
+      ? "Alist"
+      : rawLastCategory === "featured"
+        ? "全部"
+        : rawLastCategory;
+  const setActiveCategory = useMusicStore((s) => s.setLastPlaylistCategory);
+  const playlistCategoryOrder = useMusicStore((s) => s.playlistCategoryOrder);
+
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
+  const viewportRef = useRef<HTMLDivElement>(null);
+  const trackRef = useRef<HTMLDivElement>(null);
+  const paneScrollRefs = useRef<Map<string, HTMLElement>>(new Map());
+
+  const registerScrollRef = useCallback(
+    (barId: string, node: HTMLElement | null) => {
+      if (node) paneScrollRefs.current.set(barId, node);
+      else paneScrollRefs.current.delete(barId);
+    },
+    []
+  );
+
+  // 歌单广场页内筛选（不切换顶栏 tab、不往顶栏加标签）
+  const marketFilter = useMarketSession((s) => s.marketFilter);
+  const setMarketFilter = useMarketSession((s) => s.setMarketFilter);
+
+  // 顶栏分类（固定 6 项 + 用户自定义常驻）
+  const barCategories = useMemo(
+    () => resolveBarCategories(playlistCategoryOrder),
+    [playlistCategoryOrder]
+  );
+  const displayFilters = useMemo(
+    () => [...barCategories.fixed, ...barCategories.residents],
+    [barCategories]
+  );
+  const barIds = useMemo(
+    () => new Set(displayFilters.map((f) => f.id)),
+    [displayFilters]
+  );
+
+  // 持久值不在顶栏分类里 → 回落「歌单广场」
+  const activeCategory = barIds.has(lastCategory) ? lastCategory : "全部";
+  const activeIndex = Math.max(
+    0,
+    displayFilters.findIndex((f) => f.id === activeCategory)
+  );
+
+  // 按需挂载的分类面板（LRU 保留最近 MAX_KEPT_CATEGORIES 个，当前及直接邻居必保留）
+  const [visitedList, setVisitedList] = useState<string[]>(() => [
+    activeCategory,
+  ]);
+
+  const markVisited = useCallback(
+    (id: string) => {
+      setVisitedList((prev) => {
+        if (
+          prev[prev.length - 1] === id &&
+          prev.length <= MAX_KEPT_CATEGORIES
+        ) {
+          return prev;
+        }
+        const filtered = prev.filter((item) => item !== id);
+        const next = [...filtered, id];
+        if (next.length <= MAX_KEPT_CATEGORIES) return next;
+        // 淘汰最久未用的，但保护当前分类与左右相邻分类不被回收
+        const curIdx = displayFilters.findIndex((f) => f.id === activeCategory);
+        const protectedIds = new Set(
+          [
+            activeCategory,
+            displayFilters[curIdx - 1]?.id,
+            displayFilters[curIdx + 1]?.id,
+          ].filter((x): x is string => Boolean(x))
+        );
+        const trimmed: string[] = [];
+        let dropBudget = next.length - MAX_KEPT_CATEGORIES;
+        for (const item of next) {
+          if (dropBudget > 0 && !protectedIds.has(item)) {
+            dropBudget--;
+            continue;
+          }
+          trimmed.push(item);
+        }
+        return trimmed;
+      });
+    },
+    [activeCategory, displayFilters]
+  );
+
+  // 确保当前激活分类已加入渲染集合
+  useEffect(() => {
+    markVisited(activeCategory);
+  }, [activeCategory, markVisited]);
+
+  const visitedSet = useMemo(() => {
+    const set = new Set(visitedList);
+    set.add(activeCategory);
+    return set;
+  }, [visitedList, activeCategory]);
+
+  const ensureIndexVisited = useCallback(
+    (index: number) => {
+      const item = displayFilters[index];
+      if (item) markVisited(item.id);
+    },
+    [displayFilters, markVisited]
+  );
+
+  const rootPager = useRootPager();
+  const isPageActive = useIsRootTabActive("search");
+
+  // 空闲时自动预挂载左右直接相邻分类，确保滑动第一帧无需临时建节点
+  useEffect(() => {
+    if (!isPageActive) return;
+    const neighborIds = [
+      displayFilters[activeIndex - 1]?.id,
+      displayFilters[activeIndex + 1]?.id,
+    ].filter((id): id is string => Boolean(id));
+    if (neighborIds.every((id) => visitedSet.has(id))) return;
+    const timer = setTimeout(() => {
+      neighborIds.forEach((id) => markVisited(id));
+    }, 180);
+    return () => clearTimeout(timer);
+  }, [isPageActive, activeIndex, displayFilters, visitedSet, markVisited]);
+
+  // 非邻近分类用 hidden 移出渲染/绘制树，切离前保存 scrollTop、回到近邻时同步还原；
+  // 跨多格点击跳转时短暂保留出发页 300ms，避免飞出动画期间页面瞬间变白。
+  const [prevActiveIdx, setPrevActiveIdx] = useState(activeIndex);
+  const [leavingIdx, setLeavingIdx] = useState<number | null>(null);
+  if (prevActiveIdx !== activeIndex) {
+    if (Math.abs(prevActiveIdx - activeIndex) > 1) {
+      setLeavingIdx(prevActiveIdx);
+    }
+    setPrevActiveIdx(activeIndex);
+  }
+  useEffect(() => {
+    if (leavingIdx === null) return;
+    const t = setTimeout(() => setLeavingIdx(null), 300);
+    return () => clearTimeout(t);
+  }, [leavingIdx]);
+
+  const prevMarketIdxRef = useRef(activeIndex);
+  useLayoutEffect(() => {
+    const prevIdx = prevMarketIdxRef.current;
+    prevMarketIdxRef.current = activeIndex;
+    const track = trackRef.current;
+    if (!track || prevIdx === activeIndex) return;
+    Array.from(track.children).forEach((shell, idx) => {
+      const inner = shell.firstElementChild as HTMLElement | null;
+      if (!inner) return;
+      const wasVisible = Math.abs(idx - prevIdx) <= 1;
+      const isVisible = Math.abs(idx - activeIndex) <= 1 || idx === leavingIdx;
+      if (wasVisible && !isVisible) saveScrollPositions(inner);
+      else if (!wasVisible && isVisible) restoreScrollPositions(inner);
+    });
+  }, [activeIndex, leavingIdx]);
+
+  const displayFiltersRef = useRef(displayFilters);
+  const activeCategoryRef = useRef(activeCategory);
+  useEffect(() => {
+    displayFiltersRef.current = displayFilters;
+    activeCategoryRef.current = activeCategory;
+  }, [displayFilters, activeCategory]);
+  const savedCatBeforeAlignRef = useRef<string | null>(null);
+
+  // 跨页滑动对齐协议：从「喜欢」页右滑露出「发现」时，瞬时切到最后一个分类
+  useEffect(() => {
+    if (!rootPager) return;
+    return rootPager.registerAligner("/search", {
+      previewAlign: (edge) => {
+        const filters = displayFiltersRef.current;
+        const target =
+          edge === "start" ? filters[0]?.id : filters[filters.length - 1]?.id;
+        if (!target) return;
+        if (
+          savedCatBeforeAlignRef.current === null &&
+          activeCategoryRef.current !== target
+        ) {
+          savedCatBeforeAlignRef.current = activeCategoryRef.current;
+        }
+        if (activeCategoryRef.current !== target) {
+          setActiveCategory(target);
+        }
+      },
+      cancelAlign: () => {
+        const prev = savedCatBeforeAlignRef.current;
+        savedCatBeforeAlignRef.current = null;
+        if (prev && prev !== activeCategoryRef.current) {
+          setActiveCategory(prev);
+        }
+      },
+      commitAlign: () => {
+        savedCatBeforeAlignRef.current = null;
+      },
+    });
+  }, [rootPager, setActiveCategory]);
+
+  const filterIds = useMemo(
+    () => displayFilters.map((f) => f.id),
+    [displayFilters]
+  );
+
+  const {
+    indicatorRef,
+    mirrorRef,
+    barWidth,
+    hasIndicator,
+    initialRect,
+    handleTrackDrag,
+    handleTrackSettle,
+  } = useTabIndicatorSync({
+    barRef: scrollContainerRef,
+    activeIndex,
+    ids: filterIds,
+    attrName: "data-category-id",
+    autoScrollBar: true,
+  });
+
+  const onRootEdge = useRootTabSwipe("search");
+  usePagerSwipe(
+    { viewportRef, trackRef },
+    {
+      count: displayFilters.length,
+      index: activeIndex,
+      onChange: (idx) => {
+        const target = displayFilters[idx];
+        if (target) setActiveCategory(target.id);
+      },
+      onEdge: onRootEdge,
+      onNeighborIntent: ensureIndexVisited,
+      onTrackDrag: handleTrackDrag,
+      onTrackSettle: handleTrackSettle,
+      rootTab: "search",
+      isPageActive,
+    }
+  );
+
+  // 再次点击底部「发现」tab：在当前页内循环切换分类，并滚动回到顶部
+  useTabReclick("search", () => {
+    const ids = displayFilters.map((f) => f.id);
+    const index = ids.indexOf(activeCategory);
+    const nextId = ids[(index + 1) % ids.length];
+    if (nextId && nextId !== activeCategory) {
+      setActiveCategory(nextId);
+      paneScrollRefs.current
+        .get(nextId)
+        ?.scrollTo({ top: 0, behavior: "smooth" });
+    } else {
+      paneScrollRefs.current
+        .get(activeCategory)
+        ?.scrollTo({ top: 0, behavior: "smooth" });
+    }
+  });
+
   const handleOpenPlaylist = useCallback(
     (id: string) => navigate(`/netease-playlist/${id}`),
     [navigate]
   );
 
-  // 页内标题：默认显示「全部」，筛选选中具体分类后跟随变为筛选标签
-  const pageTitle = useMemo(() => {
-    if (effectiveCategory === "全部") return "全部";
-    return (
-      displayFilters.find((f) => f.id === effectiveCategory)?.name ??
-      effectiveCategory
-    );
-  }, [effectiveCategory, displayFilters]);
-
-  // 筛选抽屉选择：页内切换筛选（不动顶栏 tab、不往顶栏加标签），
-  // 清掉目标分类的会话快照并绕过磁盘缓存，选择完即刷新下方歌单
   const handleFilterSelect = useCallback(
     (id: string) => {
       const key = getSnapshotKey(id);
@@ -396,27 +593,21 @@ export function PlaylistMarket() {
         const { [key]: _removed, ...rest } = s.listSnapshots;
         return { listSnapshots: rest };
       });
-
-      if (id === effectiveCategory) {
-        // 重复选中当前筛选：直接强制刷新当前列表
-        forceRefreshRef.current = true;
-        void browse.reset().finally(() => {
-          forceRefreshRef.current = false;
-        });
-        return;
-      }
-
-      forceRefreshRef.current = true;
+      const currentEffective =
+        activeCategory === "全部" && marketFilter
+          ? marketFilter
+          : activeCategory;
+      if (id === currentEffective) return;
       setMarketFilter(id === "全部" ? null : id);
     },
-    [effectiveCategory, setMarketFilter, browse]
+    [activeCategory, marketFilter, setMarketFilter]
   );
 
   return (
     <div className="flex flex-col h-full bg-background/50 animate-in fade-in duration-500">
       <header
         data-tap-top=""
-        className="sticky top-0 z-20 bg-background/90 backdrop-blur-xl border-b border-border/20 shadow-sm"
+        className="sticky top-0 z-20 shrink-0 bg-background border-b border-border/20 shadow-sm [contain:layout_style]"
       >
         <div className="flex items-center px-3 py-1.5 gap-2">
           <div className="flex-1 min-w-0 overflow-hidden relative">
@@ -424,17 +615,6 @@ export function PlaylistMarket() {
               ref={scrollContainerRef}
               className="relative flex flex-nowrap items-center gap-[clamp(2px,1vw,6px)] overflow-x-auto scrollbar-hide"
             >
-              {indicator && (
-                <div
-                  aria-hidden
-                  className="absolute left-0 top-0 h-8 rounded-full bg-primary pointer-events-none"
-                  style={{
-                    transform: `translate(${indicator.left}px, ${indicator.top}px)`,
-                    width: indicator.width,
-                    transition: "transform 250ms ease, width 250ms ease",
-                  }}
-                />
-              )}
               {displayFilters.map((f) => (
                 <Button
                   key={f.id}
@@ -442,108 +622,88 @@ export function PlaylistMarket() {
                   variant="ghost"
                   size="sm"
                   onClick={() => setActiveCategory(f.id)}
-                  className={cn(
-                    "relative h-8 px-3 rounded-full transition-colors text-sm font-medium whitespace-nowrap shrink-0",
-                    activeCategory === f.id
-                      ? "text-primary-foreground hover:bg-transparent hover:text-primary-foreground"
-                      : "text-muted-foreground hover:text-foreground bg-secondary/30"
-                  )}
+                  className="relative h-8 px-3 rounded-full text-sm font-medium whitespace-nowrap shrink-0 text-muted-foreground bg-secondary/30 hover:bg-secondary/30 hover:text-muted-foreground"
                 >
                   {f.name}
                 </Button>
               ))}
+              {hasIndicator && initialRect && (
+                <div
+                  ref={indicatorRef}
+                  aria-hidden
+                  className="pointer-events-none absolute left-0 top-0 z-10 h-8 overflow-hidden rounded-full bg-primary"
+                  style={{
+                    transform: `translate3d(${initialRect.left}px, ${initialRect.top}px, 0)`,
+                    width: initialRect.width,
+                  }}
+                >
+                  <div
+                    ref={mirrorRef}
+                    className="flex flex-nowrap items-center gap-[clamp(2px,1vw,6px)]"
+                    style={{
+                      width: barWidth || "max-content",
+                      transform: `translate3d(${-initialRect.left}px, ${-initialRect.top}px, 0)`,
+                    }}
+                  >
+                    {displayFilters.map((f) => (
+                      <span
+                        key={f.id}
+                        className="inline-flex h-8 items-center justify-center px-3 text-sm font-medium whitespace-nowrap shrink-0 text-primary-foreground"
+                      >
+                        {f.name}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         </div>
       </header>
 
-      <main
-        ref={scrollRef}
-        data-page-scroll=""
-        className="flex-1 overflow-y-auto custom-scrollbar"
+      {/* 内容分页：顶栏分类固定，下面所有分类横向排成一条跟手轨道 */}
+      <div
+        ref={viewportRef}
+        data-market-viewport
+        className="relative flex-1 min-h-0 overflow-hidden"
       >
-        <PullRefreshIndicator indicatorRef={indicatorRef} status={pullStatus} />
-        <div ref={contentRef}>
-          {/* 页内标题行：只在「歌单广场」tab 显示；标题与筛选按钮都可点击打开筛选抽屉 */}
-          {activeCategory === "全部" && (
-            <div className="flex items-center gap-2 px-5 pt-4 h-12">
-              <PlaylistCategorySelector
-                activeCategory={effectiveCategory}
-                onSelect={handleFilterSelect}
-                trigger={
-                  <div className="flex items-center gap-2 cursor-pointer select-none">
-                    <span className="text-base font-bold text-foreground tracking-wide shrink-0">
-                      {pageTitle}
-                    </span>
-                    <span className="h-8 w-8 rounded-full shrink-0 flex items-center justify-center bg-secondary/50 hover:bg-secondary transition-colors">
-                      <LayoutGrid className="h-4 w-4 text-muted-foreground" />
-                    </span>
-                  </div>
-                }
-              />
-            </div>
-          )}
-          {/* 播客 / Billboard / Alist 这类独立区块与歌单网格同时挂载：
-            以前是二选一，去一趟播客再回来，所有已加载的分类网格都会被卸载，
-            封面 <img> 全部重建 → 又「重新加载」一遍。现在只切显示状态。 */}
-          {/* 「我的」「推荐」传外层滚动容器，启用下拉刷新；其余 Section 无此需求 */}
-          {ActiveSection &&
-            (effectiveCategory === "mine" ? (
-              <MineSection scrollRef={scrollRef} />
-            ) : effectiveCategory === "recommend" ? (
-              <RecommendSection scrollRef={scrollRef} />
-            ) : (
-              <ActiveSection />
-            ))}
-          <div className={cn("p-4 pb-bottom-stack", ActiveSection && "hidden")}>
-            {/* 「排行榜」（网易云 toplist）独立区块，和歌手/雷达一样给个标题 */}
-            {!ActiveSection && effectiveCategory === "toplist" && (
-              <div className="flex items-center h-8 mb-4 px-1">
-                <h2 className="text-base font-bold text-foreground tracking-wide truncate">
-                  排行榜
-                </h2>
-              </div>
-            )}
-            {/* 访问过的分类网格都留在 DOM 里（保留 <img> 节点和滚动状态），
-              非当前分类用 display:none 移出渲染树。
-              不能改成 absolute + visibility:hidden 叠放：定位元素会画在
-              正常流的网格之上，visibility 的那一帧还没生效时，
-              上一屏的标题会直接盖在新标题上（实测会持续 2~3 帧）。 */}
-            <div className="relative">
-              {renderKeys.map((key) => (
+        <div
+          ref={trackRef}
+          data-market-track
+          className="flex h-full will-change-transform"
+        >
+          {displayFilters.map((filter, idx) => {
+            const isCatActive = filter.id === activeCategory;
+            const visited = visitedSet.has(filter.id);
+            const isNear =
+              Math.abs(idx - activeIndex) <= 1 || idx === leavingIdx;
+            return (
+              <div key={filter.id} className="h-full w-full shrink-0">
                 <div
-                  key={key}
-                  aria-hidden={key !== snapshotKey}
-                  className={key === snapshotKey ? undefined : "hidden"}
+                  className={cn(
+                    "flex h-full w-full flex-col [contain:layout_style_paint]",
+                    !isNear && "hidden"
+                  )}
                 >
-                  <PlaylistGrid
-                    list={gridLists.get(key) ?? []}
-                    onClick={handleOpenPlaylist}
-                  />
+                  {visited ? (
+                    <MarketCategoryPane
+                      barId={filter.id}
+                      barName={filter.name}
+                      isActive={isCatActive}
+                      marketFilter={marketFilter}
+                      onFilterSelect={handleFilterSelect}
+                      onOpenPlaylist={handleOpenPlaylist}
+                      registerScrollRef={registerScrollRef}
+                    />
+                  ) : (
+                    <MarketPaneSkeleton title={filter.name} />
+                  )}
                 </div>
-              ))}
-            </div>
-            {showGridSkeleton && <PlaylistGridSkeleton count={skeletonCount} />}
-
-            <div
-              ref={active.observerTargetRef}
-              className="h-12 w-full mt-6 flex items-center justify-center opacity-80"
-            >
-              {active.fetching && !active.loading && (
-                <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                  <span>加载中...</span>
-                </div>
-              )}
-              {!active.hasMore && active.items.length > 0 && (
-                <span className="text-xs text-muted-foreground/50 tracking-wide uppercase">
-                  没有更多了-_-
-                </span>
-              )}
-            </div>
-          </div>
+              </div>
+            );
+          })}
         </div>
-      </main>
+      </div>
     </div>
   );
 }

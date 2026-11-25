@@ -342,7 +342,8 @@ export const getUserPlaylists = async (
 };
 
 export const getRecommendPlaylists = async (
-  cookie: string = ""
+  cookie: string = "",
+  forceRefresh = false
 ): Promise<MarketPlaylist[]> => {
   const finalCookie = resolveRequestCookie(cookie);
   const res = await cachedFetch<MarketPlaylist[]>(
@@ -356,7 +357,8 @@ export const getRecommendPlaylists = async (
       );
       return (r.data?.result || []).map(toMarketPlaylistFromRecommend);
     },
-    TTL_SHORT
+    TTL_SHORT,
+    forceRefresh
   );
   return res ?? [];
 };

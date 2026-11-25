@@ -55,9 +55,6 @@ function QueueTrackItem({
   itemRef,
 }: QueueTrackItemProps) {
   const coverUrl = useMusicCover(track);
-  const highlightCurrentTrack = useMusicStore(
-    (state) => state.highlightCurrentTrack
-  );
 
   const handleRemove = async (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -83,7 +80,7 @@ function QueueTrackItem({
       className={cn(
         // 紧凑行：封面 36 + 上下各 6，两行文字自然撑到 48 左右
         "grid grid-cols-[36px_1fr_auto] items-center gap-3 rounded-lg px-2.5 py-1.5 transition-colors hover:bg-muted/60 active:bg-muted",
-        isCurrent && highlightCurrentTrack && "bg-primary/10"
+        isCurrent && "bg-primary/10"
       )}
       onClick={onSelect}
       onKeyDown={(e) => {

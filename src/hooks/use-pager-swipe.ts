@@ -5,6 +5,7 @@ import {
   isTextInputTarget,
   lockAxis,
 } from "./gesture-axis";
+import { useRootPager, type RootTabId } from "./use-root-pager";
 
 /** 触发翻页的最小水平位移（px） */
 const SWIPE_THRESHOLD = 56;
@@ -12,41 +13,52 @@ const SWIPE_THRESHOLD = 56;
 const FLING_DISTANCE = 40;
 /** 快速轻扫的时长上限（ms） */
 const FLING_DURATION = 260;
-/** 边缘拖拽的阻尼：整页跟手，但比页内翻页略「重」，有到头的感觉 */
+/** 无根级容器兜底时，边缘拖拽的阻尼 */
 const EDGE_DAMPING = 0.6;
 /** 内容轨道归位 / 翻页过渡（ms） */
-const TRACK_SETTLE = 320;
+const TRACK_SETTLE = 280;
 /** 整页边缘滑出的过渡（ms） */
 const EDGE_SETTLE = 260;
-/** 边缘滑出动画结束后再跳转，让用户先看清下一屏 */
-const EDGE_NAV_DELAY = EDGE_SETTLE;
 
 const TRACK_EASING = "cubic-bezier(0.32, 0.72, 0, 1)";
 
 interface UsePagerSwipeOptions {
-  /** 页数 */
+  /** 页数（单页可传 1，此时所有横向滑动均视为边缘滑动） */
   count: number;
   /** 当前页索引 */
   index: number;
   /** 翻到目标页 */
   onChange: (index: number) => void;
-  /** 到达第一页再右滑 / 最后一页再左滑：整页滑出后切根 tab */
-  onEdge: (dir: "next" | "prev") => void;
+  /** 到达第一页再右滑 / 最后一页再左滑时的兜底回调（无 RootPagerContext 时使用） */
+  onEdge?: (dir: "next" | "prev") => void;
   /** 手势锁定方向后，提前挂载即将露出的相邻页 */
   onNeighborIntent?: (index: number) => void;
+  /** 页内横向跟手拖动进度：ratio ∈ [-1, 1]，负值为向左（上一页），正值为向右（下一页） */
+  onTrackDrag?: (index: number, ratio: number) => void;
+  /** 松手滑行归位/翻页或退出内部拖动时触发，供顶部指示器同步同曲线动画 */
+  onTrackSettle?: (targetIndex: number, animate: boolean) => void;
+  /** 当前所属根 Tab；传入且在 RootPagerContext 内时，边缘滑动直接联动根级轨道 */
+  rootTab?: RootTabId;
+  /**
+   * 本页当前是否处于激活可见态（默认 true）。
+   * 为 false 时，来自外部的对齐切页瞬时落位、不播轨道过渡动画。
+   */
+  isPageActive?: boolean;
+  /** 置 false 时完全禁用手势 */
+  enabled?: boolean;
 }
 
 interface PagerRefs {
-  /** 裁剪窗口：overflow-hidden，宽度即一页的宽度 */
+  /** 裁剪/手势接收窗口：overflow-hidden，宽度即一页的宽度 */
   viewportRef: RefObject<HTMLElement | null>;
-  /** 内容轨道：所有页横向排列，translateX 翻页 */
-  trackRef: RefObject<HTMLElement | null>;
-  /** 整页舞台：到边缘时平移它（连同顶部 tab 一起滑） */
-  stageRef: RefObject<HTMLElement | null>;
+  /** 内容轨道：多页横向排列，translateX 翻页；单页可不传 */
+  trackRef?: RefObject<HTMLElement | null>;
+  /** 整页舞台（无 RootPagerContext 时的边缘滑出兜底） */
+  stageRef?: RefObject<HTMLElement | null>;
 }
 
 /** 读取元素当前的 translateX（computed transform 的 m41） */
-function readTranslateX(el: HTMLElement): number {
+export function readTranslateX(el: HTMLElement): number {
   const value = window.getComputedStyle(el).transform;
   if (!value || value === "none") return 0;
   const matrix = value.match(/matrix\(([^)]+)\)/);
@@ -63,17 +75,24 @@ function readTranslateX(el: HTMLElement): number {
 }
 
 /**
- * 「顶部 tab 固定、内容横向分页」的歌单页手势。
+ * 统一的「页面内横向真分页 + 边缘整页联动」手势 hook。
  *
- * - 页内滑动：只平移内容轨道，露出相邻页的真实内容（tab 栏不动）。
- * - 到第一页/最后一页再往外滑：平移整个舞台（含顶部 tab），并在两侧
- *   预置好的相邻根 tab 骨架屏上滑出，不出现白色空白；松手后跳转。
- * - 所有位移直接写 DOM（不 setState），避免每帧重渲染重列表。
+ * 性能设计：
+ * - 松手翻页时先由 GPU 合成线程跑完 280ms 滑行过渡，动画结束后再回调 onChange，
+ *   避免滑行前 100ms 被 React 重渲染与布局测量抢占主线程导致掉帧；
+ * - 若动画途中用户再次触摸，立即 flush 待提交的页索引并从当前位置平滑接续；
+ * - 缓存视口宽度，仅在锁定横向时检测内部横向滚动容器，避免触碰和纵滑时的同步重排。
  */
 export function usePagerSwipe(
   { viewportRef, trackRef, stageRef }: PagerRefs,
   options: UsePagerSwipeOptions
 ) {
+  const rootPager = useRootPager();
+  const rootPagerRef = useRef(rootPager);
+  useEffect(() => {
+    rootPagerRef.current = rootPager;
+  }, [rootPager]);
+
   const latest = useRef(options);
   useEffect(() => {
     latest.current = options;
@@ -85,6 +104,10 @@ export function usePagerSwipe(
   }, [options.index]);
 
   const draggingRef = useRef(false);
+  const widthRef = useRef(0);
+  const trackAnimatingUntilRef = useRef(0);
+  const changeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pendingChangeIndexRef = useRef<number | null>(null);
   const navTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const firstPositionRef = useRef(true);
 
@@ -99,11 +122,12 @@ export function usePagerSwipe(
   const trackBase = (index: number, width: number) => -index * width;
 
   const applyTrack = (
-    node: HTMLElement | null,
+    node: HTMLElement | null | undefined,
     offset: number,
     animate: boolean
   ) => {
     if (!node) return;
+    trackAnimatingUntilRef.current = animate ? Date.now() + TRACK_SETTLE : 0;
     node.style.transition = animate
       ? `transform ${TRACK_SETTLE}ms ${TRACK_EASING}`
       : "none";
@@ -111,7 +135,7 @@ export function usePagerSwipe(
   };
 
   const applyStage = (
-    node: HTMLElement | null,
+    node: HTMLElement | null | undefined,
     offset: number,
     animate: boolean
   ) => {
@@ -123,43 +147,54 @@ export function usePagerSwipe(
   };
 
   // 首次定位 + 尺寸变化时重新对齐（手机旋转、分屏）。
-  // 用 layout effect 在绘制前落位，避免首帧先闪一下第 1 页。
   useLayoutEffect(() => {
     const viewport = viewportRef.current;
-    const track = trackRef.current;
-    if (!viewport || !track) return;
+    const track = trackRef?.current;
+    if (!viewport) return;
 
     const align = () => {
-      const width = viewport.clientWidth || window.innerWidth;
+      const measured = viewport.clientWidth;
+      if (measured > 0) widthRef.current = measured;
+      const width = measured || window.innerWidth;
       if (!width) return;
       if (draggingRef.current) return;
-      const animate = !firstPositionRef.current;
+      const animate =
+        !firstPositionRef.current && latest.current.isPageActive !== false;
       firstPositionRef.current = false;
       applyTrack(track, trackBase(indexRef.current, width), animate);
-      applyStage(stageRef.current, 0, false);
+      applyStage(stageRef?.current, 0, false);
     };
 
     align();
-    // 测试环境（jsdom）没有 ResizeObserver，跳过监听即可
     if (typeof ResizeObserver === "undefined") return;
     const observer = new ResizeObserver(align);
     observer.observe(viewport);
     return () => observer.disconnect();
   }, [stageRef, trackRef, viewportRef]);
 
-  // 点 tab / 再次点击底部 tab / 跨页落点：平滑翻到新的一页
+  // 点 tab / 再次点击底部 tab / 外部对齐：翻到新的一页
   useLayoutEffect(() => {
     const viewport = viewportRef.current;
-    const track = trackRef.current;
+    const track = trackRef?.current;
     if (!viewport || !track || draggingRef.current) return;
-    const width = viewport.clientWidth || window.innerWidth;
+    const measured = viewport.clientWidth;
+    if (measured > 0) widthRef.current = measured;
+    const width = widthRef.current || measured || window.innerWidth;
     if (!width) return;
-    applyTrack(
-      track,
-      trackBase(options.index, width),
-      !firstPositionRef.current
-    );
-  }, [options.index, trackRef, viewportRef]);
+    const targetX = trackBase(options.index, width);
+    // 如果松手滑行动画已经把轨道滑到位（延迟后触发 onChange），不再重设 transition 造成二次抖动
+    if (
+      Math.abs(readTranslateX(track) - targetX) < 1 &&
+      Date.now() >= trackAnimatingUntilRef.current
+    ) {
+      applyTrack(track, targetX, false);
+      firstPositionRef.current = false;
+      return;
+    }
+    const animate =
+      !firstPositionRef.current && latest.current.isPageActive !== false;
+    applyTrack(track, targetX, animate);
+  }, [options.index, options.count, trackRef, viewportRef]);
 
   useEffect(() => {
     const viewport = viewportRef.current;
@@ -173,19 +208,53 @@ export function usePagerSwipe(
     let width = 0;
     let trackStart = 0;
     let stageStart = 0;
+    let rootDragStart = 0;
+    let touchTarget: Element | null = null;
     let edgeActive = false;
     let edgeDir: 1 | -1 = 1;
     let wasEdge = false;
+    let usedRootEdge = false;
+    let preparedRootDir: "next" | "prev" | null = null;
     let lastIntent = -1;
 
+    const clearChangeTimer = () => {
+      if (changeTimerRef.current !== null) {
+        clearTimeout(changeTimerRef.current);
+        changeTimerRef.current = null;
+      }
+    };
+
+    const flushPendingChange = () => {
+      clearChangeTimer();
+      const pending = pendingChangeIndexRef.current;
+      if (pending !== null) {
+        pendingChangeIndexRef.current = null;
+        if (pending !== indexRef.current) {
+          indexRef.current = pending;
+          latest.current.onChange(pending);
+        }
+      }
+    };
+
     const resetVisual = (animate: boolean) => {
-      const w = width || viewport.clientWidth || window.innerWidth;
-      applyTrack(trackRef.current, trackBase(indexRef.current, w), animate);
-      applyStage(stageRef.current, 0, animate);
+      const w =
+        width || widthRef.current || viewport.clientWidth || window.innerWidth;
+      applyTrack(trackRef?.current, trackBase(indexRef.current, w), animate);
+      applyStage(stageRef?.current, 0, animate);
+      latest.current.onTrackSettle?.(indexRef.current, animate);
+      if (usedRootEdge) {
+        rootPagerRef.current?.cancelRootDrag(animate);
+        usedRootEdge = false;
+      }
+      preparedRootDir = null;
       draggingRef.current = false;
     };
 
     const handleStart = (event: TouchEvent) => {
+      if (latest.current.enabled === false) {
+        tracking = false;
+        return;
+      }
       if (event.touches.length !== 1 || isDragSelecting()) {
         tracking = false;
         return;
@@ -196,33 +265,40 @@ export function usePagerSwipe(
         tracking = false;
         return;
       }
-      if (isInsideHorizontalScroller(target, viewport)) {
-        tracking = false;
-        return;
-      }
 
-      // 边缘滑出后的跳转计时器不在这里取消：160ms 内的再次触摸视为继续甩出，
-      // 取消它会让舞台停在屏幕外、页面回不来
+      // 如果上一轮翻页滑行动画还在收尾，先落定待提交的新索引再接续拖动
+      flushPendingChange();
+
       tracking = true;
       axis = "none";
       startX = touch.clientX;
       startY = touch.clientY;
       startAt = Date.now();
-      width = viewport.clientWidth || window.innerWidth;
-      trackStart = trackRef.current
-        ? readTranslateX(trackRef.current)
-        : trackBase(indexRef.current, width);
-      stageStart = stageRef.current ? readTranslateX(stageRef.current) : 0;
+      touchTarget = target;
+      width =
+        widthRef.current || viewport.clientWidth || window.innerWidth || 0;
+      if (viewport.clientWidth > 0) widthRef.current = viewport.clientWidth;
+      const track = trackRef?.current;
+      const animating = Date.now() < trackAnimatingUntilRef.current;
+      trackStart =
+        track && animating
+          ? readTranslateX(track)
+          : trackBase(indexRef.current, width);
+      stageStart = stageRef?.current ? readTranslateX(stageRef.current) : 0;
+      const rp = rootPagerRef.current;
+      rootDragStart = rp && latest.current.rootTab ? rp.getRootDragOffset() : 0;
       edgeActive = false;
       wasEdge = false;
+      usedRootEdge = false;
+      preparedRootDir = null;
       lastIntent = -1;
     };
 
     const handleMove = (event: TouchEvent) => {
       if (!tracking) return;
-      if (isDragSelecting()) {
+      if (isDragSelecting() || latest.current.enabled === false) {
         tracking = false;
-        resetVisual(true);
+        if (axis === "x") resetVisual(true);
         return;
       }
       const touch = event.touches[0];
@@ -234,43 +310,107 @@ export function usePagerSwipe(
         axis = lockAxis(dx, dy);
         if (axis === "none") return;
         if (axis === "y") {
-          // 纵向滚动：整段手势交给列表，不再参与翻页
           tracking = false;
           return;
         }
-        // 锁定横向：停掉可能还在跑的过渡，直接从当前位置跟手
+        // 只在横向锁定时查一次内部横向滚动容器，避免点击和纵滑时触发强制布局
+        if (isInsideHorizontalScroller(touchTarget, viewport)) {
+          tracking = false;
+          axis = "none";
+          return;
+        }
         draggingRef.current = true;
-        if (trackRef.current) trackRef.current.style.transition = "none";
-        if (stageRef.current) stageRef.current.style.transition = "none";
+        trackAnimatingUntilRef.current = 0;
+        if (trackRef?.current) trackRef.current.style.transition = "none";
+        if (stageRef?.current) stageRef.current.style.transition = "none";
       }
 
       if (event.cancelable) event.preventDefault();
 
-      const dir: 1 | -1 = dx < 0 ? 1 : -1;
+      const effectiveDx = dx;
+      const dir: 1 | -1 = effectiveDx < 0 ? 1 : -1;
+      const dirStr: "next" | "prev" = dir === 1 ? "next" : "prev";
       const targetIndex = indexRef.current + dir;
       const isEdge = targetIndex < 0 || targetIndex >= latest.current.count;
       edgeActive = isEdge;
       edgeDir = dir;
 
       if (isEdge) {
+        if (!wasEdge && trackRef?.current) {
+          applyTrack(
+            trackRef.current,
+            trackBase(indexRef.current, width),
+            false
+          );
+          latest.current.onTrackSettle?.(indexRef.current, false);
+        }
         wasEdge = true;
-        applyStage(stageRef.current, stageStart + dx * EDGE_DAMPING, false);
+
+        const rp = rootPagerRef.current;
+        const rootTab = latest.current.rootTab;
+
+        if (rp && rootTab) {
+          if (rp.canSlideEdge(rootTab, dirStr)) {
+            if (preparedRootDir !== dirStr) {
+              preparedRootDir = dirStr;
+              rp.prepareEdgeNeighbor(rootTab, dirStr);
+            }
+            usedRootEdge = true;
+            const rawOffset = rootDragStart + effectiveDx;
+            const canPrev = rp.canSlideEdge(rootTab, "prev");
+            const canNext = rp.canSlideEdge(rootTab, "next");
+            const clampedOffset =
+              !canPrev && rawOffset > 0
+                ? 0
+                : !canNext && rawOffset < 0
+                  ? 0
+                  : rawOffset;
+            rp.dragRootBy(clampedOffset);
+          } else if (usedRootEdge) {
+            rp.dragRootBy(0);
+          }
+          return;
+        }
+
+        if (latest.current.onEdge) {
+          applyStage(
+            stageRef?.current,
+            stageStart + effectiveDx * EDGE_DAMPING,
+            false
+          );
+        }
         return;
       }
 
-      if (wasEdge) applyStage(stageRef.current, 0, false);
+      if (wasEdge) {
+        applyStage(stageRef?.current, 0, false);
+        if (usedRootEdge) {
+          rootPagerRef.current?.cancelRootDrag(false);
+          usedRootEdge = false;
+        }
+        preparedRootDir = null;
+        trackStart = trackBase(indexRef.current, width);
+      }
       wasEdge = false;
       if (lastIntent !== targetIndex) {
         lastIntent = targetIndex;
         latest.current.onNeighborIntent?.(targetIndex);
       }
-      applyTrack(trackRef.current, trackStart + dx, false);
+      const nextTrackOffset = trackStart + effectiveDx;
+      applyTrack(trackRef?.current, nextTrackOffset, false);
+      if (width > 0 && latest.current.onTrackDrag) {
+        const base = trackBase(indexRef.current, width);
+        const ratio = Math.max(
+          -1,
+          Math.min(1, (base - nextTrackOffset) / width)
+        );
+        latest.current.onTrackDrag(indexRef.current, ratio);
+      }
     };
 
     const handleEnd = (event: TouchEvent) => {
       if (!tracking) return;
       tracking = false;
-      // 没进入横向（轻点 / 纵向滚动）：保持现状，别把正在跑的翻页动画打断
       if (axis !== "x") return;
 
       const touch = event.changedTouches[0];
@@ -283,27 +423,60 @@ export function usePagerSwipe(
       draggingRef.current = false;
 
       if (edgeActive) {
-        if (passed) {
-          // 整页滑出，露出相邻根 tab 的骨架屏；稍后真正跳转
+        const dirStr: "next" | "prev" = edgeDir === 1 ? "next" : "prev";
+        const rp = rootPagerRef.current;
+        const rootTab = latest.current.rootTab;
+
+        if (rp && rootTab) {
+          const canSlide = rp.canSlideEdge(rootTab, dirStr);
+          if (canSlide && passed) {
+            if (preparedRootDir !== dirStr) {
+              rp.prepareEdgeNeighbor(rootTab, dirStr);
+            }
+            rp.commitRootEdge(rootTab, dirStr);
+          } else if (usedRootEdge) {
+            rp.cancelRootDrag(true);
+          }
+          usedRootEdge = false;
+          preparedRootDir = null;
+          return;
+        }
+
+        if (latest.current.onEdge && passed) {
           const target = edgeDir === 1 ? -width : width;
-          applyStage(stageRef.current, target, true);
+          applyStage(stageRef?.current, target, true);
           const dir = edgeDir;
           clearNavTimer();
           navTimerRef.current = setTimeout(() => {
             navTimerRef.current = null;
-            latest.current.onEdge(dir === 1 ? "next" : "prev");
-          }, EDGE_NAV_DELAY);
+            latest.current.onEdge?.(dir === 1 ? "next" : "prev");
+          }, EDGE_SETTLE);
         } else {
-          applyStage(stageRef.current, 0, true);
+          applyStage(stageRef?.current, 0, true);
         }
         return;
       }
 
       const current = indexRef.current;
       const target = passed ? current + (dx < 0 ? 1 : -1) : current;
-      const currentWidth = width || viewport.clientWidth || window.innerWidth;
-      applyTrack(trackRef.current, trackBase(target, currentWidth), true);
-      if (target !== current) latest.current.onChange(target);
+      const currentWidth =
+        width || widthRef.current || viewport.clientWidth || window.innerWidth;
+      applyTrack(trackRef?.current, trackBase(target, currentWidth), true);
+      latest.current.onTrackSettle?.(target, true);
+      if (target !== current) {
+        clearChangeTimer();
+        pendingChangeIndexRef.current = target;
+        // 先让 GPU 跑完 280ms 滑行过渡，再回调 React 更新状态，避免起跑期掉帧
+        changeTimerRef.current = setTimeout(() => {
+          changeTimerRef.current = null;
+          const next = pendingChangeIndexRef.current;
+          pendingChangeIndexRef.current = null;
+          if (next !== null && next !== indexRef.current) {
+            indexRef.current = next;
+            latest.current.onChange(next);
+          }
+        }, TRACK_SETTLE);
+      }
     };
 
     const handleCancel = () => {
@@ -319,6 +492,7 @@ export function usePagerSwipe(
 
     return () => {
       clearNavTimer();
+      clearChangeTimer();
       viewport.removeEventListener("touchstart", handleStart);
       viewport.removeEventListener("touchmove", handleMove);
       viewport.removeEventListener("touchend", handleEnd);

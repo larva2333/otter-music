@@ -3,6 +3,8 @@
 import { createPortal } from "react-dom";
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { srgbToLab, type SodaColors } from "@/lib/utils/soda-color";
+import { BG_DARK_MAX, BG_LIGHT_DARK_MAX } from "@/lib/theme-background";
+import { renderThemeBackgroundOffThread } from "@/lib/cover-color-client";
 import { Button } from "@/components/ui/button";
 import { confirmDialog } from "@/components/ui/confirm-dialog";
 import { cn } from "@/lib/utils";
@@ -57,6 +59,7 @@ import { useSystemBarsStyleOverride } from "@/hooks/useSystemBarsStyleOverride";
 import { useIsDarkTheme } from "@/hooks/useIsDarkTheme";
 import { t2s, t2sArtists } from "@/lib/utils/t2s";
 import { LandscapePlayer } from "@/components/LandscapePlayer";
+import { beginArmCut, notifyArmReady } from "@/lib/vinyl-arm";
 
 /**
  * 播放页展开/收起动画时长，必须与容器上的 `duration-[420ms]` 保持一致。
@@ -65,108 +68,13 @@ import { LandscapePlayer } from "@/components/LandscapePlayer";
 const PLAYER_TRANSITION_MS = 420;
 
 /**
- * 主题色背景：canvas 逐像素绘制 + 像素级随机抖动（dither）。
- *
- * 为什么不能靠 CSS 渐变：一个 2670px 高的深色渐变，总落差往往只有 80 级左右，
- * 平均每行只降 0.03 级——也就是**每 30 行才跳 1 级**。斜率越平缓，8bit 量化
- * 台阶越宽：屏幕上就是一条 8dp 高的横向色带，一屏能出现十几条，读起来就是
- * 「好几层」。加色标、调曲线只会让台阶重新排列，治不了根。
- *
- * 抖动必须是二维的：一维（只沿 y 做 Bayer）只能在 16 行内平均，量化边界处
- * 仍然会形成 16 行高的块，横带照旧。这里每个物理像素独立取随机值，让边界
- * 处的相邻像素各取上下两级、按比例混合，视觉上就是均匀的细颗粒，横带消失。
+ * 主题色背景：canvas 逐像素绘制 + 像素级随机抖动（dither），像素合成在 Worker 中执行
+ * （见 lib/theme-background.ts & lib/cover-color-client.ts），避免主线程卡死唱臂动画。
  *
  * 必须用真 `<canvas>` 元素而不是 `background-image`：WebView 会把背景图先缩放
  * 到 CSS 尺寸（400×890）再按 dpr 放大，抖动被 3 倍下采样平均掉，等于白做。
  * canvas 的 backing store 就是设备像素，1:1 绘制，抖动原样保留。
  */
-const BG_GLOW_STEPS = 64;
-const BG_DARK_MAX = 0.55;
-/** 浅色底只做极轻的底部压暗：压到 55% 会把浅色渐变直接拉成深色 */
-const BG_LIGHT_DARK_MAX = 0.05;
-
-function clampByte(v: number) {
-  return v < 0 ? 0 : v > 255 ? 255 : Math.round(v);
-}
-
-function drawThemeBackground(
-  canvas: HTMLCanvasElement,
-  colors: SodaColors,
-  darkenMax: number = BG_DARK_MAX
-) {
-  const W = canvas.width;
-  const H = canvas.height;
-  if (W <= 0 || H <= 0) return;
-  const ctx = canvas.getContext("2d", { alpha: false });
-  if (!ctx) return;
-
-  const img = ctx.createImageData(W, H);
-  const data = img.data;
-
-  const [tr, tg, tb] = colors.top;
-  const [br, bg, bb] = colors.bottom;
-  const [dr, dg, db] = colors.dominant;
-  const l = srgbToLab(colors.dominant)[0];
-  // 亮主色（白底封面）若按固定透明度叠加会把顶部糊成一片，白字和图标直接失读
-  const glowAlpha = l > 65 ? 0.12 : l > 45 ? 0.22 : 0.32;
-
-  // 光晕横向曲线按 64 段采样、逐像素线性插值：省掉 W×H 次 sqrt，
-  // 64 段在 1200px 上的折线误差远小于 1 级，看不出竖纹。
-  const alphaTab = new Float32Array(BG_GLOW_STEPS);
-  const uScale = (BG_GLOW_STEPS - 1) / (W - 1);
-
-  // xorshift32：每像素一次的伪随机，比 Math.random 快一个量级
-  let seed = 0x9e3779b9 | 0;
-
-  for (let y = 0; y < H; y++) {
-    const t = y / (H - 1);
-    const baseR = tr + (br - tr) * t;
-    const baseG = tg + (bg - tg) * t;
-    const baseB = tb + (bb - tb) * t;
-
-    // 顶部径向光晕：中心 (0.5, -0.20)，半径 (1.30, 1.20)，终点在元素外
-    const dy = (t + 0.2) / 1.2;
-    const dy2 = dy * dy;
-    for (let j = 0; j < BG_GLOW_STEPS; j++) {
-      const dx = (j / (BG_GLOW_STEPS - 1) - 0.5) / 1.3;
-      let s = Math.sqrt(dx * dx + dy2);
-      if (s > 1) s = 1;
-      alphaTab[j] = glowAlpha * (1 - s);
-    }
-
-    // 压暗：底部压到 darkenMax，斜率恒定（浅色底几乎不压）
-    const darken = 1 - darkenMax * t;
-
-    const rowOffset = y * W * 4;
-    for (let x = 0; x < W; x++) {
-      const u = x * uScale;
-      const i0 = u | 0;
-      const f = u - i0;
-      const a =
-        i0 + 1 < BG_GLOW_STEPS
-          ? alphaTab[i0] + (alphaTab[i0 + 1] - alphaTab[i0]) * f
-          : alphaTab[i0];
-
-      const r = (baseR + (dr - baseR) * a) * darken;
-      const g = (baseG + (dg - baseG) * a) * darken;
-      const b = (baseB + (db - baseB) * a) * darken;
-
-      seed ^= seed << 13;
-      seed ^= seed >>> 17;
-      seed ^= seed << 5;
-      // ±0.5 级：刚好足以把相位在整数边界附近的量化台阶打散
-      const n = ((seed >>> 0) / 4294967296 - 0.5) * 1.6;
-
-      const i = rowOffset + x * 4;
-      data[i] = clampByte(r + n);
-      data[i + 1] = clampByte(g + n);
-      data[i + 2] = clampByte(b + n);
-      data[i + 3] = 255;
-    }
-  }
-
-  ctx.putImageData(img, 0, 0);
-}
 
 /** CSS 兜底：canvas 首帧还没画出来时垫在下面，颜色算法与 canvas 一致 */
 function fallbackThemeStyle(colors: SodaColors): React.CSSProperties {
@@ -198,6 +106,7 @@ const BackgroundLayer = memo(
     mode,
     photoUrl,
     isLight = false,
+    active = true,
   }: {
     colors: SodaColors | null;
     coverUrl: string | null;
@@ -205,6 +114,8 @@ const BackgroundLayer = memo(
     photoUrl: string | null;
     /** 浅色主题下的浅色底：渐变已在取色阶段抬亮，这里不再压暗 */
     isLight?: boolean;
+    /** 全屏页收起时不合成全屏像素，避免后台切歌空耗内存与 Worker */
+    active?: boolean;
   }) => {
     const showThemeColor = mode === "theme" && !!colors;
     const showCoverMask = mode === "cover" && coverUrl;
@@ -216,8 +127,8 @@ const BackgroundLayer = memo(
      * 屏幕上是单一元素，不存在任何「层的边界」。
      *
      * 画布尺寸取 CSS 尺寸 × dpr，等于设备像素数，绘制 1:1，抖动不会被缩放平滑掉。
-     * 放在 rAF 里画，避免阻塞打开播放页的过渡动画；这之前容器上的 CSS 渐变垫着，
-     * 颜色算法一致，看不出跳变。
+     * 像素合成在 Worker 里算，主线程只做一次 putImageData，避免切歌时阻塞唱臂动画；
+     * 这之前容器上的 CSS 渐变垫着，颜色算法一致，看不出跳变。
      */
     const fallbackStyle = useMemo(
       () => (showThemeColor && colors ? fallbackThemeStyle(colors) : undefined),
@@ -226,9 +137,11 @@ const BackgroundLayer = memo(
 
     useEffect(() => {
       const canvas = canvasRef.current;
-      if (!canvas || !showThemeColor || !colors) return;
+      if (!active || !canvas || !showThemeColor || !colors) return;
       let raf = 0;
+      let cancelled = false;
       const paint = () => {
+        if (cancelled) return;
         const dpr = window.devicePixelRatio || 1;
         const cssW = canvas.clientWidth;
         const cssH = canvas.clientHeight;
@@ -236,17 +149,29 @@ const BackgroundLayer = memo(
           raf = requestAnimationFrame(paint);
           return;
         }
-        canvas.width = Math.round(cssW * dpr);
-        canvas.height = Math.round(cssH * dpr);
-        drawThemeBackground(
-          canvas,
+        const width = Math.round(cssW * dpr);
+        const height = Math.round(cssH * dpr);
+        const darkenMax = isLight ? BG_LIGHT_DARK_MAX : BG_DARK_MAX;
+        void renderThemeBackgroundOffThread(
+          width,
+          height,
           colors,
-          isLight ? BG_LIGHT_DARK_MAX : BG_DARK_MAX
-        );
+          darkenMax
+        ).then((pixels) => {
+          if (cancelled || !pixels.length) return;
+          const ctx = canvas.getContext("2d", { alpha: false });
+          if (!ctx) return;
+          canvas.width = width;
+          canvas.height = height;
+          ctx.putImageData(new ImageData(pixels, width, height), 0, 0);
+        });
       };
       raf = requestAnimationFrame(paint);
-      return () => cancelAnimationFrame(raf);
-    }, [colors, showThemeColor, isLight]);
+      return () => {
+        cancelled = true;
+        cancelAnimationFrame(raf);
+      };
+    }, [active, colors, showThemeColor, isLight]);
 
     return (
       <div
@@ -255,6 +180,28 @@ const BackgroundLayer = memo(
           isLight ? "bg-[#eef2f5]" : "bg-zinc-950"
         )}
       >
+        {/*
+          兜底背景层放最底下：它以前是最后一个子节点、盖在照片/封面之上，
+          切换背景的 1 秒淡出期间会有一层深色压在上面，刚选完照片看起来就是黑的。
+        */}
+        <div
+          className={cn(
+            "absolute inset-0 transition-opacity duration-1000",
+            showThemeColor || showCoverMask || showPhoto
+              ? "opacity-0"
+              : "opacity-100"
+          )}
+        >
+          <div className="absolute inset-0 bg-linear-to-b from-zinc-900 via-zinc-950 to-black" />
+          <div
+            className="absolute top-0 left-1/2 -translate-x-1/2 w-full max-w-2xl h-[60vh] opacity-30 pointer-events-none"
+            style={{
+              background:
+                "radial-gradient(circle at 50% 0%, rgba(255,255,255,0.08) 0%, transparent 70%)",
+            }}
+          />
+        </div>
+
         {/* 动态颜色层：主渐变 + 光晕 + 压暗 + dither 已合成在同一张图里 */}
         <div
           className={cn(
@@ -272,29 +219,30 @@ const BackgroundLayer = memo(
           )}
         </div>
 
-        {/* 封面遮罩层 */}
+        {/* 封面遮罩层：仅在模糊封面模式挂载图片，避免其他模式下后台解码大图与 blur-3xl */}
         <div
           className={cn(
             "absolute inset-0 transition-opacity duration-1000",
             showCoverMask ? "opacity-100" : "opacity-0"
           )}
         >
-          {coverUrl && (
+          {showCoverMask && (
             <img
               src={coverUrl}
               alt=""
               aria-hidden="true"
-              className="absolute inset-[-32px] h-[calc(100%+64px)] w-[calc(100%+64px)] object-cover blur-3xl scale-110"
+              className="absolute inset-[-32px] h-[calc(100%+64px)] w-[calc(100%+64px)] object-cover blur-3xl scale-110 will-change-transform"
             />
           )}
           <div className="absolute inset-0 bg-black/60" />
           <div className="absolute inset-0 bg-linear-to-b from-black/10 via-zinc-950/20 to-black/60" />
         </div>
 
-        {/* 自定义照片层：压暗 + 上下渐隐，保证白色文字/控件可读 */}
+        {/* 自定义照片层：压暗 + 上下渐隐，保证白色文字/控件可读。
+            这里淡入比另外两层快：选完图立即看到结果，不要先黑一秒。 */}
         <div
           className={cn(
-            "absolute inset-0 transition-opacity duration-1000",
+            "absolute inset-0 transition-opacity duration-300",
             showPhoto ? "opacity-100" : "opacity-0"
           )}
         >
@@ -308,25 +256,6 @@ const BackgroundLayer = memo(
           )}
           <div className="absolute inset-0 bg-black/40" />
           <div className="absolute inset-0 bg-linear-to-b from-black/25 via-transparent to-black/60" />
-        </div>
-
-        {/* 兜底背景层 */}
-        <div
-          className={cn(
-            "absolute inset-0 transition-opacity duration-1000",
-            showThemeColor || showCoverMask || showPhoto
-              ? "opacity-0"
-              : "opacity-100"
-          )}
-        >
-          <div className="absolute inset-0 bg-linear-to-b from-zinc-900 via-zinc-950 to-black" />
-          <div
-            className="absolute top-0 left-1/2 -translate-x-1/2 w-full max-w-2xl h-[60vh] opacity-30 pointer-events-none"
-            style={{
-              background:
-                "radial-gradient(circle at 50% 0%, rgba(255,255,255,0.08) 0%, transparent 70%)",
-            }}
-          />
         </div>
       </div>
     );
@@ -427,39 +356,96 @@ export function FullScreenPlayer({
    * 自己转回去了（见 usePlayerSwipeGestures）。再来一遍荡开等于动画重播。
    */
   const prevTrackIdRef = useRef<string | null>(currentTrack?.id ?? null);
-  const [armAway, setArmAway] = useState(false);
+  /** 切歌前的位置，用来判断按钮切的是上一首还是下一首，决定封面从哪边滑入 */
+  const prevIndexRef = useRef(currentIndex);
+  /** 正在播放的封面/唱臂容器入场动画：连续切歌时先收掉上一段 */
+  const coverEntryRef = useRef<Animation[]>([]);
+  const counterEntryRef = useRef<Animation[]>([]);
+
   useEffect(() => {
     const id = currentTrack?.id ?? null;
     const prev = prevTrackIdRef.current;
+    const prevIndex = prevIndexRef.current;
     prevTrackIdRef.current = id;
+    prevIndexRef.current = currentIndex;
     // 首次挂载、清空队列、同一首歌都不触发
     if (prev === null || id === null || prev === id) return;
-    // 横滑切歌：唱臂的抬臂/回落已由手势层演完，这里不再补一遍荡开动画。
-    // （残留的 armAway 状态自有 320ms 定时器收尾，effect 里不碰 state）
+    // 横滑切歌：封面入场和唱臂抬臂/回落已由手势层演完，这里不再补一遍
     if (consumeSwipeArmCut()) return;
     if (window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) return;
 
-    // 推到下一帧再切状态：让新封面先渲染出来，唱臂随后荡开；
-    // 也避免在 effect 同步调用 setState 触发级联渲染。
-    //
-    // 这里只负责给 VinylCover 一个「开始让位」的上升沿，抬臂→过冲→停住→落针
-    // 那一整条动画由 VinylCover 自己播（760ms，见 ARM_CUT_DURATION）。
-    // 320ms 后复位是因为下一次切歌还得再有一个上升沿；复位早于动画结束不影响
-    // 画面——动画期间 transform 由 WAAPI 覆盖，复位只是改了 style 上的稳态角。
-    let timer = 0;
-    const raf = requestAnimationFrame(() => {
-      setArmAway(true);
-      timer = window.setTimeout(() => setArmAway(false), 320);
-    });
-    return () => {
-      cancelAnimationFrame(raf);
-      window.clearTimeout(timer);
-      // 连续切歌时上一次的定时器会被清掉，armAway 会停在 true：
-      // 新一次 setArmAway(true) 就不构成状态变化，VinylCover 收不到信号，
-      // 表现是「连点下一首，唱臂只在第一下荡开」。所以清理时必须先复位。
-      setArmAway(false);
+    const direction =
+      currentIndex === (prevIndex + 1) % Math.max(queue.length, 1) ? 1 : -1;
+    const offset = Math.round((window.innerWidth || 360) * 0.5) * direction;
+
+    /**
+     * 按钮切歌的封面入场：用 WAAPI 直接在 DOM 上跑，不经过 React state。
+     *
+     * 之前用 setEntrySnap + 三帧 rAF 切 CSS transition，state 是异步渲染的，
+     * 偶尔某一帧过渡还没生效就把位移归零，封面「滑出去又闪回来」—— 用户看到
+     * 的黑影就是这中间露出的背景。WAAPI 一步到位，没有中间帧竞态。
+     * 唱臂容器同步反向平移，唱臂保持在屏幕原位（与横滑一致）。
+     */
+    const cover = coverTransformRef.current;
+    const counter = tonearmTransformRef.current;
+    coverEntryRef.current.forEach((anim) => anim.cancel());
+    coverEntryRef.current = [];
+    counterEntryRef.current.forEach((anim) => anim.cancel());
+    counterEntryRef.current = [];
+    cover?.getAnimations?.().forEach((anim) => anim.cancel());
+    counter?.getAnimations?.().forEach((anim) => anim.cancel());
+    // 先清掉上一次手势可能残留的 inline 位移，动画结束时才能干净落到 0
+    if (cover) cover.style.translate = "";
+    if (counter) counter.style.translate = "";
+    const entryOptions: KeyframeAnimationOptions = {
+      duration: 320,
+      easing: "cubic-bezier(0.22, 1, 0.36, 1)",
     };
-  }, [currentTrack?.id]);
+    if (cover && typeof cover.animate === "function") {
+      const entry = cover.animate(
+        [{ translate: `${offset}px` }, { translate: "0px" }],
+        entryOptions
+      );
+      coverEntryRef.current.push(entry);
+      // 动画结束把 inline 位移清干净：fill:none 时元素会回到 inline 值，
+      // 若上次横滑残留了非零 translate，不清就会在结束瞬间跳一下。
+      entry.finished
+        .then(() => {
+          cover.style.translate = "";
+          coverEntryRef.current = coverEntryRef.current.filter(
+            (a) => a !== entry
+          );
+        })
+        .catch(() => {});
+    }
+    if (counter && typeof counter.animate === "function") {
+      counterEntryRef.current.forEach((anim) => anim.cancel());
+      counterEntryRef.current = [];
+      const entry = counter.animate(
+        [{ translate: `${-offset}px` }, { translate: "0px" }],
+        entryOptions
+      );
+      counterEntryRef.current.push(entry);
+      entry.finished
+        .then(() => {
+          counter.style.translate = "";
+          counterEntryRef.current = counterEntryRef.current.filter(
+            (a) => a !== entry
+          );
+        })
+        .catch(() => {});
+    }
+
+    /**
+     * 唱臂切歌命令：抬臂到暂停位后停住，等音源可播 + 封面解码两路信号到齐
+     * 才落针。控制器只在 DOM 上跑动画，isPlaying / isLoading / 网络重试
+     * 这些 React 状态的起伏都碰不到它。
+     *
+     * 暂停态起手时唱臂本来就在 -40°，控制器会跳过抬臂、直接等就绪后落下，
+     * 不会出现「先往上滑一下再下来」。无封面曲目不等封面信号。
+     */
+    beginArmCut({ hasCover: Boolean(currentTrack?.pic_id) });
+  }, [currentTrack?.id, currentTrack?.pic_id, currentIndex, queue.length]);
 
   const [isCoverPreviewOpen, setIsCoverPreviewOpen] = useState(false);
   const [isStyleMenuOpen, setIsStyleMenuOpen] = useState(false);
@@ -707,10 +693,11 @@ export function FullScreenPlayer({
    * 跟手写到 DOM 上的实时位移覆盖掉，既闪又卡。
    */
   const coverSlideStyle: React.CSSProperties = {
+    willChange: "translate",
     transition:
       swipe.isHorizDragging || swipe.slideSnap
         ? "none"
-        : "translate 320ms cubic-bezier(0.22, 1, 0.36, 1), scale 500ms",
+        : "translate 320ms cubic-bezier(0.22, 1, 0.36, 1)",
   };
 
   /**
@@ -759,6 +746,7 @@ export function FullScreenPlayer({
         mode={fullScreenBackgroundMode}
         photoUrl={customBackgroundImage}
         isLight={isLightTone}
+        active={isFullScreen}
       />
 
       {/* 横屏沉浸模式：独立组件，覆盖于普通布局之上 */}
@@ -958,13 +946,8 @@ export function FullScreenPlayer({
                 // 切歌加载期间旧音轨暂停会把 isPlaying 翻成 false，如果这时把稳态角
                 // 当「暂停」处理（-40°），唱臂会在落针动画结束的一瞬间被拽到半空。
                 // 加载中仍然算「在放这张唱片」，稳住 -4°，让动画自己演完。
-                armState={
-                  armAway
-                    ? "away"
-                    : isPlaying || isLoading
-                      ? "playing"
-                      : "paused"
-                }
+                isLoading={isLoading}
+                onCoverReady={() => notifyArmReady("cover")}
                 tonearmContainerStyle={tonearmCounterStyle}
                 tonearmContainerRef={tonearmTransformRef}
                 tonearmArmRef={tonearmArmRef}
@@ -1002,6 +985,7 @@ export function FullScreenPlayer({
                 previewOpen={isCoverPreviewOpen}
                 onPreviewOpenChange={setIsCoverPreviewOpen}
                 crossfade
+                onLoad={() => notifyArmReady("cover")}
               />
             )}
           </div>
@@ -1082,7 +1066,12 @@ export function FullScreenPlayer({
                   onNavigate={() => {
                     onClose();
                   }}
-                  onOpenPlayerStyle={() => setIsStyleMenuOpen(true)}
+                  onOpenPlayerStyle={() => {
+                    // 风格改的是封面/盘面：从歌词页进来时先切回播放器封面，
+                    // 否则面板开着但看不到效果
+                    setShowLyrics(false);
+                    setIsStyleMenuOpen(true);
+                  }}
                   onOpenLyricStyle={() => {
                     // 从「更多」菜单进歌词调整：先切到歌词页，再弹面板
                     setShowLyrics(true);

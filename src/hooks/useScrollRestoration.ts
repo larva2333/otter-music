@@ -19,11 +19,15 @@ const positions = new Map<string, number>();
 
 function scrollers(): HTMLElement[] {
   if (typeof document === "undefined") return [];
-  // 跳过被隐藏（display:none）的容器：歌单页的四个 type 面板是常驻的，
-  // 隐藏面板的 scrollTop 恒读 0，混进来会把「第几个容器」的记账错位
+  // 跳过被隐藏（display:none）以及保活在屏外（data-page-active="false"）的容器：
+  // 隐藏/离屏面板不参与当前页面的滚动位置记账与恢复。
   return Array.from(
     document.querySelectorAll<HTMLElement>("[data-page-scroll]")
-  ).filter((el) => el.getClientRects().length > 0);
+  ).filter(
+    (el) =>
+      el.getClientRects().length > 0 &&
+      !el.closest('[data-page-active="false"]')
+  );
 }
 
 function keyOf(pathname: string, index: number) {
@@ -50,10 +54,12 @@ export function clearRememberedScroll(pathname?: string) {
 export function useScrollRestoration(
   pathname: string,
   navigationType: "POP" | "PUSH" | "REPLACE",
-  preserveOnPush = false
+  preserveOnPush = false,
+  enabled = true
 ) {
   // 记录：capture 阶段监听 document，内层滚动容器的事件也会冒到这里
   useEffect(() => {
+    if (!enabled) return;
     let frame = 0;
     const onScroll = (event: Event) => {
       const target = event.target;
@@ -76,9 +82,10 @@ export function useScrollRestoration(
       document.removeEventListener("scroll", onScroll, true);
       if (frame) cancelAnimationFrame(frame);
     };
-  }, [pathname]);
+  }, [pathname, enabled]);
 
   useLayoutEffect(() => {
+    if (!enabled) return;
     // 底部 tab 虽然通常是 PUSH，但页面本身保活，位置也应该保留
     const restore = navigationType === "POP" || preserveOnPush;
 
@@ -127,5 +134,5 @@ export function useScrollRestoration(
       if (raf) cancelAnimationFrame(raf);
       cleanup();
     };
-  }, [pathname, navigationType, preserveOnPush]);
+  }, [pathname, navigationType, preserveOnPush, enabled]);
 }

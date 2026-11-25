@@ -105,9 +105,33 @@ export interface FormattedComment {
   };
 }
 
-function formatTime(time: number): string {
-  if (!time) return "";
-  const d = new Date(time);
+/** 允许展示的最早时间（2000-01-01）；早于它的基本都是拿不到时间时的脏值 */
+const MIN_COMMENT_MS = Date.UTC(2000, 0, 1);
+
+/**
+ * 评论时间戳 → yyyy.MM.dd。拿不到有效时间时返回空串，UI 直接不渲染。
+ *
+ * 各平台评论接口的时间字段并不可靠：可能缺失、为 0、给的是秒而不是毫秒，
+ * 或者是极小的脏值。直接丢给 new Date() 就会显示成 1970 年——那不是评论
+ * 的真实时间，宁可不显示。这里统一做单位归一 + 合理范围校验。
+ */
+export function formatCommentTime(
+  value: number | string | null | undefined,
+  unit: "ms" | "s" = "ms"
+): string {
+  if (value === null || value === undefined || value === "") return "";
+  const raw = Number(value);
+  if (!Number.isFinite(raw) || raw <= 0) return "";
+
+  // 按各平台标注的单位换算成毫秒，同时兼容接口偶发给出另一种单位
+  let ms = unit === "s" ? raw * 1000 : raw;
+  if (unit === "ms" && ms < 1e11) ms *= 1000;
+  if (unit === "s" && ms >= 1e14) ms /= 1000;
+
+  // 1970~1999 与明显超前的时间都视为无效
+  if (ms < MIN_COMMENT_MS || ms > Date.now() + 24 * 60 * 60 * 1000) return "";
+
+  const d = new Date(ms);
   const pad = (n: number) => String(n).padStart(2, "0");
   return `${d.getFullYear()}.${pad(d.getMonth() + 1)}.${pad(d.getDate())}`;
 }
@@ -127,7 +151,7 @@ export function formatComment(item: NeteaseComment): FormattedComment {
     id: item.commentId,
     text: applyEmoji(item.content || ""),
     time: item.time || 0,
-    timeStr: formatTime(item.time),
+    timeStr: formatCommentTime(item.time),
     location: item.ipLocation?.location,
     userName: item.user?.nickname || "",
     avatar: item.user?.avatarUrl,

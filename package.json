@@ -1,7 +1,7 @@
 {
   "name": "otter-music",
   "private": true,
-  "version": "2.7.24",
+  "version": "2.7.25",
   "type": "module",
   "workspaces": [
     "shared",

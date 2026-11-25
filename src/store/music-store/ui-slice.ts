@@ -59,8 +59,6 @@ export interface UiSlice {
   /** 黑胶盘面颜色（hex，或 "transparent" 表示透明） */
   vinylColor: string;
   showSourceBadge: boolean;
-  /** 歌曲列表中给正在播放的歌曲整行加背景高亮 */
-  highlightCurrentTrack: boolean;
   /** 播放条是否显示封面取色的渐变背景；关闭时回退卡片底色 */
   showBarBackground: boolean;
   /** 浅色主题下播放条/播放页是否使用浅色背景；关闭时按深色取色 */
@@ -104,7 +102,6 @@ export interface UiSlice {
   setCoverStyle: (style: CoverStyle) => void;
   setVinylColor: (color: string) => void;
   setShowSourceBadge: (show: boolean) => void;
-  setHighlightCurrentTrack: (highlight: boolean) => void;
   setShowBarBackground: (show: boolean) => void;
   setLightThemeLightBackground: (enable: boolean) => void;
   setLyricAlign: (align: LyricAlign) => void;
@@ -142,7 +139,6 @@ export const createUiSlice: StateCreator<MusicState, [], [], UiSlice> = (
   coverStyle: "original",
   vinylColor: DEFAULT_VINYL_COLOR,
   showSourceBadge: true,
-  highlightCurrentTrack: true,
   showBarBackground: true,
   lightThemeLightBackground: true,
   lyricAlign: "center",
@@ -199,8 +195,6 @@ export const createUiSlice: StateCreator<MusicState, [], [], UiSlice> = (
   setCoverStyle: (coverStyle) => set({ coverStyle }),
   setVinylColor: (vinylColor) => set({ vinylColor }),
   setShowSourceBadge: (showSourceBadge) => set({ showSourceBadge }),
-  setHighlightCurrentTrack: (highlightCurrentTrack) =>
-    set({ highlightCurrentTrack }),
   setShowBarBackground: (showBarBackground) => set({ showBarBackground }),
   setLightThemeLightBackground: (lightThemeLightBackground) =>
     set({ lightThemeLightBackground }),

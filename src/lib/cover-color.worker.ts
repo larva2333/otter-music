@@ -15,29 +15,58 @@ import {
   type ColorMode,
   type SodaColors,
 } from "@/lib/utils/soda-color";
+import { renderThemeBackgroundPixels } from "@/lib/theme-background";
 
 export interface CoverColorRequest {
   id: number;
+  type?: "colors";
   /** 96×96 canvas 的 RGBA 缓冲 */
   pixels: Uint8ClampedArray;
   mode: ColorMode;
 }
 
+export interface ThemeBackgroundRequest {
+  id: number;
+  type: "theme-bg";
+  width: number;
+  height: number;
+  colors: SodaColors;
+  darkenMax: number;
+}
+
+export type WorkerRequest = CoverColorRequest | ThemeBackgroundRequest;
+
 export interface CoverColorResponse {
   id: number;
   colors?: SodaColors;
+  buffer?: ArrayBuffer;
   error?: string;
 }
 
 const scope = self as unknown as {
-  onmessage: ((e: MessageEvent<CoverColorRequest>) => void) | null;
-  postMessage: (message: CoverColorResponse) => void;
+  onmessage: ((e: MessageEvent<WorkerRequest>) => void) | null;
+  postMessage: (message: CoverColorResponse, transfer?: Transferable[]) => void;
 };
 
 scope.onmessage = (event) => {
-  const { id, pixels, mode } = event.data;
+  const data = event.data;
+  const { id } = data;
   try {
-    scope.postMessage({ id, colors: extractFromPixels(pixels, mode) });
+    if (data.type === "theme-bg") {
+      const pixels = renderThemeBackgroundPixels(
+        data.width,
+        data.height,
+        data.colors,
+        data.darkenMax
+      );
+      const buffer = pixels.buffer;
+      scope.postMessage({ id, buffer }, [buffer]);
+      return;
+    }
+    scope.postMessage({
+      id,
+      colors: extractFromPixels(data.pixels, data.mode),
+    });
   } catch (err) {
     scope.postMessage({
       id,

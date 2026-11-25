@@ -8,13 +8,11 @@ import { useUrlCacheStore, buildUrlCacheKey } from "@/store/url-cache-store";
 import { buildDownloadKey } from "@/lib/utils/download";
 import type { MusicSource } from "@/types/music";
 import toast from "react-hot-toast";
-import { handleAutoMatch } from "@/lib/audio-match";
 import { logger } from "@/lib/logger";
 import { resolveTrackUrl } from "@/lib/audio-resolver";
 import { resolveViaLxPlayback } from "@/lib/imported-sources/lx-playback";
 import { resolveViaHigequFallback } from "@/lib/higequ/higequ-fallback";
 import { resolveViaCrossPlatform } from "@/lib/cross-platform-fallback";
-import { isVipOnlyTrack } from "@/lib/playback-access";
 import { muteAndPause, restoreVolume } from "@/lib/audio-fade";
 import { IS_NATIVE } from "@/lib/api/config";
 
@@ -40,6 +38,35 @@ function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T | null> {
         clearTimeout(timer);
         resolve(null);
       });
+  });
+}
+
+/**
+ * 并发兜底：第一个拿到结果的胜出；全部落空才返回 null。
+ * 某个源先返回 null 不代表失败结束，另一个源可能还在取链。
+ */
+async function firstFallbackResult<T>(
+  tasks: Promise<T | null>[]
+): Promise<T | null> {
+  return new Promise((resolve) => {
+    let pending = tasks.length;
+    let settled = false;
+    const finish = (result: T | null) => {
+      if (settled) return;
+      if (result) {
+        settled = true;
+        resolve(result);
+        return;
+      }
+      pending -= 1;
+      if (pending === 0) {
+        settled = true;
+        resolve(null);
+      }
+    };
+    tasks.forEach((task) => {
+      void task.then(finish, () => finish(null));
+    });
   });
 }
 
@@ -407,118 +434,124 @@ export function useAudioTrackLoader(
           }
         }
 
-        // 洛雪也没接住：按洛雪桌面版 findMusic 的思路跨平台搜同曲换链。
-        // 并发搜用户启用的多个平台、歌名+歌手+专辑严格校验（挡翻唱），
-        // 再并发取链探活，只换播放地址不动队列。放在嗨歌曲之前——命中率高
-        // 且严格，避免嗨歌曲那种同名曲（可能翻唱）抢先接管。
-        // 尊重「自动换源」总开关：关掉就说明用户不想自动替换播放来源。
-        if (
+        // 跨平台同曲与嗨歌曲同名曲一起并发搜，谁先拿到完整可播直链谁胜出。
+        // 两者都只换播放地址、不动队列曲目；「自动换源」总开关同时管住它们。
+        type FallbackWinner =
+          | { kind: "cross"; url: string; source: MusicSource }
+          | { kind: "higequ"; url: string };
+        const canFallback =
           getState().enableAutoMatch &&
           source !== "local" &&
           source !== "podcast" &&
-          crossPlatformFallbackTrackRef.current !== trackKey
-        ) {
+          !isStale();
+        const fallbackTasks: Promise<FallbackWinner | null>[] = [];
+
+        if (canFallback && crossPlatformFallbackTrackRef.current !== trackKey) {
           crossPlatformFallbackTrackRef.current = trackKey;
-          toast("正在跨平台寻找同曲的可播音源…", {
-            id: "cross-platform-fallback",
-            icon: "🎵",
-          });
-          const crossResult = await withTimeout(
-            resolveViaCrossPlatform(
-              currentTrack,
-              parseInt(quality, 10),
+          fallbackTasks.push(
+            withTimeout(
+              resolveViaCrossPlatform(
+                currentTrack,
+                parseInt(quality, 10),
+                CROSS_PLATFORM_FALLBACK_TIMEOUT
+              ),
               CROSS_PLATFORM_FALLBACK_TIMEOUT
-            ),
-            CROSS_PLATFORM_FALLBACK_TIMEOUT
+            ).then((result) =>
+              result
+                ? {
+                    kind: "cross" as const,
+                    url: result.url,
+                    source: result.track.source,
+                  }
+                : null
+            )
           );
-          if (
-            crossResult &&
-            !isStale() &&
-            crossResult.url !== remoteUrlRef.current
-          ) {
-            remoteUrlRef.current = crossResult.url;
-            const origin = {
-              via: "official" as const,
-              source: crossResult.track.source,
-            };
-            getState().setCurrentAudioOrigin(origin);
-            getState().recordTrackOrigin(currentTrack, origin);
-            try {
-              await play(crossResult.url);
-              toast.success(`已切换到${crossResult.track.source}音源播放`, {
-                id: "cross-platform-fallback",
-              });
-              return;
-            } catch (crossPlayError) {
-              logger.warn("useAudioTrackLoader", "跨平台换源播放仍失败", {
-                trackId,
-                source,
-                crossPlayError,
-              });
-            }
-          }
-          toast.dismiss("cross-platform-fallback");
         }
 
-        // 洛雪也没接住：用嗨歌曲搜同名曲换一条直链。它相对其他源稳定，
-        // 只换播放地址、不动队列曲目（和洛雪接管一致）。搜索+取链较慢，
-        // 放在洛雪之后、会员曲跨平台自动匹配之前。
-        // 尊重「自动换源」总开关和设置里嗨歌曲的启用状态：关掉其中之一
-        // 就说明用户不想要自动替换，不该在播放失败时偷偷再发搜索请求。
         const higequEnabled = getState().sourceConfigs.some(
           (c) => c.source === "higequ" && c.enabled && c.visible
         );
         if (
-          getState().enableAutoMatch &&
+          canFallback &&
           higequEnabled &&
-          source !== "local" &&
-          source !== "podcast" &&
           source !== "higequ" &&
           higequFallbackTrackRef.current !== trackKey
         ) {
           higequFallbackTrackRef.current = trackKey;
-          toast("官方链接不可播，正在用嗨歌曲找同名歌曲…", {
-            id: "higequ-fallback",
-            icon: "🎵",
-          });
-          const higequResult = await withTimeout(
-            resolveViaHigequFallback(currentTrack, 4000),
-            HIGEQU_FALLBACK_TIMEOUT
+          fallbackTasks.push(
+            withTimeout(
+              resolveViaHigequFallback(currentTrack, 4000),
+              HIGEQU_FALLBACK_TIMEOUT
+            ).then((result) =>
+              result ? { kind: "higequ" as const, url: result.url } : null
+            )
           );
-          if (
-            higequResult &&
-            !isStale() &&
-            higequResult.url !== remoteUrlRef.current
-          ) {
-            remoteUrlRef.current = higequResult.url;
-            const origin = { via: "higequ" as const, source };
+        }
+
+        if (fallbackTasks.length > 0) {
+          toast("正在寻找可播的替代音源…", { id: "playback-fallback" });
+          const winner = await firstFallbackResult(fallbackTasks);
+          toast.dismiss("playback-fallback");
+          if (isStale()) return;
+
+          if (winner && winner.url !== remoteUrlRef.current) {
+            remoteUrlRef.current = winner.url;
+            const origin =
+              winner.kind === "cross"
+                ? { via: "official" as const, source: winner.source }
+                : { via: "higequ" as const, source };
             getState().setCurrentAudioOrigin(origin);
             getState().recordTrackOrigin(currentTrack, origin);
             try {
-              await play(higequResult.url);
-              toast.success("嗨歌曲已接管播放", { id: "higequ-fallback" });
+              await play(winner.url);
+              toast.success(
+                winner.kind === "cross"
+                  ? `已切换到${winner.source}音源播放`
+                  : "嗨歌曲已接管播放",
+                { id: "playback-fallback" }
+              );
               return;
-            } catch (higequError) {
-              logger.warn("useAudioTrackLoader", "嗨歌曲兜底播放仍失败", {
+            } catch (fallbackPlayError) {
+              logger.warn("useAudioTrackLoader", "替代音源播放仍失败", {
                 trackId,
                 source,
-                higequError,
+                fallbackPlayError,
               });
             }
           }
-          toast.dismiss("higequ-fallback");
         }
 
-        // 自动匹配容灾：只给会员曲跨平台换源。
-        // 免费歌在 QQ / 网易自己的源上就能播，整条替换成别家平台
-        // 反而会把列表里的曲目和音源标记一起改掉。
-        if (getState().enableAutoMatch && isVipOnlyTrack(currentTrack)) {
+        // 最后兜底：网易会员曲宁可放官方试听片段，也别直接跳歌。
+        // 只在「没会员导致官方被跳过」且替代音源全落空时走一次。
+        if (isVipSkip && currentTrack.source === "_netease" && !isStale()) {
           try {
-            if (await handleAutoMatch(currentTrack)) return;
-          } catch {
-            logger.warn("useAudioTrackLoader", "Auto match failed", {
+            const preview = await resolveTrackUrl(
+              currentTrack,
+              parseInt(quality, 10),
+              { forceRefresh: true, allowVipPreview: true }
+            );
+            if (
+              preview.url &&
+              preview.url !== remoteUrlRef.current &&
+              !isStale()
+            ) {
+              remoteUrlRef.current = preview.url;
+              fromLxRef.current = false;
+              if (preview.origin) {
+                getState().setCurrentAudioOrigin(preview.origin);
+                getState().recordTrackOrigin(currentTrack, preview.origin);
+              }
+              toast("无可用替代源，播放官方试听片段", {
+                id: "vip-preview-fallback",
+              });
+              await play(preview.url);
+              return;
+            }
+          } catch (previewError) {
+            logger.warn("useAudioTrackLoader", "网易试听兜底失败", {
               trackId,
               source,
+              previewError,
             });
           }
         }

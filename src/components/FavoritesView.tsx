@@ -15,8 +15,9 @@ import { createTrackFromUrl, deduplicateTracks } from "@/lib/utils/music";
 import { toastUtils } from "@/lib/utils/toast";
 import { exportPlaylist } from "@/lib/utils/playlist-backup";
 import { AddByUrlDrawer } from "./AddByUrlDrawer";
-import { useSwipeCategories } from "@/hooks/use-swipe-categories";
+import { usePagerSwipe } from "@/hooks/use-pager-swipe";
 import { useRootTabSwipe } from "@/hooks/use-root-tab-swipe";
+import { useIsRootTabActive } from "@/hooks/use-root-pager";
 import { useTabReclick } from "@/hooks/use-tab-reclick";
 import { useSearchBackClear } from "@/hooks/useSearchBackClear";
 
@@ -43,6 +44,8 @@ export function FavoritesView({
     Set<string> | undefined
   >();
   const rootRef = useRef<HTMLDivElement>(null);
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const isPageActive = useIsRootTabActive("favorites");
 
   // 搜索框聚焦时，返回键＝清空内容并收起键盘（一步到位），不退出到桌面
   const dismissSearch = useCallback(() => {
@@ -50,28 +53,29 @@ export function FavoritesView({
     setIsSearchFocused(false);
   }, []);
   useSearchBackClear({
+    enabled: isPageActive,
     focused: isSearchFocused,
     value: searchQuery,
     onClear: () => setSearchQuery(""),
     onDismiss: dismissSearch,
   });
 
-  // 喜欢页没有子类别：任意横滑都走链边界，由 useRootTabSwipe 决定落点
-  // （右滑 → 发现最后一个分类，左滑 → 歌单第一个 type）
-  useSwipeCategories(rootRef, {
-    ids: ["favorites"],
-    activeId: "favorites",
-    onChange: () => {},
-    onEdge: useRootTabSwipe("favorites"),
-  });
+  // 喜欢页没有子类别：任意横滑直接联动根级滑动链（右滑 → 发现最后一个分类，左滑 → 歌单第一个 type）
+  usePagerSwipe(
+    { viewportRef: rootRef, stageRef: rootRef },
+    {
+      count: 1,
+      index: 0,
+      onChange: () => {},
+      onEdge: useRootTabSwipe("favorites"),
+      rootTab: "favorites",
+      isPageActive,
+    }
+  );
 
   // 再次点击底部「喜欢」tab：回到顶部
-  // 注意不能滚 rootRef —— 它只是 flex 容器，真正滚动的是 MusicLayout 的
-  // [data-page-scroll]（rootRef 的祖先），scrollTo 打在上面才有反应
   useTabReclick("favorites", () => {
-    const scroller =
-      rootRef.current?.closest<HTMLElement>("[data-page-scroll]");
-    scroller?.scrollTo({ top: 0, behavior: "smooth" });
+    scrollRef.current?.scrollTo({ top: 0, behavior: "smooth" });
   });
 
   const filteredTracks = useMemo(
@@ -118,89 +122,96 @@ export function FavoritesView({
   };
 
   return (
-    <div ref={rootRef} className="flex flex-col h-full">
-      {/* Header：与侧滑预览一致——一行「小图标 + 标题」，下面一条整宽圆角搜索框 */}
-      <div className="flex items-center gap-2 px-5 pt-4 pb-3">
-        <Heart className="h-5 w-5 shrink-0 fill-current text-primary" />
-        <h2 className="text-base font-bold tracking-wide line-clamp-1">
-          我的喜欢
-        </h2>
-        <span className="shrink-0 text-xs text-muted-foreground">
-          {tracks.length} 首
-        </span>
-        <div className="ml-auto flex shrink-0 items-center gap-1">
-          <Button
-            onClick={() => onPlay(null)}
-            className="h-8 w-8 rounded-full p-0"
-            size="icon"
-            aria-label="播放全部"
-          >
-            <Play className="size-3.5 fill-current" />
-          </Button>
-
-          <PlaylistOperations
-            onDeduplicate={handleDeduplicate}
-            onExport={() => exportPlaylist("我喜欢的音乐", tracks)}
-            onAddByUrl={() => setIsAddByUrlOpen(true)}
-          />
-        </div>
-      </div>
-
-      <div className="px-5 pb-3">
-        <div className="relative">
-          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-          <Input
-            ref={searchInputRef}
-            placeholder="搜索..."
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            onFocus={() => setIsSearchFocused(true)}
-            onBlur={() => setIsSearchFocused(false)}
-            className={cn(
-              "h-9 w-full rounded-full pl-9 text-sm",
-              searchQuery && "pr-9"
-            )}
-          />
-          {/* 有内容时显示清除按钮，一键清空搜索词 */}
-          {searchQuery && (
-            <button
-              type="button"
-              onClick={() => {
-                setSearchQuery("");
-                searchInputRef.current?.focus();
-              }}
-              aria-label="清除搜索"
-              className="absolute right-2.5 top-1/2 flex h-5 w-5 -translate-y-1/2 items-center justify-center rounded-full bg-muted-foreground/20 text-muted-foreground transition-colors hover:bg-muted-foreground/30 hover:text-foreground"
+    <div ref={rootRef} className="h-full overflow-hidden">
+      <div
+        ref={scrollRef}
+        data-page-scroll=""
+        className="flex flex-col h-full overflow-y-auto scrollbar-hide pb-bottom-stack"
+      >
+        {/* Header：与侧滑预览一致——一行「小图标 + 标题」，下面一条整宽圆角搜索框 */}
+        <div className="flex shrink-0 items-center gap-2 px-5 pt-4 pb-3">
+          <Heart className="h-5 w-5 shrink-0 fill-current text-primary" />
+          <h2 className="text-base font-bold tracking-wide line-clamp-1">
+            我的喜欢
+          </h2>
+          <span className="shrink-0 text-xs text-muted-foreground">
+            {tracks.length} 首
+          </span>
+          <div className="ml-auto flex shrink-0 items-center gap-1">
+            <Button
+              onClick={() => onPlay(null)}
+              className="h-8 w-8 rounded-full p-0"
+              size="icon"
+              aria-label="播放全部"
             >
-              <X className="h-3 w-3" />
-            </button>
-          )}
-        </div>
-      </div>
+              <Play className="size-3.5 fill-current" />
+            </Button>
 
-      {/* List */}
-      <div className="flex-1 min-h-0">
-        <MusicTrackList
-          tracks={filteredTracks}
-          onPlay={(track) =>
-            onPlay(
-              track,
-              tracks.findIndex((t) => t.id === track.id)
-            )
-          }
-          currentTrackId={currentTrackId}
-          isPlaying={isPlaying}
-          playlistId="favorites"
-          onReorder={!searchQuery.trim() ? onReorder : undefined}
-          onRemove={handleRemove}
-          onBatchRemove={handleBatchRemove}
-          showCover
-          showItemRemove={false}
-          preselectedIds={dedupeSelectedIds}
-          onSelectionModeChange={(active) => {
-            if (!active) setDedupeSelectedIds(undefined);
-          }}
-        />
+            <PlaylistOperations
+              onDeduplicate={handleDeduplicate}
+              onExport={() => exportPlaylist("我喜欢的音乐", tracks)}
+              onAddByUrl={() => setIsAddByUrlOpen(true)}
+            />
+          </div>
+        </div>
+
+        <div className="shrink-0 px-5 pb-3">
+          <div className="relative">
+            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              ref={searchInputRef}
+              placeholder="搜索..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              onFocus={() => setIsSearchFocused(true)}
+              onBlur={() => setIsSearchFocused(false)}
+              className={cn(
+                "h-9 w-full rounded-full pl-9 text-sm",
+                searchQuery && "pr-9"
+              )}
+            />
+            {/* 有内容时显示清除按钮，一键清空搜索词 */}
+            {searchQuery && (
+              <button
+                type="button"
+                onClick={() => {
+                  setSearchQuery("");
+                  searchInputRef.current?.focus();
+                }}
+                aria-label="清除搜索"
+                className="absolute right-2.5 top-1/2 flex h-5 w-5 -translate-y-1/2 items-center justify-center rounded-full bg-muted-foreground/20 text-muted-foreground transition-colors hover:bg-muted-foreground/30 hover:text-foreground"
+              >
+                <X className="h-3 w-3" />
+              </button>
+            )}
+          </div>
+        </div>
+
+        {/* List */}
+        <div className="flex-1 min-h-0">
+          <MusicTrackList
+            tracks={filteredTracks}
+            scrollContainerRef={scrollRef}
+            onPlay={(track) =>
+              onPlay(
+                track,
+                tracks.findIndex((t) => t.id === track.id)
+              )
+            }
+            currentTrackId={currentTrackId}
+            isPlaying={isPlaying}
+            playlistId="favorites"
+            onReorder={!searchQuery.trim() ? onReorder : undefined}
+            onRemove={handleRemove}
+            onBatchRemove={handleBatchRemove}
+            showCover
+            showItemRemove={false}
+            preselectedIds={dedupeSelectedIds}
+            onSelectionModeChange={(active) => {
+              if (!active) setDedupeSelectedIds(undefined);
+            }}
+          />
+        </div>
       </div>
 
       <AddByUrlDrawer

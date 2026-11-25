@@ -28,6 +28,7 @@ import {
   normalizeText,
 } from "@/lib/utils/music-key";
 import { probeMediaDetail } from "@/lib/utils/media-probe";
+import { resolveViaLxPlayback } from "@/lib/imported-sources/lx-playback";
 import { logger } from "@/lib/logger";
 
 /** 搜索时每个平台取几条候选 */
@@ -77,24 +78,43 @@ export function isSameSong(track: MusicTrack, candidate: MusicTrack): boolean {
   return true;
 }
 
+/** 歌名+歌手一致，不校验专辑：严格候选全失败时的最后兜底 */
+export function isSameRecording(
+  track: MusicTrack,
+  candidate: MusicTrack
+): boolean {
+  return (
+    isNameMatch(track.name, candidate.name) &&
+    isArtistMatch(track.artist, candidate.artist)
+  );
+}
+
 /** 候选曲目取链 + 探活，返回第一个可播完整直链 */
 async function tryCandidate(
   candidate: MusicTrack,
-  quality: number
+  quality: number,
+  budgetMs = PER_SOURCE_TIMEOUT
 ): Promise<CrossPlatformFallbackResult | null> {
   const id = candidate.url_id || candidate.id;
   if (!id) return null;
 
-  const url = await withTimeout(
+  const timeout = Math.min(Math.max(budgetMs, 1), PER_SOURCE_TIMEOUT);
+  let url = await withTimeout(
     musicApi.getUrl(id, candidate.source, quality),
-    PER_SOURCE_TIMEOUT
+    timeout
   );
-  if (!url || !/^https?:\/\//.test(url)) return null;
+  if (!url || !/^https?:\/\//.test(url)) {
+    // 酷我等源的官方取链固定返回 null（需要签名），正常播放是靠洛雪脚本
+    // 补链的。自动兜底若不补这一步，明明手动换源能播的歌会被误判为无源。
+    const lx = await withTimeout(
+      resolveViaLxPlayback(candidate, quality),
+      timeout
+    );
+    url = lx && /^https?:\/\//.test(lx.url) ? lx.url : null;
+  }
+  if (!url) return null;
 
-  const detail = await withTimeout(
-    probeMediaDetail(url, 4000),
-    PER_SOURCE_TIMEOUT
-  );
+  const detail = await withTimeout(probeMediaDetail(url, 4000), timeout);
   if (!detail || detail.reachable !== "ok") {
     logger.warn(
       `跨平台换源链接不可播(${detail?.reachable ?? "timeout"})：${candidate.source} ${url.slice(0, 120)}`
@@ -108,6 +128,38 @@ async function tryCandidate(
     return null;
   }
   return { url, track: candidate };
+}
+
+/** 并发取链，谁先拿到完整可播直链谁胜出；全部落空返回 null */
+async function firstPlayable(
+  candidates: MusicTrack[],
+  quality: number,
+  deadline: number
+): Promise<CrossPlatformFallbackResult | null> {
+  if (candidates.length === 0) return null;
+  return new Promise((resolve) => {
+    let settled = false;
+    let pending = candidates.length;
+    const finish = (result: CrossPlatformFallbackResult | null) => {
+      if (settled) return;
+      if (result) {
+        settled = true;
+        resolve(result);
+        return;
+      }
+      pending -= 1;
+      if (pending === 0) {
+        settled = true;
+        resolve(null);
+      }
+    };
+    for (const candidate of candidates) {
+      const remaining = Math.max(1, deadline - Date.now());
+      void tryCandidate(candidate, quality, remaining).then(finish, () =>
+        finish(null)
+      );
+    }
+  });
 }
 
 /**
@@ -148,43 +200,35 @@ export async function resolveViaCrossPlatform(
       })
     );
 
-    // 严格筛同曲，按平台顺序去重（同一首曲可能多个平台都命中）
-    const candidates = searchResults
+    // 先按「歌名 + 歌手 + 专辑」严格筛同曲；专辑不一致的同名同歌手曲放到
+    // 第二梯队，只有严格候选全部取链失败才用。手动换源只校验歌名+歌手，
+    // 自动兜底不该比手动更苛刻（同一歌手同一首歌常因专辑版本不同被误杀）。
+    const sameRecording = searchResults
       .flat()
-      .filter((item) => isSameSong(track, item));
-    if (candidates.length === 0) {
-      logger.info("跨平台换源未找到严格匹配的同曲", { name: track.name });
+      .filter((item) => isSameRecording(track, item));
+    const strict = sameRecording.filter((item) => isSameSong(track, item));
+    const loose = sameRecording.filter((item) => !isSameSong(track, item));
+    if (sameRecording.length === 0) {
+      logger.info("跨平台换源未找到同曲", { name: track.name });
       return null;
     }
 
-    logger.info(`跨平台换源命中 ${candidates.length} 个候选，并发取链`, {
+    logger.info(`跨平台换源命中 ${sameRecording.length} 个候选，并发取链`, {
       name: track.name,
-      sources: candidates.map((c) => c.source),
+      sources: sameRecording.map((c) => c.source),
     });
 
-    // 并发取链：谁先拿到完整可播直链谁胜出，其余结果丢弃
-    return await new Promise((resolve) => {
-      let settled = false;
-      let pending = candidates.length;
+    const strictHit = await firstPlayable(strict, quality, deadline);
+    if (strictHit) return strictHit;
 
-      const finish = (result: CrossPlatformFallbackResult | null) => {
-        if (settled) return;
-        if (result) {
-          settled = true;
-          resolve(result);
-          return;
-        }
-        pending -= 1;
-        if (pending === 0) {
-          settled = true;
-          resolve(null);
-        }
-      };
-
-      for (const candidate of candidates) {
-        void tryCandidate(candidate, quality).then(finish, () => finish(null));
-      }
-    });
+    if (loose.length > 0 && Date.now() < deadline) {
+      logger.info("严格候选全部失败，退回同曲同歌手但专辑不同的候选", {
+        name: track.name,
+        sources: loose.map((c) => c.source),
+      });
+      return await firstPlayable(loose, quality, deadline);
+    }
+    return null;
   } catch (error) {
     logger.warn("跨平台换源失败", error as Error, {
       trackId: track.id,

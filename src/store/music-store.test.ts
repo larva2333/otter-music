@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { useMusicStore } from "./music-store";
+import { dedupeSourceConfigs, useMusicStore } from "./music-store";
 import { storeKey } from "./store-keys";
 import { idbStorage } from "@/lib/storage-adapter";
 import type { MusicTrack } from "@/types/music";
@@ -51,6 +51,17 @@ describe("MusicStore", () => {
   });
 
   describe("Settings", () => {
+    it("老数据里重复的酷我只保留一条，且优先留启用的那条", () => {
+      const deduped = dedupeSourceConfigs([
+        { source: "kuwo", enabled: false, visible: false },
+        { source: "higequ", enabled: true, visible: true },
+        { source: "kuwo", enabled: true, visible: true },
+      ]);
+
+      expect(deduped.map((c) => c.source)).toEqual(["kuwo", "higequ"]);
+      expect(deduped[0].enabled && deduped[0].visible).toBe(true);
+    });
+
     it("should use theme color background by default", () => {
       expect(useMusicStore.getState().fullScreenBackgroundMode).toBe("theme");
     });
@@ -85,17 +96,14 @@ describe("MusicStore", () => {
       expect(useMusicStore.getState().vinylColor).toBe("#0A0A0A");
     });
 
-    it("播放条背景 / 浅色背景 / 列表高亮开关默认开启且可切换", () => {
+    it("播放条背景 / 浅色背景开关默认开启且可切换", () => {
       expect(useMusicStore.getState().showBarBackground).toBe(true);
       expect(useMusicStore.getState().lightThemeLightBackground).toBe(true);
-      expect(useMusicStore.getState().highlightCurrentTrack).toBe(true);
 
       useMusicStore.getState().setShowBarBackground(false);
       useMusicStore.getState().setLightThemeLightBackground(false);
-      useMusicStore.getState().setHighlightCurrentTrack(false);
       expect(useMusicStore.getState().showBarBackground).toBe(false);
       expect(useMusicStore.getState().lightThemeLightBackground).toBe(false);
-      expect(useMusicStore.getState().highlightCurrentTrack).toBe(false);
     });
   });
 

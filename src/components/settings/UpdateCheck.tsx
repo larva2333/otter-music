@@ -285,33 +285,27 @@ export function UpdateDialog({ open, onOpenChange }: UpdateDialogProps) {
   );
 }
 
-export function UpdateCheck() {
+export function UpdateCheck({ isActive = true }: { isActive?: boolean }) {
   const [localOpen, setLocalOpen] = useState(false);
   const updateDialogRequested = useAppStore((s) => s.updateDialogRequested);
   const consumeUpdateDialogRequest = useAppStore(
     (s) => s.consumeUpdateDialogRequest
   );
-  const { currentVersion, hasUpdate, latestVersionInfo } = useAppStore();
+  const { currentVersion, hasUpdate } = useAppStore();
   const autoOpenUpdateDialogOnce = useAppStore(
     (s) => s.autoOpenUpdateDialogOnce
   );
 
-  // 有新版本时进入设置页自动弹一次更新弹窗（和点 toast 是同一个弹窗）。
-  // 去重与置位都在 store 里做：本地 state 不在 effect 里同步改，
-  // 避免多一次级联渲染；弹窗开关统一读 updateDialogRequested。
+  // 兜底：若用户冷启动抢在 checkUpdate 完成前就进了设置页，等 hasUpdate 变成 true 时补弹一次。
+  // 必须只在设置页激活时触发（防 tab 保活时在后台偷跑），且绝不返回 consumeUpdateDialogRequest
+  // 作为 cleanup（否则依赖变化重跑时会把已打开的弹窗误关掉）。
   useEffect(() => {
+    if (!isActive || !hasUpdate) return;
     autoOpenUpdateDialogOnce();
-    // 离开设置页时把标记收掉：下次进来不该再因为挂载前的旧标记弹一次
-    return consumeUpdateDialogRequest;
-  }, [
-    hasUpdate,
-    latestVersionInfo?.latestVersion,
-    autoOpenUpdateDialogOnce,
-    consumeUpdateDialogRequest,
-  ]);
+  }, [isActive, hasUpdate, autoOpenUpdateDialogOnce]);
 
-  // 从「发现新版本」toast 点进来时直接展开：标记在 store 里，
-  // 组件挂载前就已经置位，渲染期就能拿到，不需要 effect 再 setState
+  // 从「发现新版本」toast 或设置 tab/滑屏进来时，标记已在导航前同步置位，
+  // 渲染期就能直接读到，不需要等 effect 再 setState
   const showDialog = localOpen || updateDialogRequested;
   const handleOpenChange = (open: boolean) => {
     setLocalOpen(open);

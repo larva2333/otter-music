@@ -1,5 +1,8 @@
 import { commentRequest } from "./http";
-import type { FormattedComment } from "@/lib/netease/comment-format";
+import {
+  formatCommentTime,
+  type FormattedComment,
+} from "@/lib/netease/comment-format";
 import type { CommentPage } from "./types";
 import type { MusicTrack } from "@/types/music";
 import { logger } from "@/lib/logger";
@@ -30,15 +33,6 @@ function normalizeName(value: string | null | undefined): string {
     .replace(/[（(【[].*?[)）】\]]/g, "")
     .replace(/[\s\-_·・,，。.!！?？'"“”‘’、/&]/g, "")
     .trim();
-}
-
-function formatTime(time: number | string | null | undefined): string {
-  if (time === null || time === undefined || time === "") return "";
-  const t = Number(time);
-  if (!Number.isFinite(t) || t <= 0) return "";
-  const d = new Date(t);
-  const pad = (n: number) => String(n).padStart(2, "0");
-  return `${d.getFullYear()}.${pad(d.getMonth() + 1)}.${pad(d.getDate())}`;
 }
 
 /** QQ 的 [em]e400xxx[/em] 占位符 → emoji（常用部分） */
@@ -190,7 +184,7 @@ function normalize(list: unknown[]): FormattedComment[] {
       id: Number(item.SeqNo ?? item.commentid ?? index) || index,
       text: replaceEmoji(text.replace(/\\n/g, "\n")),
       time: Number(time) || 0,
-      timeStr: formatTime(time as number | string),
+      timeStr: formatCommentTime(time as number | string, "ms"),
       location: item.Location ? String(item.Location) : undefined,
       userName: String(item.Nick ?? item.rootcommentnick ?? "").replace(
         /^@/,

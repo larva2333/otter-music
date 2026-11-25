@@ -108,6 +108,7 @@ export function scrollPageToTop(behavior: ScrollBehavior = "smooth"): boolean {
 
   const targets: HTMLElement[] = [];
   document.querySelectorAll<HTMLElement>(PAGE_SCROLL_SELECTOR).forEach((el) => {
+    if (el.closest('[data-page-active="false"]')) return;
     if (el.scrollTop > 0) targets.push(el);
   });
 

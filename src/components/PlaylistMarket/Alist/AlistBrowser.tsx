@@ -197,15 +197,12 @@ const TrackItem = ({
 }) => {
   const fmt = getFormat(track.url_id);
   const sizeStr = formatSize(size);
-  const highlightCurrentTrack = useMusicStore((s) => s.highlightCurrentTrack);
   return (
     <div
       onClick={onClick}
       className={cn(
         LIST_ITEM_CLASS,
-        isActive
-          ? cn("text-primary", highlightCurrentTrack && "bg-primary/10")
-          : "text-foreground/90"
+        isActive ? "text-primary bg-primary/10" : "text-foreground/90"
       )}
     >
       <div className="flex items-center gap-3 min-w-0 flex-1">

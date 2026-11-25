@@ -1,6 +1,7 @@
 import { useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import { resolveBarCategories } from "@/lib/netease/netease-cats";
+import { useAppStore } from "@/store/app-store";
 import { useMusicStore } from "@/store/music-store";
 
 export type RootSwipeTab = "search" | "favorites" | "mine" | "settings";
@@ -63,7 +64,12 @@ export function useRootTabSwipe(tab: RootSwipeTab) {
       }
 
       if (tab === "mine") {
-        go(dir === "next" ? "/settings" : "/favorites", dir);
+        if (dir === "next") {
+          useAppStore.getState().autoOpenUpdateDialogOnce();
+          go("/settings", dir);
+        } else {
+          go("/favorites", dir);
+        }
         return;
       }
 

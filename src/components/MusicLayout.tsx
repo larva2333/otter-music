@@ -52,13 +52,13 @@ export function MusicLayout({
           用负 margin-bottom 把这段占位抵消掉，内容区就能一直铺到键盘上沿。 */}
       <div className="flex-1 min-h-0 relative -mb-[var(--kb-bar-h,0px)]">
         <div
-          data-page-scroll=""
-          // overflow-x-clip：根 tab 切换时整页会横向平移 56px 做进入动画，
-          // 平移出来的那部分会撑大 scrollWidth（实测 400→456），
-          // 手指在页面上横滑就能把整页拖歪。clip 只裁剪、不产生横向滚动容器，
-          // 纵向滚动（overflow-y-auto）不受影响。
+          data-page-scroll={isTab ? undefined : ""}
+          // tab 页由 RootTabPager 各自维护独立纵向滚动区，外层只做视口裁剪；
+          // 二级页保留原有整页纵向滚动容器（overflow-x-clip 防横滑撑大 scrollWidth）。
           className={cn(
-            "h-full overflow-y-auto overflow-x-clip scrollbar-hide"
+            isTab
+              ? "h-full overflow-hidden"
+              : "h-full overflow-y-auto overflow-x-clip scrollbar-hide"
           )}
         >
           {children}

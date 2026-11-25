@@ -171,12 +171,6 @@ export function MusicTrackItem({
         addToNextPlay: state.addToNextPlay,
       }))
     );
-  // 列表级 UI 偏好由行组件自己读 store（与 showSourceBadge 同一套路），
-  // 这样所有经过 MusicTrackList 的列表都统一受这一个开关控制。
-  const highlightCurrentTrack = useMusicStore(
-    (state) => state.highlightCurrentTrack
-  );
-
   // 按需读取下载状态（虚拟列表保证活跃 Item 极少，按需 selector 远比父组件全量 map 高效）
   const downloadKey = buildDownloadKey(track.source, track.id);
   const isDownloadedFromStore = useDownloadStore(
@@ -258,7 +252,7 @@ export function MusicTrackItem({
           : "gap-4 grid-cols-[1.75rem_1fr_auto]",
         isSelected && showCheckbox
           ? "bg-primary/10"
-          : highlightCurrentTrack && isCurrent
+          : isCurrent
             ? "bg-primary/10"
             : "hover:bg-muted/50",
         className
@@ -288,6 +282,7 @@ export function MusicTrackItem({
             />
           ) : showCover ? (
             <TrackCoverThumb
+              key={`${track.source}:${track.id}:${track.pic_id ?? ""}`}
               track={track}
               isCurrent={isCurrent}
               isPlaying={isPlaying}

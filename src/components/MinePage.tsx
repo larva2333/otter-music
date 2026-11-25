@@ -1,6 +1,12 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
 import {
   SquarePlus,
   MoreVertical,
@@ -45,8 +51,14 @@ import { PlaylistImportDrawer } from "./PlaylistImportDrawer";
 import { getPlayAllStartIndex, usePlayHelper } from "@/hooks/usePlayHelper";
 import { usePlayContextHandler } from "@/hooks/usePlayContextHandler";
 import { usePagerSwipe } from "@/hooks/use-pager-swipe";
+import { useIsRootTabActive, useRootPager } from "@/hooks/use-root-pager";
+import { useTabIndicatorSync } from "@/hooks/use-tab-indicator-sync";
 import { useLoadMoreOnVisible } from "@/hooks/use-load-more-on-visible";
 import { useTabReclick } from "@/hooks/use-tab-reclick";
+import {
+  saveScrollPositions,
+  restoreScrollPositions,
+} from "@/lib/scroll-snapshot";
 import { cn } from "@/lib/utils";
 import type { MusicTrack } from "@/types/music";
 import { t2s } from "@/lib/utils/t2s";
@@ -115,10 +127,6 @@ export function MinePage({ onSelectPlaylist }: MinePageProps) {
   const [visitedTabs, setVisitedTabs] = useState<Set<MineTab>>(
     () => new Set<MineTab>([initialTab])
   );
-  const [indicator, setIndicator] = useState<{
-    left: number;
-    width: number;
-  } | null>(null);
   const { createPlaylist, renamePlaylist, deletePlaylist } = useMusicStore(
     useShallow((state) => ({
       createPlaylist: state.createPlaylist,
@@ -178,6 +186,54 @@ export function MinePage({ onSelectPlaylist }: MinePageProps) {
     MINE_TABS.findIndex((t) => t.id === activeTab)
   );
   const rootEdge = useRootTabSwipe("mine");
+  const rootPager = useRootPager();
+  const isPageActive = useIsRootTabActive("mine");
+
+  const activeTabRef = useRef(activeTab);
+  useEffect(() => {
+    activeTabRef.current = activeTab;
+  }, [activeTab]);
+  const savedTabBeforeAlignRef = useRef<MineTab | null>(null);
+
+  // 响应 URL ?type= 参数变化（渲染期同步，避免 effect 内 setState 级联渲染）
+  const [seenRequestedType, setSeenRequestedType] = useState(requestedType);
+  if (seenRequestedType !== requestedType) {
+    setSeenRequestedType(requestedType);
+    const matched = MINE_TYPE_IDS.find((id) => id === requestedType);
+    if (matched) activateTab(matched);
+  }
+
+  // 跨页滑动对齐协议：从喜欢滑入对齐首个 type（mine），从设置滑入对齐末尾 type（local）
+  useEffect(() => {
+    if (!rootPager) return;
+    return rootPager.registerAligner("/mine", {
+      previewAlign: (edge) => {
+        const target =
+          edge === "start"
+            ? MINE_TYPE_IDS[0]
+            : MINE_TYPE_IDS[MINE_TYPE_IDS.length - 1];
+        if (
+          savedTabBeforeAlignRef.current === null &&
+          activeTabRef.current !== target
+        ) {
+          savedTabBeforeAlignRef.current = activeTabRef.current;
+        }
+        if (activeTabRef.current !== target) {
+          activateTab(target);
+        }
+      },
+      cancelAlign: () => {
+        const prev = savedTabBeforeAlignRef.current;
+        savedTabBeforeAlignRef.current = null;
+        if (prev && prev !== activeTabRef.current) {
+          activateTab(prev);
+        }
+      },
+      commitAlign: () => {
+        savedTabBeforeAlignRef.current = null;
+      },
+    });
+  }, [rootPager, activateTab]);
 
   /** 手势锁定横向后提前挂载相邻页，滑出来时直接是真实内容而不是骨架 */
   const ensureVisited = useCallback((index: number) => {
@@ -188,8 +244,59 @@ export function MinePage({ onSelectPlaylist }: MinePageProps) {
     );
   }, []);
 
-  // 顶部 tab 固定，只平移下面 4 页的轨道；到两端时整页（含 tab）滑出，
-  // 露出相邻根 tab 的骨架屏，松手后才真正跳转。
+  // 空闲时自动预挂载左右直接邻居，避免手势刚启动时临时挂载重列表卡顿
+  useEffect(() => {
+    if (!isPageActive) return;
+    const targets = [
+      MINE_TABS[activeIndex - 1]?.id,
+      MINE_TABS[activeIndex + 1]?.id,
+    ].filter((id): id is MineTab => Boolean(id));
+    if (targets.every((id) => visitedTabs.has(id))) return;
+    const timer = setTimeout(() => {
+      setVisitedTabs((prev) => {
+        if (targets.every((id) => prev.has(id))) return prev;
+        const next = new Set(prev);
+        targets.forEach((id) => next.add(id));
+        return next;
+      });
+    }, 180);
+    return () => clearTimeout(timer);
+  }, [isPageActive, activeIndex, visitedTabs]);
+
+  // 非邻近面板用 hidden 移出渲染树，切出前保存 scrollTop、切近时同步还原
+  const prevMineIdxRef = useRef(activeIndex);
+  useLayoutEffect(() => {
+    const prevIdx = prevMineIdxRef.current;
+    prevMineIdxRef.current = activeIndex;
+    const track = trackRef.current;
+    if (!track || prevIdx === activeIndex) return;
+    Array.from(track.children).forEach((shell, idx) => {
+      const inner = shell.firstElementChild as HTMLElement | null;
+      if (!inner) return;
+      const wasNear = Math.abs(idx - prevIdx) <= 1;
+      const isNear = Math.abs(idx - activeIndex) <= 1;
+      if (wasNear && !isNear) saveScrollPositions(inner);
+      else if (!wasNear && isNear) restoreScrollPositions(inner);
+    });
+  }, [activeIndex]);
+
+  const {
+    indicatorRef,
+    mirrorRef,
+    barWidth,
+    hasIndicator,
+    initialRect,
+    handleTrackDrag,
+    handleTrackSettle,
+  } = useTabIndicatorSync({
+    barRef: tabsBarRef,
+    activeIndex,
+    ids: MINE_TYPE_IDS,
+    attrName: "data-tab-id",
+  });
+
+  // 顶部 tab 固定，只平移下面 4 页的轨道；到两端时联动根级轨道整页（含 tab）滑出，
+  // 真实露出相邻根页的内容。
   usePagerSwipe(
     { viewportRef, trackRef, stageRef },
     {
@@ -198,6 +305,10 @@ export function MinePage({ onSelectPlaylist }: MinePageProps) {
       onChange: (index) => activateTab(MINE_TABS[index].id),
       onEdge: rootEdge,
       onNeighborIntent: ensureVisited,
+      onTrackDrag: handleTrackDrag,
+      onTrackSettle: handleTrackSettle,
+      rootTab: "mine",
+      isPageActive,
     }
   );
 
@@ -206,22 +317,6 @@ export function MinePage({ onSelectPlaylist }: MinePageProps) {
     const index = MINE_TABS.findIndex((t) => t.id === activeTab);
     activateTab(MINE_TABS[(index + 1) % MINE_TABS.length].id);
   });
-
-  // 选中滑块位置跟随当前 type 平移（rAF 里测量，避免同步 setState 级联渲染）
-  useEffect(() => {
-    const raf = requestAnimationFrame(() => {
-      const bar = tabsBarRef.current;
-      const btn = bar?.querySelector<HTMLElement>(
-        `[data-tab-id="${activeTab}"]`
-      );
-      if (!bar || !btn) {
-        setIndicator(null);
-        return;
-      }
-      setIndicator({ left: btn.offsetLeft, width: btn.offsetWidth });
-    });
-    return () => cancelAnimationFrame(raf);
-  }, [activeTab]);
 
   const [newPlaylistName, setNewPlaylistName] = useState("");
   const [isCreateOpen, setIsCreateOpen] = useState(false);
@@ -307,37 +402,50 @@ export function MinePage({ onSelectPlaylist }: MinePageProps) {
   return (
     <div ref={stageRef} data-mine-stage className="relative h-full w-full">
       <div className="flex h-full flex-col bg-background">
-        {/* type 切换栏：固定不动，只有下面的内容轨道跟手 */}
-        <div
-          ref={tabsBarRef}
-          className="relative shrink-0 flex items-center gap-1 px-2 pt-2.5 pb-2 overflow-x-auto no-scrollbar"
-        >
-          {indicator && (
-            <div
-              aria-hidden
-              className="absolute left-0 top-2.5 h-8 rounded-full bg-primary pointer-events-none"
-              style={{
-                transform: `translateX(${indicator.left}px)`,
-                width: indicator.width,
-                transition: "transform 250ms ease, width 250ms ease",
-              }}
-            />
-          )}
-          {MINE_TABS.map((tab) => (
-            <button
-              key={tab.id}
-              data-tab-id={tab.id}
-              onClick={() => activateTab(tab.id)}
-              className={cn(
-                "relative flex-1 h-8 rounded-full text-sm font-medium whitespace-nowrap transition-colors",
-                activeTab === tab.id
-                  ? "text-primary-foreground"
-                  : "text-muted-foreground bg-secondary/30"
-              )}
-            >
-              {tab.label}
-            </button>
-          ))}
+        {/* type 切换栏：固定不动，只有下面的内容轨道跟手；
+            双层反色胶囊滑块（z-10 实色盖住灰底，内部镜像文字精准反色） */}
+        <div className="shrink-0 px-2 pt-2.5 pb-2 [contain:layout_style]">
+          <div ref={tabsBarRef} className="relative flex items-center gap-1">
+            {MINE_TABS.map((tab) => (
+              <button
+                key={tab.id}
+                data-tab-id={tab.id}
+                onClick={() => activateTab(tab.id)}
+                className="relative flex-1 h-8 rounded-full text-sm font-medium whitespace-nowrap text-muted-foreground bg-secondary/30"
+              >
+                {tab.label}
+              </button>
+            ))}
+            {hasIndicator && initialRect && (
+              <div
+                ref={indicatorRef}
+                aria-hidden
+                className="pointer-events-none absolute left-0 top-0 z-10 h-8 overflow-hidden rounded-full bg-primary"
+                style={{
+                  transform: `translate3d(${initialRect.left}px, ${initialRect.top}px, 0)`,
+                  width: initialRect.width,
+                }}
+              >
+                <div
+                  ref={mirrorRef}
+                  className="flex h-full items-center gap-1"
+                  style={{
+                    width: barWidth || "100%",
+                    transform: `translate3d(${-initialRect.left}px, ${-initialRect.top}px, 0)`,
+                  }}
+                >
+                  {MINE_TABS.map((tab) => (
+                    <span
+                      key={tab.id}
+                      className="flex flex-1 h-8 items-center justify-center text-sm font-medium whitespace-nowrap text-primary-foreground"
+                    >
+                      {tab.label}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
         </div>
 
         {/* 内容分页：顶部 tab 固定，这里只平移 4 页轨道 */}
@@ -352,295 +460,339 @@ export function MinePage({ onSelectPlaylist }: MinePageProps) {
             className="flex h-full will-change-transform"
           >
             {/* 我的歌单 */}
-            <div className="flex h-full w-full shrink-0 flex-col">
-              {visitedTabs.has("mine") ? (
-                <div
-                  ref={minePaneRef}
-                  data-mine-pane="mine"
-                  // 只有当前可见的面板挂 data-page-scroll：回顶 / 滚动恢复都按这个标记
-                  // 找容器，其余面板不参与。
-                  data-page-scroll={activeTab === "mine" ? "" : undefined}
-                  aria-hidden={activeTab !== "mine"}
-                  className="flex-1 min-h-0 overflow-y-auto scrollbar-hide px-5 pb-bottom-stack"
-                >
-                  {/* 标题栏 */}
-                  <div className="flex items-start justify-between mb-3 px-1 pt-1">
-                    <h2 className="text-base font-bold text-foreground tracking-wide">
-                      我的歌单
-                    </h2>
-                    <div className="flex items-center gap-1">
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        className="h-8 gap-1 text-sm text-muted-foreground hover:text-foreground px-2"
-                        onClick={() => setIsImportOpen(true)}
-                      >
-                        <Link2 className="h-[13px] w-[13px]" />
-                        导入
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        className="h-8 gap-1 text-sm text-muted-foreground hover:text-foreground px-2"
-                        onClick={() => setIsCreateOpen(true)}
-                      >
-                        <SquarePlus className="h-[13px] w-[13px]" />
-                        新建
-                      </Button>
-                    </div>
-                    <Dialog open={isCreateOpen} onOpenChange={setIsCreateOpen}>
-                      <DialogContent className="max-w-sm">
-                        <DialogHeader>
-                          <DialogTitle>新建歌单</DialogTitle>
-                        </DialogHeader>
-                        <div className="pb-1">
-                          <Input
-                            autoFocus
-                            placeholder="歌单名称"
-                            value={newPlaylistName}
-                            onChange={(e) => setNewPlaylistName(e.target.value)}
-                            onKeyDown={(e) =>
-                              e.key === "Enter" && handleCreatePlaylist()
-                            }
-                          />
-                        </div>
-                        <DialogFooter>
-                          <Button
-                            onClick={handleCreatePlaylist}
-                            className="h-11"
-                          >
-                            创建
-                          </Button>
-                        </DialogFooter>
-                      </DialogContent>
-                    </Dialog>
-                    <PlaylistImportDrawer
-                      open={isImportOpen}
-                      onOpenChange={setIsImportOpen}
-                    />
-                  </div>
-
-                  {activePlaylists.length === 0 ? (
-                    <div className="flex flex-col items-center justify-center py-10 text-center">
-                      <PlaylistIcon className="h-10 w-10 text-muted-foreground/40 mb-2" />
-                      <p className="text-muted-foreground text-sm">暂无歌单</p>
-                      <p className="text-muted-foreground/60 text-xs mt-1">
-                        点击"新建"创建你的第一个歌单
-                      </p>
-                    </div>
-                  ) : (
-                    <div className="space-y-1">
-                      {activePlaylists.slice(0, mineVisible).map((playlist) => (
-                        <div
-                          key={playlist.id}
-                          className="flex items-center gap-3 p-2 rounded-xl transition-colors cursor-pointer group"
-                          onClick={() => onSelectPlaylist(playlist.id)}
+            <div className="h-full w-full shrink-0">
+              <div
+                className={cn(
+                  "flex h-full w-full flex-col [contain:layout_style_paint]",
+                  Math.abs(0 - activeIndex) > 1 && "hidden"
+                )}
+              >
+                {visitedTabs.has("mine") ? (
+                  <div
+                    ref={minePaneRef}
+                    data-mine-pane="mine"
+                    // 只有当前可见的面板挂 data-page-scroll：回顶 / 滚动恢复都按这个标记
+                    // 找容器，其余面板不参与。
+                    data-page-scroll={activeTab === "mine" ? "" : undefined}
+                    aria-hidden={activeTab !== "mine"}
+                    className="flex-1 min-h-0 overflow-y-auto scrollbar-hide px-5 pb-bottom-stack"
+                  >
+                    {/* 标题栏 */}
+                    <div className="flex items-start justify-between mb-3 px-1 pt-1">
+                      <h2 className="text-base font-bold text-foreground tracking-wide">
+                        我的歌单
+                      </h2>
+                      <div className="flex items-center gap-1">
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="h-8 gap-1 text-sm text-muted-foreground hover:text-foreground px-2"
+                          onClick={() => setIsImportOpen(true)}
                         >
-                          <div
-                            className="relative shrink-0 overflow-hidden rounded-lg"
-                            role="button"
-                            aria-label={`播放歌单 ${t2s(playlist.name)}`}
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              playPlaylist(
-                                playlist.tracks.filter(
-                                  (track) => track.is_deleted !== true
-                                ),
-                                `playlist-${playlist.id}`
-                              );
-                            }}
-                          >
-                            <PlaylistCover
-                              playlist={playlist}
-                              className="h-13 w-13 rounded-lg object-cover"
-                              previewable={false}
+                          <Link2 className="h-[13px] w-[13px]" />
+                          导入
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="h-8 gap-1 text-sm text-muted-foreground hover:text-foreground px-2"
+                          onClick={() => setIsCreateOpen(true)}
+                        >
+                          <SquarePlus className="h-[13px] w-[13px]" />
+                          新建
+                        </Button>
+                      </div>
+                      <Dialog
+                        open={isCreateOpen}
+                        onOpenChange={setIsCreateOpen}
+                      >
+                        <DialogContent className="max-w-sm">
+                          <DialogHeader>
+                            <DialogTitle>新建歌单</DialogTitle>
+                          </DialogHeader>
+                          <div className="pb-1">
+                            <Input
+                              autoFocus
+                              placeholder="歌单名称"
+                              value={newPlaylistName}
+                              onChange={(e) =>
+                                setNewPlaylistName(e.target.value)
+                              }
+                              onKeyDown={(e) =>
+                                e.key === "Enter" && handleCreatePlaylist()
+                              }
                             />
-                            {renderPlaybackBadge(`playlist-${playlist.id}`)}
                           </div>
-                          <div className="flex-1 min-w-0">
-                            {editingPlaylistId === playlist.id ? (
-                              <Input
-                                autoFocus
-                                value={editingName}
-                                onChange={(e) => setEditingName(e.target.value)}
-                                onKeyDown={(e) => {
+                          <DialogFooter>
+                            <Button
+                              onClick={handleCreatePlaylist}
+                              className="h-11"
+                            >
+                              创建
+                            </Button>
+                          </DialogFooter>
+                        </DialogContent>
+                      </Dialog>
+                      <PlaylistImportDrawer
+                        open={isImportOpen}
+                        onOpenChange={setIsImportOpen}
+                      />
+                    </div>
+
+                    {activePlaylists.length === 0 ? (
+                      <div className="flex flex-col items-center justify-center py-10 text-center">
+                        <PlaylistIcon className="h-10 w-10 text-muted-foreground/40 mb-2" />
+                        <p className="text-muted-foreground text-sm">
+                          暂无歌单
+                        </p>
+                        <p className="text-muted-foreground/60 text-xs mt-1">
+                          点击"新建"创建你的第一个歌单
+                        </p>
+                      </div>
+                    ) : (
+                      <div className="space-y-1">
+                        {activePlaylists
+                          .slice(0, mineVisible)
+                          .map((playlist) => (
+                            <div
+                              key={playlist.id}
+                              className="flex items-center gap-3 p-2 rounded-xl transition-colors cursor-pointer group"
+                              onClick={() => onSelectPlaylist(playlist.id)}
+                            >
+                              <div
+                                className="relative shrink-0 overflow-hidden rounded-lg"
+                                role="button"
+                                aria-label={`播放歌单 ${t2s(playlist.name)}`}
+                                onClick={(e) => {
                                   e.stopPropagation();
-                                  if (e.key === "Enter")
-                                    handleRename(playlist.id);
-                                  if (e.key === "Escape") {
-                                    setEditingPlaylistId(null);
-                                    setEditingName("");
-                                  }
-                                }}
-                                onBlur={() => handleRename(playlist.id)}
-                                className="h-7 text-sm"
-                                onClick={(e) => e.stopPropagation()}
-                              />
-                            ) : (
-                              <>
-                                <p
-                                  className={`font-medium text-sm truncate transition-colors ${
-                                    contextId === `playlist-${playlist.id}`
-                                      ? "text-primary"
-                                      : "text-foreground"
-                                  }`}
-                                >
-                                  {t2s(playlist.name)}
-                                </p>
-                                <p className="text-xs text-muted-foreground/80 mt-0.5">
-                                  {
+                                  playPlaylist(
                                     playlist.tracks.filter(
                                       (track) => track.is_deleted !== true
-                                    ).length
-                                  }{" "}
-                                  首 ·{" "}
-                                  {format(playlist.createdAt, "yyyy-MM-dd")}
-                                </p>
-                              </>
-                            )}
+                                    ),
+                                    `playlist-${playlist.id}`
+                                  );
+                                }}
+                              >
+                                <PlaylistCover
+                                  playlist={playlist}
+                                  className="h-13 w-13 rounded-lg object-cover"
+                                  previewable={false}
+                                />
+                                {renderPlaybackBadge(`playlist-${playlist.id}`)}
+                              </div>
+                              <div className="flex-1 min-w-0">
+                                {editingPlaylistId === playlist.id ? (
+                                  <Input
+                                    autoFocus
+                                    value={editingName}
+                                    onChange={(e) =>
+                                      setEditingName(e.target.value)
+                                    }
+                                    onKeyDown={(e) => {
+                                      e.stopPropagation();
+                                      if (e.key === "Enter")
+                                        handleRename(playlist.id);
+                                      if (e.key === "Escape") {
+                                        setEditingPlaylistId(null);
+                                        setEditingName("");
+                                      }
+                                    }}
+                                    onBlur={() => handleRename(playlist.id)}
+                                    className="h-7 text-sm"
+                                    onClick={(e) => e.stopPropagation()}
+                                  />
+                                ) : (
+                                  <>
+                                    <p
+                                      className={`font-medium text-sm truncate transition-colors ${
+                                        contextId === `playlist-${playlist.id}`
+                                          ? "text-primary"
+                                          : "text-foreground"
+                                      }`}
+                                    >
+                                      {t2s(playlist.name)}
+                                    </p>
+                                    <p className="text-xs text-muted-foreground/80 mt-0.5">
+                                      {
+                                        playlist.tracks.filter(
+                                          (track) => track.is_deleted !== true
+                                        ).length
+                                      }{" "}
+                                      首 ·{" "}
+                                      {format(playlist.createdAt, "yyyy-MM-dd")}
+                                    </p>
+                                  </>
+                                )}
+                              </div>
+                              <DropdownMenu>
+                                <DropdownMenuTrigger asChild>
+                                  <button
+                                    className="p-2 text-muted-foreground/60 hover:text-foreground transition-colors"
+                                    onClick={(e) => e.stopPropagation()}
+                                  >
+                                    <MoreVertical className="h-4 w-4" />
+                                  </button>
+                                </DropdownMenuTrigger>
+                                <DropdownMenuContent align="end">
+                                  <DropdownMenuItem
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      setEditingPlaylistId(playlist.id);
+                                      setEditingName(t2s(playlist.name));
+                                    }}
+                                  >
+                                    <Pencil className="h-4 w-4 mr-2" />
+                                    重命名
+                                  </DropdownMenuItem>
+                                  <DropdownMenuItem
+                                    className="text-destructive"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      handleDelete(playlist.id);
+                                    }}
+                                  >
+                                    <Trash2 className="text-destructive h-4 w-4 mr-2" />
+                                    删除
+                                  </DropdownMenuItem>
+                                </DropdownMenuContent>
+                              </DropdownMenu>
+                            </div>
+                          ))}
+                        {/* 上滑加载提示（自动加载，无需点击） */}
+                        {activePlaylists.length > MINE_LIST_PAGE_SIZE && (
+                          <div
+                            ref={mineSentinelRef}
+                            className="flex h-8 items-center justify-center text-xs text-muted-foreground/60 tracking-wide"
+                          >
+                            {mineHasMore ? "加载中..." : "没有更多了"}
                           </div>
-                          <DropdownMenu>
-                            <DropdownMenuTrigger asChild>
-                              <button
-                                className="p-2 text-muted-foreground/60 hover:text-foreground transition-colors"
-                                onClick={(e) => e.stopPropagation()}
-                              >
-                                <MoreVertical className="h-4 w-4" />
-                              </button>
-                            </DropdownMenuTrigger>
-                            <DropdownMenuContent align="end">
-                              <DropdownMenuItem
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  setEditingPlaylistId(playlist.id);
-                                  setEditingName(t2s(playlist.name));
-                                }}
-                              >
-                                <Pencil className="h-4 w-4 mr-2" />
-                                重命名
-                              </DropdownMenuItem>
-                              <DropdownMenuItem
-                                className="text-destructive"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  handleDelete(playlist.id);
-                                }}
-                              >
-                                <Trash2 className="text-destructive h-4 w-4 mr-2" />
-                                删除
-                              </DropdownMenuItem>
-                            </DropdownMenuContent>
-                          </DropdownMenu>
-                        </div>
-                      ))}
-                      {/* 上滑加载提示（自动加载，无需点击） */}
-                      {activePlaylists.length > MINE_LIST_PAGE_SIZE && (
-                        <div
-                          ref={mineSentinelRef}
-                          className="flex h-8 items-center justify-center text-xs text-muted-foreground/60 tracking-wide"
-                        >
-                          {mineHasMore ? "加载中..." : "没有更多了"}
-                        </div>
-                      )}
-                    </div>
-                  )}
-                </div>
-              ) : (
-                <PaneSkeleton title="我的歌单" />
-              )}
+                        )}
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <PaneSkeleton title="我的歌单" />
+                )}
+              </div>
             </div>
 
             {/* 播放列表 */}
-            <div className="flex h-full w-full shrink-0 flex-col">
-              {visitedTabs.has("queue") ? (
-                <div
-                  data-mine-pane="queue"
-                  aria-hidden={activeTab !== "queue"}
-                  className="flex h-full min-h-0 flex-col"
-                >
-                  <QueuePage
-                    embedded
-                    queue={queue}
-                    currentTrackId={currentTrackId}
-                    isPlaying={isPlaying}
-                    onPlay={queueOnPlay}
-                    onRemove={(track) =>
-                      useMusicStore.getState().removeFromQueue(track.id)
-                    }
-                    onClear={() => useMusicStore.getState().clearQueue()}
-                  />
-                </div>
-              ) : (
-                <PaneSkeleton title="播放列表" />
-              )}
+            <div className="h-full w-full shrink-0">
+              <div
+                className={cn(
+                  "flex h-full w-full flex-col [contain:layout_style_paint]",
+                  Math.abs(1 - activeIndex) > 1 && "hidden"
+                )}
+              >
+                {visitedTabs.has("queue") ? (
+                  <div
+                    data-mine-pane="queue"
+                    data-page-active={activeTab === "queue" ? "true" : "false"}
+                    aria-hidden={activeTab !== "queue"}
+                    className="flex h-full min-h-0 flex-col"
+                  >
+                    <QueuePage
+                      embedded
+                      queue={queue}
+                      currentTrackId={currentTrackId}
+                      isPlaying={isPlaying}
+                      onPlay={queueOnPlay}
+                      onRemove={(track) =>
+                        useMusicStore.getState().removeFromQueue(track.id)
+                      }
+                      onClear={() => useMusicStore.getState().clearQueue()}
+                    />
+                  </div>
+                ) : (
+                  <PaneSkeleton title="播放列表" />
+                )}
+              </div>
             </div>
 
             {/* 播放历史 */}
-            <div className="flex h-full w-full shrink-0 flex-col">
-              {visitedTabs.has("history") ? (
-                <div
-                  data-mine-pane="history"
-                  aria-hidden={activeTab !== "history"}
-                  className="flex h-full min-h-0 flex-col"
-                >
-                  <MusicPlaylistView
-                    title="播放历史"
-                    compactHeader
-                    tracks={history}
-                    icon={<History className="h-8 w-8 text-primary/80" />}
-                    onPlay={historyOnPlay}
-                    incrementalBatch={MINE_LIST_PAGE_SIZE}
-                    onRemove={(track) =>
-                      useHistoryStore.getState().removeFromHistory(track.id)
+            <div className="h-full w-full shrink-0">
+              <div
+                className={cn(
+                  "flex h-full w-full flex-col [contain:layout_style_paint]",
+                  Math.abs(2 - activeIndex) > 1 && "hidden"
+                )}
+              >
+                {visitedTabs.has("history") ? (
+                  <div
+                    data-mine-pane="history"
+                    data-page-active={
+                      activeTab === "history" ? "true" : "false"
                     }
-                    currentTrackId={currentTrackId}
-                    isPlaying={isPlaying}
-                    action={
-                      history.length > 0 ? (
-                        <button
-                          aria-label="清空播放历史"
-                          onClick={async () => {
-                            if (
-                              await confirmDialog({
-                                title: "确定清空播放历史吗？",
-                                destructive: true,
-                                confirmText: "清空",
-                              })
-                            ) {
-                              useHistoryStore.getState().clearHistory();
-                            }
-                          }}
-                          className="flex items-center justify-center px-2.5 h-8 rounded-full text-xs text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors"
-                        >
-                          <Trash2 className="h-3.5 w-3.5" />
-                        </button>
-                      ) : undefined
-                    }
-                  />
-                </div>
-              ) : (
-                <PaneSkeleton title="播放历史" />
-              )}
+                    aria-hidden={activeTab !== "history"}
+                    className="flex h-full min-h-0 flex-col"
+                  >
+                    <MusicPlaylistView
+                      title="播放历史"
+                      compactHeader
+                      tracks={history}
+                      icon={<History className="h-8 w-8 text-primary/80" />}
+                      onPlay={historyOnPlay}
+                      incrementalBatch={MINE_LIST_PAGE_SIZE}
+                      onRemove={(track) =>
+                        useHistoryStore.getState().removeFromHistory(track.id)
+                      }
+                      currentTrackId={currentTrackId}
+                      isPlaying={isPlaying}
+                      action={
+                        history.length > 0 ? (
+                          <button
+                            aria-label="清空播放历史"
+                            onClick={async () => {
+                              if (
+                                await confirmDialog({
+                                  title: "确定清空播放历史吗？",
+                                  destructive: true,
+                                  confirmText: "清空",
+                                })
+                              ) {
+                                useHistoryStore.getState().clearHistory();
+                              }
+                            }}
+                            className="flex items-center justify-center px-2.5 h-8 rounded-full text-xs text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </button>
+                        ) : undefined
+                      }
+                    />
+                  </div>
+                ) : (
+                  <PaneSkeleton title="播放历史" />
+                )}
+              </div>
             </div>
 
             {/* 本地音乐 */}
-            <div className="flex h-full w-full shrink-0 flex-col">
-              {visitedTabs.has("local") ? (
-                <div
-                  data-mine-pane="local"
-                  aria-hidden={activeTab !== "local"}
-                  className="flex h-full min-h-0 flex-col"
-                >
-                  <LocalMusicPage
-                    embedded
-                    onPlay={handlePlay}
-                    currentTrackId={currentTrackId}
-                    isPlaying={isPlaying}
-                  />
-                </div>
-              ) : (
-                <PaneSkeleton title="本地音乐" />
-              )}
+            <div className="h-full w-full shrink-0">
+              <div
+                className={cn(
+                  "flex h-full w-full flex-col [contain:layout_style_paint]",
+                  Math.abs(3 - activeIndex) > 1 && "hidden"
+                )}
+              >
+                {visitedTabs.has("local") ? (
+                  <div
+                    data-mine-pane="local"
+                    data-page-active={activeTab === "local" ? "true" : "false"}
+                    aria-hidden={activeTab !== "local"}
+                    className="flex h-full min-h-0 flex-col"
+                  >
+                    <LocalMusicPage
+                      embedded
+                      onPlay={handlePlay}
+                      currentTrackId={currentTrackId}
+                      isPlaying={isPlaying}
+                    />
+                  </div>
+                ) : (
+                  <PaneSkeleton title="本地音乐" />
+                )}
+              </div>
             </div>
           </div>
         </div>

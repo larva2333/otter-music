@@ -8,6 +8,7 @@ import { useUrlCacheStore } from "@/store/url-cache-store";
 import { resolveTrackUrl } from "@/lib/audio-resolver";
 import { getProxyUrl } from "@/lib/api";
 import { resolveViaHigequFallback } from "@/lib/higequ/higequ-fallback";
+import { resolveViaCrossPlatform } from "@/lib/cross-platform-fallback";
 import toast from "react-hot-toast";
 import type { MusicTrack } from "@/types/music";
 
@@ -32,12 +33,12 @@ vi.mock("@/lib/api/config", () => ({
   IS_NATIVE: false,
 }));
 
-vi.mock("@/lib/audio-match", () => ({
-  handleAutoMatch: vi.fn().mockResolvedValue(false),
-}));
-
 vi.mock("@/lib/higequ/higequ-fallback", () => ({
   resolveViaHigequFallback: vi.fn().mockResolvedValue(null),
+}));
+
+vi.mock("@/lib/cross-platform-fallback", () => ({
+  resolveViaCrossPlatform: vi.fn().mockResolvedValue(null),
 }));
 
 vi.mock("react-hot-toast", () => ({
@@ -65,6 +66,13 @@ const TRACK_2 = {
   ...TRACK,
   id: "t2",
   name: "Second Song",
+} as unknown as MusicTrack;
+
+const VIP_NETEASE_TRACK = {
+  ...TRACK,
+  id: "vip-1",
+  source: "_netease",
+  privilege: { fee: 1 },
 } as unknown as MusicTrack;
 
 /** 单一品质音源样本（站点恒定 128kbps mp3，切音质无流可换） */
@@ -135,6 +143,8 @@ describe("useAudioTrackLoader", () => {
     vi.mocked(resolveTrackUrl).mockResolvedValue({ url: MOCK_URL });
     vi.mocked(resolveViaHigequFallback).mockReset();
     vi.mocked(resolveViaHigequFallback).mockResolvedValue(null);
+    vi.mocked(resolveViaCrossPlatform).mockReset();
+    vi.mocked(resolveViaCrossPlatform).mockResolvedValue(null);
   });
 
   afterEach(() => {
@@ -269,6 +279,87 @@ describe("useAudioTrackLoader", () => {
     expect(play).toHaveBeenCalledTimes(2);
     expect(audio.src).toContain("higequ.mp3");
     expect(useMusicStore.getState().currentAudioOrigin?.via).toBe("higequ");
+    cleanup();
+  });
+
+  it("跨平台与嗨歌曲同时发起，先拿到链接的胜出", async () => {
+    useMusicStore.setState({ enableAutoMatch: true });
+    let resolveCross!: (
+      value: { url: string; track: MusicTrack } | null
+    ) => void;
+    let resolveHigequ!: (
+      value: { url: string; trackId: string } | null
+    ) => void;
+    vi.mocked(resolveViaCrossPlatform).mockImplementation(
+      () =>
+        new Promise((res) => {
+          resolveCross = res;
+        })
+    );
+    vi.mocked(resolveViaHigequFallback).mockImplementation(
+      () =>
+        new Promise((res) => {
+          resolveHigequ = res;
+        })
+    );
+
+    const { audio, cleanup } = await setup((a) => {
+      a.play = vi
+        .fn()
+        .mockRejectedValueOnce(new Error("PLAY_FAIL"))
+        .mockResolvedValue(undefined);
+    });
+    await flushAsync();
+
+    // 两个搜索都已发出：不等先发的那个返回
+    expect(resolveViaCrossPlatform).toHaveBeenCalledTimes(1);
+    expect(resolveViaHigequFallback).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      resolveHigequ({
+        url: "https://cdn.example.com/higequ.mp3",
+        trackId: "h1",
+      });
+      await drainMicrotasks();
+      await new Promise((r) => setTimeout(r, 0));
+      await drainMicrotasks();
+    });
+
+    expect(audio.src).toContain("higequ.mp3");
+    // 迟到的跨平台结果不得覆盖已经胜出的链接
+    resolveCross({ url: "https://cdn.example.com/cross.mp3", track: TRACK });
+    expect(audio.src).toContain("higequ.mp3");
+    cleanup();
+  });
+
+  it("网易会员曲在所有替代源失败后播放官方试听片段", async () => {
+    useMusicStore.setState({
+      queue: [VIP_NETEASE_TRACK],
+      currentIndex: 0,
+      enableAutoMatch: false,
+    });
+    const PREVIEW = "https://music.126.net/preview.mp3";
+    vi.mocked(resolveTrackUrl)
+      .mockRejectedValueOnce(new Error("VIP_NO_ACCESS"))
+      .mockResolvedValueOnce({
+        url: PREVIEW,
+        origin: { via: "official", source: "_netease" },
+      });
+
+    const { audio, cleanup } = await setup((a) => {
+      a.play = vi.fn().mockResolvedValue(undefined);
+    });
+    await flushAsync();
+
+    expect(resolveTrackUrl).toHaveBeenNthCalledWith(2, VIP_NETEASE_TRACK, 320, {
+      forceRefresh: true,
+      allowVipPreview: true,
+    });
+    expect(resolveViaCrossPlatform).not.toHaveBeenCalled();
+    expect(resolveViaHigequFallback).not.toHaveBeenCalled();
+    expect(audio.src).toBe(PREVIEW);
+    expect(useMusicStore.getState().currentAudioOrigin?.via).toBe("official");
+    expect(toast.error).not.toHaveBeenCalled();
     cleanup();
   });
 

@@ -56,6 +56,8 @@ function cacheKey(url: string, mode: ColorMode) {
   return `${mode}|${url}`;
 }
 
+let persistTimer: ReturnType<typeof setTimeout> | null = null;
+
 function remember(key: string, colors: SodaColors) {
   colorCache.set(key, colors);
   if (colorCache.size > CACHE_LIMIT) {
@@ -63,14 +65,19 @@ function remember(key: string, colors: SodaColors) {
     if (oldest !== undefined) colorCache.delete(oldest);
   }
 
-  try {
-    globalThis.localStorage?.setItem(
-      CACHE_STORAGE_KEY,
-      JSON.stringify([...colorCache])
-    );
-  } catch {
-    // 隐私模式 / 配额满：只保留内存缓存，不影响取色本身
-  }
+  // 延迟落盘：避免切歌动画途中同步 JSON.stringify 60 条缓存占主线程
+  if (persistTimer !== null) clearTimeout(persistTimer);
+  persistTimer = setTimeout(() => {
+    persistTimer = null;
+    try {
+      globalThis.localStorage?.setItem(
+        CACHE_STORAGE_KEY,
+        JSON.stringify([...colorCache])
+      );
+    } catch {
+      // 隐私模式 / 配额满：只保留内存缓存，不影响取色本身
+    }
+  }, 50);
 }
 
 /** 以 crossOrigin 加载图片，跨域封面无 CORS 头时由 getImageData 抛错走 error 分支 */
@@ -95,6 +102,29 @@ async function extractFromUrl(
   canvas.height = SAMPLE_SIZE;
   const ctx = canvas.getContext("2d", { willReadFrequently: true });
   if (!ctx) throw new Error("Canvas 2D 上下文不可用");
+
+  // 用 createImageBitmap 在后台线程完成解码与缩放到 96×96，避免主线程 getImageData 同步解码卡顿
+  if (typeof createImageBitmap === "function") {
+    try {
+      const bitmap = await createImageBitmap(img, {
+        resizeWidth: SAMPLE_SIZE,
+        resizeHeight: SAMPLE_SIZE,
+      });
+      try {
+        ctx.drawImage(bitmap, 0, 0);
+      } finally {
+        bitmap.close();
+      }
+      const data = ctx.getImageData(0, 0, SAMPLE_SIZE, SAMPLE_SIZE).data;
+      return extractColorsOffThread(data, mode);
+    } catch {
+      // 部分环境下 createImageBitmap 不支持某些图床/CORS，回退到 img 直接绘制
+    }
+  }
+
+  if (typeof img.decode === "function") {
+    await img.decode().catch(() => {});
+  }
   ctx.drawImage(img, 0, 0, SAMPLE_SIZE, SAMPLE_SIZE);
   const data = ctx.getImageData(0, 0, SAMPLE_SIZE, SAMPLE_SIZE).data;
   return extractColorsOffThread(data, mode);

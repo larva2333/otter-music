@@ -82,6 +82,7 @@ describe("app-store persistence (partialize)", () => {
       hasUpdate: false,
       lastCheckTime: 0,
       updateDialogRequested: false,
+      updateDialogAutoShown: false,
     });
   });
 
@@ -153,7 +154,40 @@ describe("checkUpdate", () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
 
     expect(useAppStore.getState().updateDialogRequested).toBe(true);
+    expect(useAppStore.getState().updateDialogAutoShown).toBe(true);
     expect(router.navigate).toHaveBeenCalledWith("/settings");
+  });
+
+  it("autoOpenUpdateDialogOnce 同会话只触发一次且不持久化", () => {
+    useAppStore.setState({
+      hasUpdate: false,
+      updateDialogRequested: false,
+      updateDialogAutoShown: false,
+    });
+    expect(useAppStore.getState().autoOpenUpdateDialogOnce()).toBe(false);
+    expect(useAppStore.getState().updateDialogRequested).toBe(false);
+
+    useAppStore.setState({ hasUpdate: true });
+    expect(useAppStore.getState().autoOpenUpdateDialogOnce()).toBe(true);
+    expect(useAppStore.getState().updateDialogRequested).toBe(true);
+    expect(useAppStore.getState().updateDialogAutoShown).toBe(true);
+
+    // 模拟用户关闭弹窗后同会话再次进设置
+    useAppStore.getState().consumeUpdateDialogRequest();
+    expect(useAppStore.getState().updateDialogRequested).toBe(false);
+    expect(useAppStore.getState().autoOpenUpdateDialogOnce()).toBe(false);
+    expect(useAppStore.getState().updateDialogRequested).toBe(false);
+
+    // 不应被 partialize 持久化到存储
+    const calls = vi
+      .mocked(idbStorage.setItem)
+      .mock.calls.filter(([name]) => name === storeKey.AppStore);
+    const lastCall = calls[calls.length - 1];
+    if (lastCall) {
+      const persisted = JSON.parse(lastCall[1]);
+      expect(persisted.state.updateDialogAutoShown).toBeUndefined();
+      expect(persisted.state.updateDialogRequested).toBeUndefined();
+    }
   });
 
   it("多次检查更新时 toast 用固定 id 且带显式时长，不会堆叠或常驻", async () => {

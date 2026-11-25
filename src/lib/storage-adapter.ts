@@ -26,6 +26,98 @@ const readBlocked = new Set<string>();
 const lastMirrorAt = new Map<string, number>();
 
 /**
+ * 写入合并窗口（ms）：切歌瞬间会产生 5~8 次 store 更新（currentIndex、origin、
+ * history、offline、urlCache），若每次立即写 500KB+ IndexedDB，会把主线程与
+ * 事务队列堵死 70~100ms 拖垮唱臂动画。这里按 key 防抖合并，在页面隐藏/卸载时立即落盘。
+ */
+const WRITE_COALESCE_MS = 700;
+
+interface PendingWrite {
+  value: string;
+  timer: ReturnType<typeof setTimeout>;
+  waiters: Array<{ resolve: () => void; reject: (err: unknown) => void }>;
+}
+
+const pendingWrites = new Map<string, PendingWrite>();
+
+async function commitWrite(name: string, value: string): Promise<void> {
+  if (readBlocked.has(name)) {
+    logger.warn(
+      "storage-adapter",
+      `[Storage] ${name} 读取失败过，跳过本次写回`
+    );
+    return;
+  }
+
+  if (reading.has(name)) {
+    logger.warn(
+      "storage-adapter",
+      `[Storage] ${name} 仍在读盘，丢弃这次写回（hydration 前的 setState）`
+    );
+    return;
+  }
+
+  // 写前留镜像：只在间隔外做，且镜像必须是「写之前那份完整数据」
+  try {
+    const now = Date.now();
+    const last = lastMirrorAt.get(name) ?? 0;
+    if (now - last >= MIRROR_INTERVAL_MS) {
+      const previous = await get<string>(name);
+      if (previous && previous !== value) {
+        await set(name + MIRROR_SUFFIX, previous);
+        lastMirrorAt.set(name, now);
+      }
+    }
+  } catch (error) {
+    // 镜像失败不能影响主写入，否则用户以为存上了其实没存
+    logger.warn(
+      "storage-adapter",
+      `[Storage] ${name} 写入镜像失败，继续写主槽`,
+      error
+    );
+  }
+
+  await set(name, value);
+}
+
+function flushWrite(name: string): Promise<void> {
+  const entry = pendingWrites.get(name);
+  if (!entry) return Promise.resolve();
+  pendingWrites.delete(name);
+  clearTimeout(entry.timer);
+  return commitWrite(name, entry.value).then(
+    () => {
+      entry.waiters.forEach((w) => w.resolve());
+    },
+    (err) => {
+      entry.waiters.forEach((w) => w.reject(err));
+      throw err;
+    }
+  );
+}
+
+function flushAllPendingWrites(): void {
+  for (const name of [...pendingWrites.keys()]) {
+    void flushWrite(name).catch(() => {});
+  }
+}
+
+if (
+  typeof document !== "undefined" &&
+  typeof document.addEventListener === "function"
+) {
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "hidden") flushAllPendingWrites();
+  });
+}
+if (
+  typeof window !== "undefined" &&
+  typeof window.addEventListener === "function"
+) {
+  window.addEventListener("pagehide", flushAllPendingWrites);
+}
+
+/**
  * 迁移 localStorage 里的旧数据（Web 端升级路径）。
  * 返回 null 表示两边都没有。
  */
@@ -67,6 +159,9 @@ async function migrateFromLocalStorage(name: string): Promise<string | null> {
  */
 export const idbStorage: StateStorage = {
   getItem: async (name: string): Promise<string | null> => {
+    const buffered = pendingWrites.get(name);
+    if (buffered) return buffered.value;
+
     reading.add(name);
 
     try {
@@ -100,13 +195,13 @@ export const idbStorage: StateStorage = {
     }
   },
 
-  setItem: async (name: string, value: string): Promise<void> => {
+  setItem: (name: string, value: string): Promise<void> => {
     if (readBlocked.has(name)) {
       logger.warn(
         "storage-adapter",
         `[Storage] ${name} 读取失败过，跳过本次写回`
       );
-      return;
+      return Promise.resolve();
     }
 
     if (reading.has(name)) {
@@ -114,33 +209,39 @@ export const idbStorage: StateStorage = {
         "storage-adapter",
         `[Storage] ${name} 仍在读盘，丢弃这次写回（hydration 前的 setState）`
       );
-      return;
+      return Promise.resolve();
     }
 
-    // 写前留镜像：只在间隔外做，且镜像必须是「写之前那份完整数据」
-    try {
-      const now = Date.now();
-      const last = lastMirrorAt.get(name) ?? 0;
-      if (now - last >= MIRROR_INTERVAL_MS) {
-        const previous = await get<string>(name);
-        if (previous && previous !== value) {
-          await set(name + MIRROR_SUFFIX, previous);
-          lastMirrorAt.set(name, now);
-        }
+    return new Promise<void>((resolve, reject) => {
+      const existing = pendingWrites.get(name);
+      if (existing) {
+        clearTimeout(existing.timer);
+        existing.value = value;
+        existing.waiters.push({ resolve, reject });
+        existing.timer = setTimeout(() => {
+          void flushWrite(name).catch(() => {});
+        }, WRITE_COALESCE_MS);
+        return;
       }
-    } catch (error) {
-      // 镜像失败不能影响主写入，否则用户以为存上了其实没存
-      logger.warn(
-        "storage-adapter",
-        `[Storage] ${name} 写入镜像失败，继续写主槽`,
-        error
-      );
-    }
 
-    await set(name, value);
+      const entry: PendingWrite = {
+        value,
+        waiters: [{ resolve, reject }],
+        timer: setTimeout(() => {
+          void flushWrite(name).catch(() => {});
+        }, WRITE_COALESCE_MS),
+      };
+      pendingWrites.set(name, entry);
+    });
   },
 
   removeItem: async (name: string): Promise<void> => {
+    const pending = pendingWrites.get(name);
+    if (pending) {
+      pendingWrites.delete(name);
+      clearTimeout(pending.timer);
+      pending.waiters.forEach((w) => w.resolve());
+    }
     await del(name);
     await del(name + MIRROR_SUFFIX);
     readBlocked.delete(name);

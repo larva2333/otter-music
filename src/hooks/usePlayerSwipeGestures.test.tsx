@@ -5,6 +5,7 @@ import {
   consumeSwipeArmCut,
   usePlayerSwipeGestures,
 } from "./usePlayerSwipeGestures";
+import { cancelArmCut, registerArm } from "@/lib/vinyl-arm";
 
 describe("usePlayerSwipeGestures 播放页手势", () => {
   beforeEach(() => {
@@ -15,6 +16,8 @@ describe("usePlayerSwipeGestures 播放页手势", () => {
   });
 
   afterEach(() => {
+    cancelArmCut();
+    registerArm(null);
     vi.useRealTimers();
   });
 
@@ -400,6 +403,9 @@ describe("usePlayerSwipeGestures 播放页手势", () => {
       "http://www.w3.org/2000/svg",
       "svg"
     ) as SVGSVGElement;
+    // 真实场景里 VinylCover 会把唱臂初始化在播放位绝对角 -4° 并注册给控制器
+    arm.style.rotate = "-4deg";
+    registerArm(arm);
     const dragRefs = {
       cover: { current: cover },
       tonearm: { current: tonearm },
@@ -469,31 +475,29 @@ describe("usePlayerSwipeGestures 播放页手势", () => {
     h.container.remove();
   });
 
-  it("切歌时唱臂停在切割位，等下一张唱片就绪再转回播放位", () => {
+  it("切歌时唱臂连续匀速完成抬臂与落针，不在半空干等网络就绪", () => {
     const h = renderArmHarness();
 
     h.drag(400, 150);
+    const releaseAngle = h.angle();
+    expect(releaseAngle).toBeLessThan(-4);
+    expect(releaseAngle).toBeGreaterThan(-40);
+
     act(() => h.latest().handlers.onTouchEnd());
 
-    // 松手确认切歌：先甩到与暂停同幅的切割角（svg 增量 36°），不立刻归零
+    // 松手确认切歌：按剩余角度比例补完抬臂（而非固定慢拖 300ms）
     expect(h.onNext).toHaveBeenCalled();
-    expect(h.angle()).toBeCloseTo(-36, 1);
+    expect(h.angle()).toBeCloseTo(-40, 1);
 
-    // 横滑已经自己演完抬臂/回落，标记给播放页跳过它那套荡开补间
+    // 横滑已经自己演完抬臂，标记给播放页跳过它那套补间
     expect(consumeSwipeArmCut()).toBe(true);
 
-    // 新唱片的入场过渡还没走完，唱臂继续停在切割位
+    // 约 (40 + releaseAngle) / 0.12 ms 后（≤300ms）立即匀速落回 -4°（无需等待网络事件）
     act(() => {
       vi.advanceTimersByTime(300);
     });
-    expect(h.angle()).toBeCloseTo(-36, 1);
-
-    // 唱片落位后自己转回播放位
-    act(() => {
-      vi.advanceTimersByTime(80);
-    });
-    expect(h.arm.style.rotate).toBe("0deg");
-    expect(h.arm.style.transition).toContain("rotate");
+    expect(h.arm.style.rotate).toBe("-4deg");
+    expect(h.arm.style.transition).toBe("rotate 300ms linear");
 
     act(() => h.root.unmount());
     h.container.remove();
@@ -502,15 +506,17 @@ describe("usePlayerSwipeGestures 播放页手势", () => {
   it("暂停状态下唱臂已在暂停位，横滑不会再往上堆角度", () => {
     const h = renderArmHarness();
 
-    // 暂停时 VinylCover 给的基准角是 -40°，与抬臂目标同一个位置
-    h.arm.style.transform = "rotate(-40deg)";
+    // 暂停时 VinylCover 把唱臂停在绝对角 -40°
+    h.arm.style.rotate = "-40deg";
 
     h.drag(400, 250);
-    expect(h.angle()).toBe(0);
+    // 起手就在 -40°，没有可抬的余量，角度不变
+    expect(h.angle()).toBe(-40);
 
     act(() => h.latest().handlers.onTouchEnd());
-    // 切歌后停在同一个位置（不再有额外增量），随后自然落回播放位
-    expect(h.angle()).toBe(0);
+    // 切歌后直接从 -40° 匀速落回播放位 -4°（300ms）
+    expect(h.angle()).toBe(-4);
+    expect(h.arm.style.transition).toBe("rotate 300ms linear");
 
     act(() => h.root.unmount());
     h.container.remove();
@@ -540,7 +546,8 @@ describe("usePlayerSwipeGestures 播放页手势", () => {
     act(() => h.latest().handlers.onTouchEnd());
 
     expect(h.onNext).not.toHaveBeenCalled();
-    expect(h.arm.style.rotate).toBe("0deg");
+    // 没切成歌就落回起手的播放位 -4°
+    expect(h.arm.style.rotate).toBe("-4deg");
 
     act(() => h.root.unmount());
     h.container.remove();

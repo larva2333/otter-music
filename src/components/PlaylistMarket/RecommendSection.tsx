@@ -108,19 +108,26 @@ export function RecommendSection({
   const [playlistsLoading, setPlaylistsLoading] = useState(false);
   const [playlistsError, setPlaylistsError] = useState(false);
 
-  const fetchPlaylists = useCallback(async () => {
-    setPlaylistsError(false);
-    setPlaylistsLoading(true);
-    try {
-      const list = await getRecommendPlaylists(cookie);
-      setMineData({ recommend: list });
-    } catch (err) {
-      logger.error("RecommendSection", "Recommend playlists load failed", err);
-      setPlaylistsError(true);
-    } finally {
-      setPlaylistsLoading(false);
-    }
-  }, [cookie, setMineData]);
+  const fetchPlaylists = useCallback(
+    async (forceRefresh = false) => {
+      setPlaylistsError(false);
+      setPlaylistsLoading(true);
+      try {
+        const list = await getRecommendPlaylists(cookie, forceRefresh);
+        setMineData({ recommend: list });
+      } catch (err) {
+        logger.error(
+          "RecommendSection",
+          "Recommend playlists load failed",
+          err
+        );
+        setPlaylistsError(true);
+      } finally {
+        setPlaylistsLoading(false);
+      }
+    },
+    [cookie, setMineData]
+  );
 
   useEffect(() => {
     if (dailyTracks.length === 0 && !dailyLoading && !dailyError) {
@@ -146,7 +153,7 @@ export function RecommendSection({
           await shuffleDailySongs();
         } else {
           setMineData({ recommend: null });
-          await fetchPlaylists();
+          await fetchPlaylists(true);
         }
       },
     }
@@ -225,7 +232,7 @@ export function RecommendSection({
             <EmptyState
               text="加载失败，请重试"
               action={
-                <Button size="sm" onClick={fetchPlaylists}>
+                <Button size="sm" onClick={() => void fetchPlaylists()}>
                   重试
                 </Button>
               }

@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { applyEmoji, formatComment, formatComments } from "./comment-format";
+import {
+  applyEmoji,
+  formatComment,
+  formatCommentTime,
+  formatComments,
+} from "./comment-format";
 import type { NeteaseComment } from "./netease-raw-types";
 
 const raw: NeteaseComment = {
@@ -54,5 +59,34 @@ describe("评论格式化（对齐洛雪 filterComment）", () => {
   it("空列表返回空数组", () => {
     expect(formatComments()).toEqual([]);
     expect(formatComments(undefined)).toEqual([]);
+  });
+
+  it("拿不到时间时返回空串，不显示 1970 年", () => {
+    for (const bad of [
+      undefined,
+      null,
+      "",
+      0,
+      -1,
+      1000,
+      150000000,
+      "abc",
+      NaN,
+    ]) {
+      expect(formatCommentTime(bad)).toBe("");
+      expect(formatComment({ ...raw, time: Number(bad) || 0 }).timeStr).toBe(
+        ""
+      );
+    }
+    // 明显超前的时间同样是脏数据
+    expect(formatCommentTime(Date.now() + 30 * 24 * 60 * 60 * 1000)).toBe("");
+  });
+
+  it("秒级时间戳也能正确格式化，酷我按秒传入", () => {
+    const d = new Date(1700000000000);
+    const pad = (n: number) => String(n).padStart(2, "0");
+    const expected = `${d.getFullYear()}.${pad(d.getMonth() + 1)}.${pad(d.getDate())}`;
+    expect(formatCommentTime(1700000000, "ms")).toBe(expected);
+    expect(formatCommentTime(1700000000, "s")).toBe(expected);
   });
 });

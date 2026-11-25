@@ -21,9 +21,12 @@ import {
   type ColorMode,
   type SodaColors,
 } from "@/lib/utils/soda-color";
+import { renderThemeBackgroundPixels } from "@/lib/theme-background";
 import type {
   CoverColorRequest,
   CoverColorResponse,
+  ThemeBackgroundRequest,
+  WorkerRequest,
 } from "./cover-color.worker";
 
 /**
@@ -35,7 +38,7 @@ import type {
 const REQUEST_TIMEOUT_MS = 2000;
 
 interface PendingRequest {
-  resolve: (colors: SodaColors) => void;
+  resolve: (response: CoverColorResponse) => void;
   reject: (error: Error) => void;
   timer: ReturnType<typeof setTimeout>;
 }
@@ -86,15 +89,16 @@ function ensureWorker(): Worker | null {
   }
 
   worker.onmessage = (event: MessageEvent<CoverColorResponse>) => {
-    const { id, colors, error } = event.data ?? {};
+    const data = event.data ?? {};
+    const { id, error } = data;
     const item = pending.get(id);
     if (!item) return;
     pending.delete(id);
     clearTimeout(item.timer);
-    if (error || !colors) {
-      item.reject(new Error(error ?? "COVER_COLOR_EMPTY_RESULT"));
+    if (error) {
+      item.reject(new Error(error));
     } else {
-      item.resolve(colors);
+      item.resolve(data);
     }
   };
 
@@ -106,12 +110,11 @@ function ensureWorker(): Worker | null {
   return worker;
 }
 
-function request(
+function sendRequest(
   target: Worker,
-  pixels: Uint8ClampedArray,
-  mode: ColorMode
-): Promise<SodaColors> {
-  return new Promise<SodaColors>((resolve, reject) => {
+  buildMessage: (id: number) => WorkerRequest
+): Promise<CoverColorResponse> {
+  return new Promise<CoverColorResponse>((resolve, reject) => {
     const id = ++requestSeq;
     const timer = setTimeout(() => {
       pending.delete(id);
@@ -119,7 +122,7 @@ function request(
     }, REQUEST_TIMEOUT_MS);
     pending.set(id, { resolve, reject, timer });
 
-    const message: CoverColorRequest = { id, pixels, mode };
+    const message = buildMessage(id);
     try {
       target.postMessage(message);
     } catch (err) {
@@ -144,10 +147,52 @@ export async function extractColorsOffThread(
   if (!target) return extractFromPixels(pixels, mode);
 
   try {
-    return await request(target, pixels, mode);
+    const res = await sendRequest(
+      target,
+      (id): CoverColorRequest => ({ id, pixels, mode })
+    );
+    if (!res.colors) throw new Error("COVER_COLOR_EMPTY_RESULT");
+    return res.colors;
   } catch (err) {
     logger.warn("cover-color-client", "Worker 取色失败，主线程兜底", err);
     return extractFromPixels(pixels, mode);
+  }
+}
+
+/**
+ * 在 Worker 中合成全屏背景像素（渐变 + 光晕 + 压暗 + 2D 抖动），
+ * 零拷贝 transfer 回主线程，避免 300~460 万像素循环卡住切歌唱臂动画。
+ */
+export async function renderThemeBackgroundOffThread(
+  width: number,
+  height: number,
+  colors: SodaColors,
+  darkenMax?: number
+): Promise<Uint8ClampedArray<ArrayBuffer>> {
+  const W = width | 0;
+  const H = height | 0;
+  if (W <= 0 || H <= 0) return new Uint8ClampedArray(new ArrayBuffer(0));
+
+  const target = ensureWorker();
+  if (!target) return renderThemeBackgroundPixels(W, H, colors, darkenMax);
+
+  try {
+    const res = await sendRequest(
+      target,
+      (id): ThemeBackgroundRequest => ({
+        id,
+        type: "theme-bg",
+        width: W,
+        height: H,
+        colors,
+        darkenMax: darkenMax ?? 0.55,
+      })
+    );
+    if (!res.buffer) throw new Error("THEME_BG_EMPTY_RESULT");
+    return new Uint8ClampedArray(res.buffer);
+  } catch (err) {
+    logger.warn("cover-color-client", "Worker 背景绘制失败，主线程兜底", err);
+    return renderThemeBackgroundPixels(W, H, colors, darkenMax);
   }
 }
 

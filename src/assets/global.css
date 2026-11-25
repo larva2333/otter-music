@@ -523,9 +523,11 @@
   will-change: transform;
 }
 
-/* 图片已经盖上来之后停止扫光，避免几十个不可见动画一直占 GPU */
+/* 图片已经盖上来之后停止扫光并释放合成层，避免几百个隐形 will-change 层拖慢滑动 Layerize */
 .skeleton-shimmer.is-idle::after {
   animation: none;
+  will-change: auto;
+  display: none;
 }
 
 @media (prefers-reduced-motion: reduce) {

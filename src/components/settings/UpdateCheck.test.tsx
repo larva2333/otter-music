@@ -51,6 +51,7 @@ describe("UpdateCheck", () => {
       hasUpdate: true,
       lastCheckTime: Date.now(),
       updateDialogRequested: false,
+      updateDialogAutoShown: false,
     });
   });
 
@@ -62,14 +63,15 @@ describe("UpdateCheck", () => {
     container = undefined;
   });
 
-  const render = () => {
+  const render = (isActive?: boolean) => {
     container = document.createElement("div");
     document.body.appendChild(container);
     root = createRoot(container);
-    act(() => root?.render(<UpdateCheck />));
+    act(() => root?.render(<UpdateCheck isActive={isActive} />));
   };
 
   it("点版本号也能打开更新弹窗", () => {
+    useAppStore.setState({ hasUpdate: false });
     render();
 
     expect(document.body.textContent).not.toContain("最近检查");
@@ -86,15 +88,35 @@ describe("UpdateCheck", () => {
     expect(document.body.textContent).toContain("检查更新");
   });
 
-  it("从新版本 toast 跳转过来时自动打开弹窗", () => {
-    useAppStore.setState({ updateDialogRequested: true });
+  it("从新版本 toast 跳转过来时自动打开弹窗，且更新信息刷新后不会被误关", () => {
+    useAppStore.setState({
+      updateDialogRequested: true,
+      updateDialogAutoShown: true,
+    });
     render();
+
+    expect(document.body.textContent).toContain("最近检查");
+    expect(useAppStore.getState().updateDialogRequested).toBe(true);
+
+    // 模拟冷启动 checkUpdate 刚完成刷新 latestVersionInfo，不能触发 cleanup 关掉弹窗
+    act(() => {
+      useAppStore.setState({
+        hasUpdate: true,
+        latestVersionInfo: {
+          latestVersion: "9.9.9",
+          versionName: "9.9.9",
+          changelog: "",
+          publishDate: "2026-01-01T00:00:00Z",
+          downloadUrl: "",
+        } as never,
+      });
+    });
 
     expect(document.body.textContent).toContain("最近检查");
     expect(useAppStore.getState().updateDialogRequested).toBe(true);
   });
 
-  it("有新版本时进设置自动弹一次，同一版本第二次不再弹", () => {
+  it("有新版本时进设置自动弹一次，关掉后同一会话不再弹（不依赖 localStorage）", () => {
     localStorage.clear();
     useAppStore.setState({
       hasUpdate: true,
@@ -106,13 +128,18 @@ describe("UpdateCheck", () => {
         downloadUrl: "",
       } as never,
       updateDialogRequested: false,
+      updateDialogAutoShown: false,
     });
 
     render();
     expect(document.body.textContent).toContain("最近检查");
-    expect(localStorage.getItem("otter_update_auto_shown_9.9.9")).toBe("1");
+    expect(useAppStore.getState().updateDialogAutoShown).toBe(true);
+    expect(localStorage.getItem("otter_update_auto_shown_9.9.9")).toBeNull();
 
-    // 关掉再重进，同一版本不应再自动弹
+    // 关闭弹窗后重进，同一会话不应再自动弹
+    act(() => {
+      useAppStore.getState().consumeUpdateDialogRequest();
+    });
     act(() => root?.unmount());
     root = undefined;
     container?.remove();
@@ -120,8 +147,28 @@ describe("UpdateCheck", () => {
     expect(document.body.textContent).not.toContain("最近检查");
   });
 
+  it("tab 保活隐藏期间（isActive=false）不在后台偷跑，切回激活态后正常弹出", () => {
+    useAppStore.setState({
+      hasUpdate: false,
+      updateDialogRequested: false,
+      updateDialogAutoShown: false,
+    });
+    render(false);
+
+    // 后台检测出新版本，但设置页处于隐藏态
+    act(() => {
+      useAppStore.setState({ hasUpdate: true });
+    });
+    expect(document.body.textContent).not.toContain("最近检查");
+    expect(useAppStore.getState().updateDialogAutoShown).toBe(false);
+
+    // 切回设置页（激活）后自动弹出
+    act(() => root?.render(<UpdateCheck isActive={true} />));
+    expect(document.body.textContent).toContain("最近检查");
+    expect(useAppStore.getState().updateDialogAutoShown).toBe(true);
+  });
+
   it("没有新版本时不自动弹", () => {
-    localStorage.clear();
     useAppStore.setState({ hasUpdate: false, latestVersionInfo: null });
     render();
     expect(document.body.textContent).not.toContain("最近检查");

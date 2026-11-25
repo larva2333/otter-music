@@ -23,10 +23,10 @@
 
 每步前后各读一次 `settings get system accelerometer_rotation`：
 
-| 实验                                      | 结果                  | 结论                   |
-| ----------------------------------------- | --------------------- | ---------------------- |
-| 仅执行 `adb install -r`（无任何其他操作） | 0 → 0                 | **安装命令本身不触发** |
-| force-stop 后仅启动 app（monkey 拉起）    | 0 → 1，两次复现，必现 | **启动 app 是触发源**  |
+| 实验                                      | 结果                  | 结论                                                                |
+| ----------------------------------------- | --------------------- | ------------------------------------------------------------------- |
+| 仅执行 `adb install -r`（无任何其他操作） | 0 → 0                 | **安装命令本身不触发**                                              |
+| force-stop 后仅启动 app（monkey 拉起）    | 0 → 1，两次复现，必现 | **当次误判为启动 app 触发（实际是 monkey 命令触发，见第八节订正）** |
 
 logcat 佐证：app 启动后 `sensors-hal` 立即出现 accelerometer 传感器订阅日志（对应系统旋转监听开启），与自动旋转被打开的行为一致。
 
@@ -67,3 +67,23 @@ logcat 佐证：app 启动后 `sensors-hal` 立即出现 accelerometer 传感器
 - 全局记忆规则：`~/.workbuddy/user-…/MEMORY.md`（真机 / adb 操作一节）
 - 工作日志：`.workbuddy/memory/2026-11-19.md`
 - 相关代码：`android/app/src/main/java/com/otterhub/music/MainActivity.java`（setRequestedOrientation 拦截）、`src/hooks/useLandscapeMode.ts`（横屏沉浸模式）
+
+## 八、真因订正（2026-11-25 复查）
+
+2026-11-25 在同款真机（小米 14，v2.7.23）补做精确对照实验，推翻第五节「启动水獭音乐本身触发」的推测，定位到真正根因是 **`adb shell monkey` 命令本身**：
+
+| 实验                                                                                                       | 结果      | 说明                                                                                         |
+| ---------------------------------------------------------------------------------------------------------- | --------- | -------------------------------------------------------------------------------------------- |
+| `am force-stop com.otterhub.music` 后 `am start -n com.otterhub.music/.MainActivity`                       | 0 → **0** | 正常启动水獭音乐完全不会动方向锁定                                                           |
+| `am force-stop com.otterhub.music` 后 `monkey -p com.otterhub.music -c android.intent.category.LAUNCHER 1` | 0 → **1** | 触发 `ActivityTaskManager: setActivityController(..., imAMonkey=true)`，系统自动打开自动旋转 |
+| `monkey -p com.android.settings -c android.intent.category.LAUNCHER 1`                                     | 0 → **1** | 即使拉起系统「设置」而非水獭音乐，同样立即把 `accelerometer_rotation` 改为 1                 |
+
+### 为什么每次「装完打开」都会复现
+
+1. 装机流程（`.workbuddy/memory/MEMORY.md` 第 6 步）在每次 `adb install -r` 后使用 `adb shell monkey` 拉起 app 清缓存；
+2. 11-19 的排查实验本身也是用 `monkey` 拉起做的测试，把 `monkey` 的副作用误判成了 app 启动行为；之后流程重写时漏掉了 `settings put system accelerometer_rotation 0` 兜底，导致问题复发。
+
+### 根治方案
+
+- 所有装机/调试启动统一改用 `adb shell am start -n com.otterhub.music/.MainActivity`，**禁止使用 `adb shell monkey` 拉起应用**。
+- 已同步更新 `.workbuddy/memory/MEMORY.md` 的装机规范。

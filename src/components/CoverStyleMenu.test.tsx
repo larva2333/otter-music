@@ -5,6 +5,42 @@ import { CoverStyleMenu } from "./CoverStyleMenu";
 import { useExitLayerStore } from "@/hooks/useExitLayer";
 import { useMusicStore } from "@/store/music-store";
 
+const nativeState = vi.hoisted(() => ({ value: false }));
+vi.mock("@/lib/api/config", () => ({
+  get IS_NATIVE() {
+    return nativeState.value;
+  },
+}));
+vi.mock("@/plugins/local-music", () => ({
+  LocalMusicPlugin: {
+    pickBackgroundImage: vi.fn(async () => ({
+      success: true,
+      dataUrl: "data:image/jpeg;base64,AA",
+    })),
+  },
+}));
+
+// 裁剪器在本文件里只关心「确定」这一步；真实实现依赖 Canvas/手势，
+// 这里替换成一个直接回调的按钮，专测裁剪完的收尾流程。
+vi.mock("./BackgroundImageCropper", async () => {
+  const { createElement } = await import("react");
+  return {
+    BackgroundImageCropper: ({
+      onConfirm,
+    }: {
+      onConfirm: (url: string) => void;
+    }) =>
+      createElement(
+        "button",
+        {
+          type: "button",
+          onClick: () => onConfirm("data:image/jpeg;base64,BB"),
+        },
+        "裁剪确定"
+      ),
+  };
+});
+
 vi.mock("@/lib/storage-adapter", () => ({
   idbStorage: {
     getItem: vi.fn(),
@@ -23,6 +59,7 @@ describe("CoverStyleMenu", () => {
     (
       globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }
     ).IS_REACT_ACT_ENVIRONMENT = true;
+    nativeState.value = false;
     useExitLayerStore.setState({ stack: [] });
     useMusicStore.setState({
       coverStyle: "original",
@@ -126,6 +163,42 @@ describe("CoverStyleMenu", () => {
 
     expect(clickSpy).toHaveBeenCalled();
     clickSpy.mockRestore();
+  });
+
+  it("裁剪确定后解码完再应用照片并关闭风格面板，不留黑遮罩", async () => {
+    // jsdom 不会真的解码 dataUrl，给预解码一个立即 onload 的替身
+    vi.stubGlobal(
+      "Image",
+      class {
+        onload: (() => void) | null = null;
+        onerror: (() => void) | null = null;
+        set src(_value: string) {
+          queueMicrotask(() => this.onload?.());
+        }
+      }
+    );
+    try {
+      nativeState.value = true;
+      await render(true);
+
+      await act(async () => {
+        findButton("我的照片")?.click();
+      });
+      expect(findButton("裁剪确定")).toBeTruthy();
+
+      await act(async () => {
+        findButton("裁剪确定")?.click();
+      });
+
+      expect(useMusicStore.getState().customBackgroundImage).toBe(
+        "data:image/jpeg;base64,BB"
+      );
+      expect(useMusicStore.getState().fullScreenBackgroundMode).toBe("photo");
+      // 面板那层 bg-black/60 遮罩必须一起撤掉，否则照片看起来是黑的
+      expect(onOpenChange).toHaveBeenCalledWith(false);
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 
   it("关闭按钮关闭面板", async () => {

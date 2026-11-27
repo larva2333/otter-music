@@ -32,6 +32,7 @@ export function HistoryPage({
     <PageLayout title="播放历史" onBack={onBack}>
       <MusicPlaylistView
         title="播放历史"
+        showInlineCover
         tracks={history}
         icon={<History className="h-8 w-8 text-primary/80" />}
         onPlay={onPlay}

@@ -1853,10 +1853,10 @@ export function MinePage({ onSelectPlaylist }: MinePageProps) {
                     <MusicPlaylistView
                       title="播放历史"
                       compactHeader
+                      showInlineCover
                       tracks={history}
                       icon={<History className="h-8 w-8 text-primary/80" />}
                       onPlay={historyOnPlay}
-                      incrementalBatch={MINE_LIST_PAGE_SIZE}
                       onRemove={(track) =>
                         useHistoryStore.getState().removeFromHistory(track.id)
                       }

@@ -457,7 +457,7 @@ describe("MusicSearchView", () => {
     expect(useExitLayerStore.getState().stack).toHaveLength(0);
   });
 
-  it("从搜索结果返回后搜索框失焦，再次聚焦能进入历史", async () => {
+  it("从搜索结果返回后清空搜索框、搜索框失焦并回到历史页面，再次返回回到发现页", async () => {
     localStorage.setItem("otter_search_history", JSON.stringify(["周杰伦"]));
     renderView();
     const input = await setInputValue("keyword");
@@ -470,15 +470,18 @@ describe("MusicSearchView", () => {
 
     expect(useMusicStore.getState().searchQuery).toBe("");
     expect(document.activeElement).not.toBe(input);
-    expect(container?.textContent).not.toContain("搜索历史");
+    expect(container?.textContent).toContain("搜索历史");
+    expect(container?.textContent).toContain("周杰伦");
 
     await act(async () => {
-      input.focus();
+      useExitLayerStore.getState().handleExit();
     });
     await flushEffects();
 
-    expect(container?.textContent).toContain("搜索历史");
-    expect(container?.textContent).toContain("周杰伦");
+    expect(container?.textContent).not.toContain("搜索历史");
+    expect(
+      container?.querySelector('[data-testid="playlist-market"]')
+    ).not.toBeNull();
   });
 
   it("返回发现页后点击空搜索框进入历史", async () => {
@@ -592,6 +595,14 @@ describe("MusicSearchView", () => {
     await flushEffects();
 
     expect(useMusicStore.getState().searchQuery).toBe("");
+    expect(container?.textContent).toContain("搜索历史");
+    expect(useExitLayerStore.getState().stack).toHaveLength(1);
+
+    await act(async () => {
+      useExitLayerStore.getState().handleExit();
+    });
+    await flushEffects();
+
     expect(
       container?.querySelector('[data-testid="playlist-market"]')
     ).not.toBeNull();

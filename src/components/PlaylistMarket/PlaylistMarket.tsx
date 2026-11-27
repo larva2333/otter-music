@@ -258,7 +258,7 @@ function MarketCategoryPane({
 
       {/* 页内标题行：只在「歌单广场」tab 显示 */}
       {barId === "全部" && (
-        <div className="flex items-center gap-2 px-5 pt-4 h-12">
+        <div className="flex items-center gap-2 px-5 h-[52px] pt-1 border-b">
           <PlaylistCategorySelector
             activeCategory={effectiveCategory}
             onSelect={handleFilterPick}

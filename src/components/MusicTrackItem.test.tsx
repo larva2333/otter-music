@@ -17,6 +17,7 @@ vi.mock("@/lib/storage-adapter", () => ({
 
 vi.mock("@/lib/music-api", () => ({
   musicApi: {
+    getSyncPic: vi.fn((id: string) => (id.startsWith("http") ? id : null)),
     getPic: vi.fn(() => new Promise(() => undefined)),
   },
 }));

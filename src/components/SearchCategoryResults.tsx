@@ -1,4 +1,5 @@
 import {
+  createRef,
   useCallback,
   useEffect,
   useLayoutEffect,
@@ -22,6 +23,8 @@ import {
 } from "@/lib/search-categories";
 import type { MusicTrack } from "@/types/music";
 import { MusicTrackList } from "./MusicTrackList";
+import { CachedImage } from "./CachedImage";
+import { t2s } from "@/lib/utils/t2s";
 
 interface SearchCategoryResultsProps {
   tab: SearchResultTab;
@@ -98,6 +101,13 @@ export function SearchCategoryResults({
   const paneRefs = useRef<
     Partial<Record<SearchResultTab, HTMLDivElement | null>>
   >({});
+  const [panelScrollRefs] = useState<
+    Record<Exclude<SearchResultTab, "song">, RefObject<HTMLDivElement | null>>
+  >(() => ({
+    artist: createRef<HTMLDivElement>(),
+    album: createRef<HTMLDivElement>(),
+    playlist: createRef<HTMLDivElement>(),
+  }));
 
   // 已访问过的 Tab 保持挂载（不卸载），避免来回切换时反复重建/闪骨架屏
   const [visitedTabs, setVisitedTabs] = useState<Set<SearchResultTab>>(
@@ -216,31 +226,25 @@ export function SearchCategoryResults({
   );
 
   // 让外部传入的 scrollContainerRef 始终指向当前激活 tab 的滚动容器
-  useEffect(() => {
+  useLayoutEffect(() => {
     scrollContainerRef.current = paneRefs.current[tab] ?? null;
   }, [tab, scrollContainerRef]);
 
   const groups = categories ?? EMPTY_SEARCH_CATEGORIES;
-  const categoryCount =
-    tab === "artist"
-      ? groups.artists.length
-      : tab === "album"
-        ? groups.albums.length
-        : tab === "playlist"
-          ? groups.playlists.length
-          : 0;
 
-  useAutoLoadMore({
-    containerRef: scrollContainerRef,
-    enabled: tab !== "song",
-    hasMore: categoryHasMore,
-    loading: categoryLoading,
-    onLoadMore: onLoadMoreCategories,
-    contentKey: categoryCount,
-  });
-
-  // 仅在新搜索结果到来/重置时将各面板滚回顶部，切换 Tab 保留各自滚动位置
+  // 仅在新搜索开始/重置时将各面板滚回顶部；翻页追加数据时保留当前滚动位置
+  const prevCategoriesRef = useRef<SearchCategoryGroups | null>(categories);
   useEffect(() => {
+    const prev = prevCategoriesRef.current;
+    prevCategoriesRef.current = categories;
+    const isReset =
+      categories === null ||
+      prev === null ||
+      categories.artists.length < prev.artists.length ||
+      categories.albums.length < prev.albums.length ||
+      categories.playlists.length < prev.playlists.length;
+    if (!isReset) return;
+
     SEARCH_RESULT_TABS.forEach((item) => {
       const el = paneRefs.current[item.id];
       if (el) el.scrollTop = 0;
@@ -302,6 +306,7 @@ export function SearchCategoryResults({
                   ref={(node) => {
                     paneRefs.current[item.id] = node;
                     if (item.id === "song") songScrollRef.current = node;
+                    else panelScrollRefs[item.id].current = node;
                     if (active) scrollContainerRef.current = node;
                   }}
                   data-page-scroll={active ? "" : undefined}
@@ -326,15 +331,19 @@ export function SearchCategoryResults({
                       autoLoadMore
                       onLoadMore={onLoadMore}
                       emptyMessage={loading ? "搜索中..." : EMPTY_LABEL.song}
+                      showInlineCover
                       showSourceBadge
                     />
                   ) : (
                     <CategoryPanel
                       tab={item.id}
+                      active={active}
+                      scrollRef={panelScrollRefs[item.id]}
                       categories={groups}
                       loading={loading && categories === null}
                       loadingMore={active ? categoryLoading : false}
                       hasMore={active ? categoryHasMore : false}
+                      onLoadMore={onLoadMoreCategories}
                       onOpenArtist={onOpenArtist}
                       onOpenAlbum={onOpenAlbum}
                       onOpenPlaylist={onOpenPlaylist}
@@ -352,29 +361,39 @@ export function SearchCategoryResults({
 
 function CategoryPanel({
   tab,
+  active,
+  scrollRef,
   categories,
   loading,
   loadingMore,
   hasMore,
+  onLoadMore,
   onOpenArtist,
   onOpenAlbum,
   onOpenPlaylist,
 }: {
   tab: Exclude<SearchResultTab, "song">;
+  active: boolean;
+  scrollRef: RefObject<HTMLDivElement | null>;
   categories: SearchCategoryGroups;
   loading?: boolean;
   loadingMore?: boolean;
   hasMore?: boolean;
+  onLoadMore?: () => void;
   onOpenArtist: (id: string) => void;
   onOpenAlbum: (id: string) => void;
   onOpenPlaylist: (id: string) => void;
 }) {
+  const columnLabel =
+    tab === "artist" ? "歌手" : tab === "album" ? "专辑" : "歌单";
+
   const rows =
     tab === "artist"
       ? categories.artists.map((item) => ({
           id: item.id,
           title: item.name,
           subtitle: "",
+          coverUrl: item.coverUrl,
           onClick: () => onOpenArtist(item.id),
         }))
       : tab === "album"
@@ -382,14 +401,25 @@ function CategoryPanel({
             id: item.id,
             title: item.name,
             subtitle: item.artistName,
+            coverUrl: item.coverUrl,
             onClick: () => onOpenAlbum(item.id),
           }))
         : categories.playlists.map((item) => ({
             id: item.id,
             title: item.name,
             subtitle: "",
+            coverUrl: item.coverUrl,
             onClick: () => onOpenPlaylist(item.id),
           }));
+
+  useAutoLoadMore({
+    containerRef: scrollRef,
+    enabled: active,
+    hasMore,
+    loading: loadingMore,
+    onLoadMore,
+    contentKey: `${tab}:${rows.length}`,
+  });
 
   if (rows.length === 0) {
     return (
@@ -401,21 +431,50 @@ function CategoryPanel({
 
   return (
     <div>
-      {rows.map((row) => (
+      {/* 表头：与歌曲列表 MusicTrackList 对齐（# + 列标题） */}
+      <div className="sticky top-0 z-20 border-b bg-background">
+        <div className="grid items-center px-4 h-10 text-sm font-bold text-muted-foreground gap-4 grid-cols-[1.75rem_1fr_auto]">
+          <div className="text-center">#</div>
+          <div>{columnLabel}</div>
+          <div />
+        </div>
+      </div>
+
+      {rows.map((row, index) => (
         <button
           key={row.id}
           type="button"
           onClick={row.onClick}
-          className="flex w-full items-center px-4 py-3 text-left active:bg-muted/60"
+          className="grid w-full items-center px-4 py-2.5 text-left text-sm gap-4 grid-cols-[1.75rem_1fr_auto] transition-colors hover:bg-muted/50 active:bg-muted/60"
         >
-          <span className="min-w-0 flex-1">
-            <span className="block truncate text-sm">{row.title}</span>
-            {row.subtitle ? (
-              <span className="block truncate text-xs text-muted-foreground">
-                {row.subtitle}
+          <div className="flex justify-center shrink-0">
+            <span className="font-mono text-muted-foreground opacity-70">
+              {index + 1}
+            </span>
+          </div>
+
+          <div className="min-w-0 flex items-center gap-2.5">
+            <div
+              className={cn(
+                "relative h-9 w-9 shrink-0 overflow-hidden bg-muted",
+                tab === "artist" ? "rounded-full" : "rounded-md"
+              )}
+            >
+              <CachedImage src={row.coverUrl} alt={t2s(row.title)} size={80} />
+            </div>
+            <div className="min-w-0 flex-1 flex flex-col gap-0.5">
+              <span className="block truncate font-medium text-foreground">
+                {t2s(row.title)}
               </span>
-            ) : null}
-          </span>
+              {row.subtitle ? (
+                <span className="block truncate text-xs text-muted-foreground">
+                  {t2s(row.subtitle)}
+                </span>
+              ) : null}
+            </div>
+          </div>
+
+          <div />
         </button>
       ))}
       <div className="flex h-8 items-center justify-center gap-2 pb-20 text-xs text-muted-foreground">

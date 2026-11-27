@@ -157,4 +157,50 @@ describe("PlayerQueueDrawer", () => {
     expect(props.onRemove).toHaveBeenCalledWith(tracks[0]);
     expect(props.onPlay).not.toHaveBeenCalled();
   });
+
+  it("切换播放列表与最近播放 tab 时保持各自滚动位置且互不影响", () => {
+    renderDrawer();
+
+    click(document.querySelector("button")!);
+
+    const queuePanel = document.body.querySelector(
+      '[data-queue-panel="queue"]'
+    ) as HTMLElement | null;
+    const historyPanel = document.body.querySelector(
+      '[data-queue-panel="history"]'
+    ) as HTMLElement | null;
+    expect(queuePanel).not.toBeNull();
+    expect(historyPanel).not.toBeNull();
+
+    // 不使用 display:none (hidden)，避免浏览器重置 scrollTop 和 virtualizer 尺寸
+    expect(queuePanel!.className).not.toContain("hidden");
+    expect(historyPanel!.className).not.toContain("hidden");
+    expect(historyPanel!.className).toContain("invisible");
+
+    const queueViewport = queuePanel!.querySelector(
+      '[data-slot="scroll-area-viewport"]'
+    ) as HTMLElement;
+    const historyViewport = historyPanel!.querySelector(
+      '[data-slot="scroll-area-viewport"]'
+    ) as HTMLElement;
+    expect(queueViewport).not.toBe(historyViewport);
+
+    queueViewport.scrollTop = 240;
+    historyViewport.scrollTop = 90;
+
+    // 切到最近播放
+    click(document.body.querySelector('[data-queue-tab="history"]')!);
+    expect(queuePanel!.className).toContain("invisible");
+    expect(historyPanel!.className).not.toContain("invisible");
+    expect(queueViewport.scrollTop).toBe(240);
+    expect(historyViewport.scrollTop).toBe(90);
+
+    // 在最近播放滚动后切回播放列表
+    historyViewport.scrollTop = 180;
+    click(document.body.querySelector('[data-queue-tab="queue"]')!);
+    expect(queuePanel!.className).not.toContain("invisible");
+    expect(historyPanel!.className).toContain("invisible");
+    expect(queueViewport.scrollTop).toBe(240);
+    expect(historyViewport.scrollTop).toBe(180);
+  });
 });

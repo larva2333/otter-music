@@ -59,7 +59,7 @@ export function QueuePage({
       titleClassName="text-base font-semibold text-foreground"
       compactHeader={embedded}
       dense
-      incrementalBatch={10}
+      showInlineCover
       tracks={queue}
       icon={<ListVideo className="h-8 w-8 text-primary/80" />}
       onPlay={onPlay}

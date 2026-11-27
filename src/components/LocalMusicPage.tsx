@@ -371,7 +371,7 @@ export function LocalMusicPage({
           title="本地音乐"
           compactHeader={embedded}
           showReplaceSource={false}
-          incrementalBatch={10}
+          showInlineCover
           tracks={tracks}
           icon={<HardDriveDownload className="h-8 w-8 text-primary/80" />}
           onPlay={handlePlay}

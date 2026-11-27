@@ -2,7 +2,7 @@ import { cn } from "@/lib/utils";
 import { buildDownloadKey, downloadMusicTrack } from "@/lib/utils/download";
 import { useMusicStore } from "@/store/music-store";
 import { MusicTrack, MergedMusicTrack, sourceBadgeStyles } from "@/types/music";
-import { useEffect, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import { toastUtils } from "@/lib/utils/toast";
 import toast from "react-hot-toast";
 import { useShallow } from "zustand/react/shallow";
@@ -22,7 +22,7 @@ import {
 } from "lucide-react";
 import { useDownloadStore } from "@/store/download-store";
 import { CachedImage } from "./CachedImage";
-import { musicApi } from "@/lib/music-api";
+import { useMusicCover } from "@/hooks/useMusicCover";
 import { t2s, t2sArtists } from "@/lib/utils/t2s";
 
 // 预定义 Badge 样式，避免每次渲染都重新计算
@@ -76,28 +76,9 @@ function TrackCoverThumb({
   isPlaying?: boolean;
   size?: "sm" | "md";
 }) {
-  const [src, setSrc] = useState<string | null>(() =>
-    track.pic_id?.startsWith("http") ? track.pic_id : null
-  );
-
-  const picId = track.pic_id;
-  const source = track.source;
-
-  useEffect(() => {
-    if (!picId || picId.startsWith("http")) return;
-    let alive = true;
-    musicApi
-      .getPic(picId, source, 120, track as MusicTrack)
-      .then((url) => {
-        if (alive && url) setSrc(url);
-      })
-      .catch(() => undefined);
-    return () => {
-      alive = false;
-    };
-    // track 对象每次渲染都可能变，用会真正影响结果的字段做依赖
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [picId, source]);
+  // 复用 useMusicCover：已缓存封面在挂载首帧即可由 getSyncPic 同步直出，
+  // 避免虚拟列表上下滑动重建节点时先闪出空白占位再重新加载。
+  const src = useMusicCover(track as MusicTrack, true, 120);
 
   return (
     <div

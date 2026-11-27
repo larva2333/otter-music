@@ -658,6 +658,70 @@ describe("MusicNowPlayingBar", () => {
     expectControlsVisible(false);
   });
 
+  it("从播放列表按钮/抽屉子树上滑不会误触发全屏播放页", () => {
+    const onOpenFullScreen = vi.fn();
+    renderBar(onOpenFullScreen);
+
+    const queueButton = document.querySelector<HTMLElement>(
+      'button[aria-label="播放列表"]'
+    )!;
+    act(() => {
+      queueButton.dispatchEvent(
+        new TouchEvent("touchstart", {
+          bubbles: true,
+          touches: [{ clientX: 150, clientY: 600 } as Touch],
+        })
+      );
+      window.dispatchEvent(
+        new TouchEvent("touchmove", {
+          bubbles: true,
+          cancelable: true,
+          touches: [{ clientX: 152, clientY: 560 } as Touch],
+        })
+      );
+      window.dispatchEvent(new TouchEvent("touchend", { bubbles: true }));
+    });
+
+    expect(onOpenFullScreen).not.toHaveBeenCalled();
+  });
+
+  it("从抽屉内容子树上滑不会误触发全屏播放页", () => {
+    const onOpenFullScreen = vi.fn();
+    renderBar(onOpenFullScreen);
+
+    // 抽屉内容 Portal 到 body，但 React 树里仍是 bar 的后代，
+    // 触摸会合成冒泡到 bar 的 onTouchStart —— 用标记模拟这一路径
+    const drawerPane = document.createElement("div");
+    drawerPane.setAttribute("data-player-queue-drawer", "");
+    const listItem = document.createElement("div");
+    drawerPane.appendChild(listItem);
+    document.body.appendChild(drawerPane);
+    const barEl = document.querySelector<HTMLElement>(
+      "[data-now-playing-bar]"
+    )!;
+    barEl.appendChild(drawerPane);
+
+    act(() => {
+      listItem.dispatchEvent(
+        new TouchEvent("touchstart", {
+          bubbles: true,
+          touches: [{ clientX: 150, clientY: 600 } as Touch],
+        })
+      );
+      window.dispatchEvent(
+        new TouchEvent("touchmove", {
+          bubbles: true,
+          cancelable: true,
+          touches: [{ clientX: 152, clientY: 560 } as Touch],
+        })
+      );
+      window.dispatchEvent(new TouchEvent("touchend", { bubbles: true }));
+    });
+
+    expect(onOpenFullScreen).not.toHaveBeenCalled();
+    drawerPane.remove();
+  });
+
   it("播放时显示歌词（支持逐字歌词）并隐藏歌名歌手与音源时长，超长歌词单遍跟唱滚动，暂停后恢复", async () => {
     musicApiMocks.getLyric.mockResolvedValue({
       lyric:

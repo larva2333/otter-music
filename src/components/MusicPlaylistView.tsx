@@ -66,6 +66,8 @@ interface MusicPlaylistViewProps {
   showReplaceSource?: boolean;
   /** 行首显示歌曲封面（代替序号），与 hideHeader 搭配使用 */
   showTrackCover?: boolean;
+  /** 第 1 列保留序号，第 2 列歌名左侧显示小封面 */
+  showInlineCover?: boolean;
   /**
    * 头部右上角的操作区（绝对定位）。
    * 「全盘扫描」这类页面级操作放这里，不跟播放按钮挤在标题下方那一行。
@@ -115,6 +117,7 @@ export function MusicPlaylistView({
   hideHeader,
   showReplaceSource = true,
   showTrackCover,
+  showInlineCover,
   headerRight,
   titleClassName = "text-base font-bold tracking-tight",
   compactHeader = false,
@@ -480,6 +483,7 @@ export function MusicPlaylistView({
           }
           preselectedIds={dedupeSelectedIds}
           showCover={showTrackCover}
+          showInlineCover={showInlineCover}
           hideHeader={hideHeader}
           showReplaceSource={showReplaceSource}
           onSelectionModeChange={(active) => {

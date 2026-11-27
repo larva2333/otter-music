@@ -558,9 +558,17 @@ export type NeteaseSearchArtistItem = {
 type RawSearchAlbum = {
   id: number;
   name: string;
+  picUrl?: string;
+  blurPicUrl?: string;
   artist?: { name?: string };
+  artists?: { name?: string }[];
 };
-type RawSearchArtist = { id: number; name: string };
+type RawSearchArtist = {
+  id: number;
+  name: string;
+  picUrl?: string;
+  img1v1Url?: string;
+};
 
 export const mapSearchAlbums = (
   albums: RawSearchAlbum[] = []
@@ -585,7 +593,7 @@ export interface NeteaseWebSearchResult {
   playlistCount?: number;
 }
 
-/** 按类型搜索。`/api/search/pc` 对歌手/专辑/歌单经常空返回，改走 weapi。 */
+/** 按类型搜索：优先 `/api/cloudsearch/pc`（20 条/页且带封面），失败时回退 weapi。 */
 export async function searchWeb(
   keyword: string,
   type: number,
@@ -594,6 +602,39 @@ export async function searchWeb(
   cookie: string = ""
 ): Promise<NeteaseWebSearchResult> {
   const finalCookie = resolveRequestCookie(cookie);
+  try {
+    const headers = buildHeaders(
+      finalCookie,
+      PC_USER_AGENT,
+      getRandomDomesticIp()
+    );
+    const params = new URLSearchParams({
+      s: keyword,
+      type: String(type),
+      limit: String(limit),
+      offset: String(offset),
+      total: "true",
+    });
+    const { data } = await crossFetch(`${BASE_URL}/api/cloudsearch/pc`, {
+      method: "POST",
+      headers,
+      body: params.toString(),
+    });
+    const parsed = data as {
+      code?: number;
+      result?: NeteaseWebSearchResult;
+    };
+    if (parsed?.code === 200 && parsed.result) {
+      return parsed.result;
+    }
+  } catch (e) {
+    logger.warn(
+      "NetEase",
+      `cloudsearch/pc type ${type} failed, falling back to weapi`,
+      e instanceof Error ? e : undefined
+    );
+  }
+
   const res = await requestWeapi<{
     code?: number;
     result?: NeteaseWebSearchResult;

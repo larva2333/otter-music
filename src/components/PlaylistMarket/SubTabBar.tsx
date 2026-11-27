@@ -71,10 +71,10 @@ export function SubTabBar({
             data-subtab-id={tab.id}
             onClick={() => onChange(tab.id)}
             className={cn(
-              "inline-flex h-full shrink-0 items-center whitespace-nowrap text-base font-medium transition-colors",
+              "inline-flex h-full shrink-0 items-center whitespace-nowrap text-base font-bold transition-colors",
               isActive
-                ? "text-primary"
-                : "text-muted-foreground hover:text-foreground"
+                ? "text-foreground"
+                : "text-muted-foreground/70 hover:text-foreground"
             )}
           >
             {tab.label}

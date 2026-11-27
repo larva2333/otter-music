@@ -879,6 +879,13 @@ export function MusicNowPlayingBar({
 
   const progressExpanded = controlsVisible || isDragging;
 
+  // 抽屉内容和列表按钮在 React 树里是 bar 的后代，触摸会冒泡到这里。
+  // 只按 target 判断来源、跳过手势跟踪，绝不能用 stopPropagation ——
+  // 那会截断事件到 document 的原生冒泡，让 VAUL Drawer 的拖拽/滚动手势失效。
+  const isFromQueueDrawer = (target: EventTarget | null) =>
+    target instanceof Element &&
+    !!target.closest("[data-player-queue-drawer], [data-queue-drawer-zone]");
+
   return (
     <div className="px-3 touch-none">
       <div
@@ -892,8 +899,12 @@ export function MusicNowPlayingBar({
           }
         }}
         onClick={() => setControlsVisible((prev) => !prev)}
-        onMouseDown={(e) => beginSwipeTracking(e.clientX, e.clientY, false)}
+        onMouseDown={(e) => {
+          if (isFromQueueDrawer(e.target)) return;
+          beginSwipeTracking(e.clientX, e.clientY, false);
+        }}
         onTouchStart={(e) => {
+          if (isFromQueueDrawer(e.target)) return;
           if (e.touches[0]) {
             beginSwipeTracking(
               e.touches[0].clientX,
@@ -1111,8 +1122,13 @@ export function MusicNowPlayingBar({
           </div>
         </div>
 
-        {/* 隔离列表按钮与抽屉 Portal 的 React 冒泡，防止触发胶囊的展开/收起切换 */}
+        {/* 隔离列表按钮与抽屉 Portal 的 React 冒泡：
+            - click 冒泡会触发胶囊的展开/收起切换，这里拦掉；
+            - touchstart/mousedown 不能拦（会截断事件到 document 的原生冒泡，
+              让 VAUL Drawer 拖拽/滚动失效），改由 bar 手势入口按 target 标记跳过。
+            DrawerPortal 虽挂到 body，但在 React 树里仍是本 div 的后代。 */}
         <div
+          data-queue-drawer-zone=""
           className="relative z-10 shrink-0"
           onClick={(e) => e.stopPropagation()}
         >

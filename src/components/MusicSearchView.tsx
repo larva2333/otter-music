@@ -308,7 +308,7 @@ export function MusicSearchView({
   };
 
   /**
-   * 清空搜索、回到首页歌单广场。
+   * 清空搜索；有搜索历史时回到历史页，否则回到首页歌单广场。
    * focus=true 用于点输入框的 X（继续输入）；系统返回键触发时不聚焦，避免弹键盘。
    */
   const resetSearch = useCallback(
@@ -336,7 +336,7 @@ export function MusicSearchView({
       setSearchLoading(false);
       setSuggestions([]);
       setShowSuggestions(false);
-      setShowHistory(focus && hasHistory);
+      setShowHistory(hasHistory);
       if (focus) searchInputRef.current?.focus();
       else searchInputRef.current?.blur();
       isSearchingRef.current = false;
@@ -755,6 +755,7 @@ export function MusicSearchView({
               autoLoadMore
               onLoadMore={() => fetchPage(searchPage + 1)}
               emptyMessage={searchLoading ? "搜索中..." : "未找到相关结果"}
+              showInlineCover
               showSourceBadge={true}
             />
           </div>

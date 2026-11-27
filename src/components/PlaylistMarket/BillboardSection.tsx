@@ -1,7 +1,10 @@
+import type { RefObject } from "react";
 import { cn } from "@/lib/utils";
 import { useNavigate } from "react-router-dom";
 import { useMusicStore } from "@/store/music-store";
 import { useMarketSession } from "@/store/session/market-session";
+import { useTabReclick } from "@/hooks/use-tab-reclick";
+import { SubTabBar } from "./SubTabBar";
 import {
   BILLBOARD_CHARTS,
   BILLBOARD_GROUPS,
@@ -11,34 +14,42 @@ import { BillboardHistoryDrawer } from "./BillboardHistoryDrawer";
 
 const SUB_TAB_HEIGHT = "h-8";
 
-export function BillboardSection() {
+export function BillboardSection({
+  scrollRef,
+  isActive = true,
+}: {
+  scrollRef?: RefObject<HTMLElement | null>;
+  isActive?: boolean;
+} = {}) {
   const navigate = useNavigate();
   const billboardGroup = useMusicStore((s) => s.lastBillboardGroup);
   const setBillboardGroup = useMusicStore((s) => s.setLastBillboardGroup);
   const billboardDate = useMarketSession((s) => s.billboardDate);
 
+  // 发现页「Billboard」激活时再次点击底部「发现」tab：循环切换子榜单分组
+  useTabReclick("search", () => {
+    if (!isActive) return;
+    const idx = BILLBOARD_GROUPS.findIndex((g) => g.id === billboardGroup);
+    const nextGroup = BILLBOARD_GROUPS[(idx + 1) % BILLBOARD_GROUPS.length];
+    if (nextGroup) setBillboardGroup(nextGroup.id);
+    scrollRef?.current?.scrollTo({ top: 0, behavior: "smooth" });
+  });
+
   return (
-    <div className="p-4 pb-bottom-stack">
-      <div className="flex items-center h-8 mb-3 px-1">
+    <div className="px-4 pb-bottom-stack">
+      <div className="flex items-center -mx-4 px-5 h-[52px] pt-1 border-b mb-3">
         <h2 className="text-base font-bold text-foreground tracking-wide truncate">
           Billboard 榜单
         </h2>
       </div>
       <div className={cn("flex items-center gap-6 mb-4 px-1", SUB_TAB_HEIGHT)}>
-        {BILLBOARD_GROUPS.map((g) => (
-          <button
-            key={g.id}
-            onClick={() => setBillboardGroup(g.id)}
-            className={cn(
-              "text-base transition-all",
-              billboardGroup === g.id
-                ? "font-bold text-foreground tracking-wide"
-                : "font-medium text-muted-foreground hover:text-foreground"
-            )}
-          >
-            {g.name}
-          </button>
-        ))}
+        <SubTabBar
+          tabs={BILLBOARD_GROUPS.map((g) => ({ id: g.id, label: g.name }))}
+          activeId={billboardGroup}
+          onChange={(id) =>
+            setBillboardGroup(id as (typeof BILLBOARD_GROUPS)[number]["id"])
+          }
+        />
         <div className="ml-auto shrink-0">
           <BillboardHistoryDrawer />
         </div>

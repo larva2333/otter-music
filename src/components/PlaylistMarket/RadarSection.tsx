@@ -86,8 +86,8 @@ const RADAR_PLAYLISTS: MarketPlaylist[] = [
 export function RadarSection() {
   const navigate = useNavigate();
   return (
-    <div className="p-4 pb-bottom-stack">
-      <div className="flex items-center h-8 mb-4 px-1">
+    <div className="px-4 pb-bottom-stack">
+      <div className="flex items-center -mx-4 px-5 h-[52px] pt-1 border-b mb-4">
         <h2 className="text-base font-bold text-foreground tracking-wide truncate">
           官方雷达
         </h2>

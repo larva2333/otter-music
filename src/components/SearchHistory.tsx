@@ -21,7 +21,7 @@ export function SearchHistory({
   }
 
   return (
-    <div className="h-full overflow-y-auto">
+    <div className="h-full overflow-y-auto px-4">
       {items.map((keyword) => (
         <div
           key={keyword}
@@ -30,7 +30,7 @@ export function SearchHistory({
           <button
             type="button"
             onClick={() => onSelect(keyword)}
-            className="flex min-w-0 flex-1 items-center gap-3 px-4 py-3 text-left text-sm"
+            className="flex min-w-0 flex-1 items-center gap-3 pl-3 pr-2 py-3 text-left text-sm"
           >
             <div className="h-4 w-4 shrink-0 flex-[0_0_16px] min-h-4 min-w-4">
               <History className="h-full w-full text-muted-foreground/60" />
@@ -41,7 +41,7 @@ export function SearchHistory({
             type="button"
             aria-label={`删除 ${keyword}`}
             onClick={() => onRemove(keyword)}
-            className="mr-3 shrink-0 rounded p-1 text-muted-foreground/50"
+            className="mr-1 shrink-0 rounded p-1.5 text-muted-foreground/50"
           >
             <div className="h-3.5 w-3.5 shrink-0 flex-[0_0_14px] min-h-3.5 min-w-3.5">
               <X className="h-full w-full" />

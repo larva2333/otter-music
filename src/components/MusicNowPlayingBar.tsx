@@ -1180,7 +1180,7 @@ export function MusicNowPlayingBar({
               />
             </div>
 
-            {/* 进度头部小圆球：平常隐藏；展开后提供 32×32 热区可直接按住拖拽 */}
+            {/* 进度头部小圆球：常驻显示以标示进度；展开后放大并启用 32×32 热区可直接按住拖拽 */}
             <div
               ref={progressThumbRef}
               aria-hidden
@@ -1203,18 +1203,16 @@ export function MusicNowPlayingBar({
                   if (controlsVisibleRef.current) e.stopPropagation();
                 }}
                 className={cn(
-                  "absolute left-0 top-1/2 flex h-8 w-8 -translate-x-1/2 -translate-y-1/2 items-center justify-center transition-[opacity,transform] duration-200 ease-out touch-none",
+                  "absolute left-0 top-1/2 flex h-8 w-8 -translate-x-1/2 -translate-y-1/2 items-center justify-center opacity-100 transition-[opacity,transform] duration-200 ease-out touch-none",
                   controlsVisible
                     ? "pointer-events-auto cursor-grab active:cursor-grabbing"
-                    : "pointer-events-none",
-                  progressExpanded
-                    ? "opacity-100 scale-100"
-                    : "opacity-0 scale-50"
+                    : "pointer-events-none"
                 )}
               >
                 <div
                   className={cn(
-                    "h-2.5 w-2.5 rounded-full transition-transform duration-150",
+                    "rounded-full transition-[width,height,transform] duration-150",
+                    progressExpanded ? "h-2.5 w-2.5" : "h-1.5 w-1.5",
                     isDragging && "scale-125"
                   )}
                   style={{

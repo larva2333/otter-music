@@ -1,6 +1,6 @@
 "use client";
 
-import {
+import React, {
   useCallback,
   useEffect,
   useLayoutEffect,
@@ -8,9 +8,36 @@ import {
   useRef,
   useState,
 } from "react";
+import { createPortal } from "react-dom";
+import {
+  DndContext,
+  closestCenter,
+  KeyboardSensor,
+  PointerSensor,
+  useSensor,
+  useSensors,
+  DragEndEvent,
+  DragStartEvent,
+  DragOverlay,
+  defaultDropAnimationSideEffects,
+  DropAnimation,
+} from "@dnd-kit/core";
+import {
+  arrayMove,
+  SortableContext,
+  sortableKeyboardCoordinates,
+  verticalListSortingStrategy,
+  useSortable,
+} from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
+import {
+  restrictToVerticalAxis,
+  restrictToWindowEdges,
+} from "@dnd-kit/modifiers";
 import {
   Plus,
   MoreVertical,
+  GripVertical,
   Trash2,
   Pencil,
   History,
@@ -158,6 +185,9 @@ interface MinePlaylistItemProps {
   isEditing: boolean;
   editingName: string;
   playbackBadge: React.ReactNode;
+  dragHandleProps?: React.HTMLAttributes<HTMLDivElement>;
+  isSortable?: boolean;
+  className?: string;
   onOpenMenu: () => void;
   onSelect: () => void;
   onToggleSelect: () => void;
@@ -168,11 +198,57 @@ interface MinePlaylistItemProps {
   onCancelRename: () => void;
 }
 
+const playlistDropAnimation: DropAnimation = {
+  sideEffects: defaultDropAnimationSideEffects({
+    styles: {
+      active: {
+        opacity: "0.4",
+      },
+    },
+  }),
+};
+
+function SortablePlaylistItem({
+  playlist,
+  enabled,
+  children,
+}: {
+  playlist: Playlist;
+  enabled: boolean;
+  children: React.ReactElement;
+}) {
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({ id: playlist.id, disabled: !enabled });
+
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition: isDragging ? transition : undefined,
+    zIndex: isDragging ? 1 : 0,
+    position: "relative" as const,
+    opacity: isDragging ? 0 : 1,
+  };
+
+  return (
+    <div ref={setNodeRef} style={style} {...attributes}>
+      {React.cloneElement(children as React.ReactElement<any>, {
+        dragHandleProps: listeners,
+        isSortable: enabled,
+      })}
+    </div>
+  );
+}
+
 /**
  * 我的歌单列表单行：参考 MusicTrackItem 布局与手势
  * - 第一列：序号（多选模式为复选框）
  * - 第二列：封面 + 名称/曲数/日期
- * - 第三列：操作菜单（多选模式隐藏）
+ * - 第三列：拖拽手柄（多选可排序时）+ 操作菜单
  * - 长按 450ms 进入多选并支持滑动连续选择
  */
 function MinePlaylistItem({
@@ -184,6 +260,9 @@ function MinePlaylistItem({
   isEditing,
   editingName,
   playbackBadge,
+  dragHandleProps,
+  isSortable,
+  className,
   onOpenMenu,
   onSelect,
   onToggleSelect,
@@ -257,7 +336,8 @@ function MinePlaylistItem({
           ? "bg-primary/10"
           : isCurrent
             ? "bg-primary/10"
-            : "hover:bg-muted/50"
+            : "hover:bg-muted/50",
+        className
       )}
     >
       <div
@@ -347,8 +427,17 @@ function MinePlaylistItem({
         </div>
       </div>
 
-      {/* 第三列：菜单按钮（触发底部抽屉，多选模式下同样保留） */}
-      <div className="flex items-center justify-end">
+      {/* 第三列：拖拽手柄（多选排序时）+ 菜单按钮 */}
+      <div className="flex items-center justify-end gap-1">
+        {isSortable && (
+          <div
+            {...dragHandleProps}
+            className="cursor-grab active:cursor-grabbing p-1 text-muted-foreground/50 hover:text-foreground transition-colors touch-none select-none mr-1"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <GripVertical className="h-4 w-4" />
+          </div>
+        )}
         <Button
           variant="ghost"
           size="icon"
@@ -393,6 +482,7 @@ export function MinePage({ onSelectPlaylist }: MinePageProps) {
     updatePlaylist,
     removeBatchFromPlaylist,
     addBatchToNextPlay,
+    reorderPlaylists,
     quality,
   } = useMusicStore(
     useShallow((state) => ({
@@ -403,6 +493,7 @@ export function MinePage({ onSelectPlaylist }: MinePageProps) {
       updatePlaylist: state.updatePlaylist,
       removeBatchFromPlaylist: state.removeBatchFromPlaylist,
       addBatchToNextPlay: state.addBatchToNextPlay,
+      reorderPlaylists: state.reorderPlaylists,
       quality: state.quality,
     }))
   );
@@ -701,10 +792,11 @@ export function MinePage({ onSelectPlaylist }: MinePageProps) {
     }
   );
 
-  // 再次点击底部「歌单」tab：在当前页内循环切换 type（不跨页、不回第一个）
+  // 再次点击底部「歌单」tab：不再切换顶部 type，仅将当前列表滚回顶部
   useTabReclick("mine", () => {
-    const index = MINE_TABS.findIndex((t) => t.id === activeTab);
-    activateTab(MINE_TABS[(index + 1) % MINE_TABS.length].id);
+    viewportRef.current
+      ?.querySelector<HTMLElement>("[data-page-scroll]")
+      ?.scrollTo({ top: 0, behavior: "smooth" });
   });
 
   const [newPlaylistName, setNewPlaylistName] = useState("");
@@ -717,6 +809,46 @@ export function MinePage({ onSelectPlaylist }: MinePageProps) {
 
   /* ---- 歌单多选 ---- */
   const [isPlaylistSelectionMode, setIsPlaylistSelectionMode] = useState(false);
+  const [activePlaylistDragId, setActivePlaylistDragId] = useState<
+    string | null
+  >(null);
+  const playlistSensors = useSensors(
+    useSensor(PointerSensor, {
+      activationConstraint: {
+        delay: 200,
+        tolerance: 8,
+      },
+    }),
+    useSensor(KeyboardSensor, {
+      coordinateGetter: sortableKeyboardCoordinates,
+    })
+  );
+  const canReorderPlaylists = isPlaylistSelectionMode && !searchQuery.trim();
+  const visiblePlaylists = useMemo(
+    () => displayPlaylists.slice(0, mineVisible),
+    [displayPlaylists, mineVisible]
+  );
+  const playlistIds = useMemo(
+    () => visiblePlaylists.map((p) => p.id),
+    [visiblePlaylists]
+  );
+  const handlePlaylistDragStart = (event: DragStartEvent) => {
+    setActivePlaylistDragId(event.active.id as string);
+  };
+  const handlePlaylistDragEnd = (event: DragEndEvent) => {
+    const { active, over } = event;
+    setActivePlaylistDragId(null);
+    if (active.id !== over?.id) {
+      const oldIndex = displayPlaylists.findIndex((p) => p.id === active.id);
+      const newIndex = displayPlaylists.findIndex((p) => p.id === over?.id);
+      if (oldIndex !== -1 && newIndex !== -1) {
+        reorderPlaylists(arrayMove(displayPlaylists, oldIndex, newIndex));
+        if (playlistSortState.field !== "default") {
+          setPlaylistSortState({ field: "default", dir: "asc" });
+        }
+      }
+    }
+  };
   const [selectedPlaylistIds, setSelectedPlaylistIds] = useState<Set<string>>(
     new Set()
   );
@@ -1498,71 +1630,166 @@ export function MinePage({ onSelectPlaylist }: MinePageProps) {
                             </div>
                           </div>
 
-                          <div>
-                            {displayPlaylists
-                              .slice(0, mineVisible)
-                              .map((playlist, index) => (
-                                <MinePlaylistItem
-                                  key={playlist.id}
-                                  playlist={playlist}
-                                  index={index}
-                                  isCurrent={
-                                    contextId === `playlist-${playlist.id}`
-                                  }
-                                  isSelectionMode={isPlaylistSelectionMode}
-                                  isSelected={selectedPlaylistIds.has(
-                                    playlist.id
-                                  )}
-                                  isEditing={editingPlaylistId === playlist.id}
-                                  editingName={editingName}
-                                  playbackBadge={renderPlaybackBadge(
-                                    `playlist-${playlist.id}`
-                                  )}
-                                  onOpenMenu={() => setMenuPlaylist(playlist)}
-                                  onSelect={() => onSelectPlaylist(playlist.id)}
-                                  onToggleSelect={() =>
-                                    togglePlaylistSelect(playlist.id)
-                                  }
-                                  onLongPress={() => {
-                                    const paintSelected =
-                                      !selectedPlaylistIds.has(playlist.id);
-                                    setIsPlaylistSelectionMode(true);
-                                    setSelectedPlaylistIds((prev) => {
-                                      const next = new Set(prev);
-                                      if (paintSelected) next.add(playlist.id);
-                                      else next.delete(playlist.id);
-                                      return next;
-                                    });
-                                    startDragSelect(playlist.id, paintSelected);
-                                  }}
-                                  onPlayPlaylist={() =>
-                                    playPlaylist(
-                                      playlist.tracks.filter(
-                                        (track) => track.is_deleted !== true
-                                      ),
-                                      `playlist-${playlist.id}`
-                                    )
-                                  }
-                                  onEditingNameChange={setEditingName}
-                                  onCommitRename={() =>
-                                    handleRename(playlist.id)
-                                  }
-                                  onCancelRename={() => {
-                                    setEditingPlaylistId(null);
-                                    setEditingName("");
-                                  }}
-                                />
-                              ))}
-                            {/* 上滑加载提示（自动加载，无需点击） */}
-                            {filteredPlaylists.length > MINE_LIST_PAGE_SIZE && (
-                              <div
-                                ref={mineSentinelRef}
-                                className="flex h-8 items-center justify-center text-xs text-muted-foreground/60 tracking-wide"
-                              >
-                                {mineHasMore ? "加载中..." : "没有更多了"}
+                          <DndContext
+                            sensors={playlistSensors}
+                            collisionDetection={closestCenter}
+                            onDragStart={handlePlaylistDragStart}
+                            onDragEnd={handlePlaylistDragEnd}
+                            id="mine-playlist-dnd"
+                          >
+                            <SortableContext
+                              items={playlistIds}
+                              strategy={verticalListSortingStrategy}
+                              disabled={!canReorderPlaylists}
+                            >
+                              <div>
+                                {visiblePlaylists.map((playlist, index) => {
+                                  const itemNode = (
+                                    <MinePlaylistItem
+                                      key={playlist.id}
+                                      playlist={playlist}
+                                      index={index}
+                                      isCurrent={
+                                        contextId === `playlist-${playlist.id}`
+                                      }
+                                      isSelectionMode={isPlaylistSelectionMode}
+                                      isSelected={selectedPlaylistIds.has(
+                                        playlist.id
+                                      )}
+                                      isEditing={
+                                        editingPlaylistId === playlist.id
+                                      }
+                                      editingName={editingName}
+                                      playbackBadge={renderPlaybackBadge(
+                                        `playlist-${playlist.id}`
+                                      )}
+                                      onOpenMenu={() =>
+                                        setMenuPlaylist(playlist)
+                                      }
+                                      onSelect={() =>
+                                        onSelectPlaylist(playlist.id)
+                                      }
+                                      onToggleSelect={() =>
+                                        togglePlaylistSelect(playlist.id)
+                                      }
+                                      onLongPress={() => {
+                                        const paintSelected =
+                                          !selectedPlaylistIds.has(playlist.id);
+                                        setIsPlaylistSelectionMode(true);
+                                        setSelectedPlaylistIds((prev) => {
+                                          const next = new Set(prev);
+                                          if (paintSelected)
+                                            next.add(playlist.id);
+                                          else next.delete(playlist.id);
+                                          return next;
+                                        });
+                                        startDragSelect(
+                                          playlist.id,
+                                          paintSelected
+                                        );
+                                      }}
+                                      onPlayPlaylist={() =>
+                                        playPlaylist(
+                                          playlist.tracks.filter(
+                                            (track) => track.is_deleted !== true
+                                          ),
+                                          `playlist-${playlist.id}`
+                                        )
+                                      }
+                                      onEditingNameChange={setEditingName}
+                                      onCommitRename={() =>
+                                        handleRename(playlist.id)
+                                      }
+                                      onCancelRename={() => {
+                                        setEditingPlaylistId(null);
+                                        setEditingName("");
+                                      }}
+                                    />
+                                  );
+                                  return canReorderPlaylists ? (
+                                    <SortablePlaylistItem
+                                      key={playlist.id}
+                                      playlist={playlist}
+                                      enabled={canReorderPlaylists}
+                                    >
+                                      {itemNode}
+                                    </SortablePlaylistItem>
+                                  ) : (
+                                    itemNode
+                                  );
+                                })}
+                                {/* 上滑加载提示（自动加载，无需点击） */}
+                                {filteredPlaylists.length >
+                                  MINE_LIST_PAGE_SIZE && (
+                                  <div
+                                    ref={mineSentinelRef}
+                                    className="flex h-8 items-center justify-center text-xs text-muted-foreground/60 tracking-wide"
+                                  >
+                                    {mineHasMore ? "加载中..." : "没有更多了"}
+                                  </div>
+                                )}
                               </div>
-                            )}
-                          </div>
+                            </SortableContext>
+                            {typeof document !== "undefined" &&
+                              createPortal(
+                                <DragOverlay
+                                  modifiers={[
+                                    restrictToVerticalAxis,
+                                    restrictToWindowEdges,
+                                  ]}
+                                  dropAnimation={playlistDropAnimation}
+                                >
+                                  {activePlaylistDragId
+                                    ? (() => {
+                                        const dragPlaylist =
+                                          displayPlaylists.find(
+                                            (p) => p.id === activePlaylistDragId
+                                          );
+                                        if (!dragPlaylist) return null;
+                                        const dragIndex =
+                                          displayPlaylists.findIndex(
+                                            (p) => p.id === activePlaylistDragId
+                                          );
+                                        return (
+                                          <MinePlaylistItem
+                                            playlist={dragPlaylist}
+                                            index={dragIndex}
+                                            isCurrent={
+                                              contextId ===
+                                              `playlist-${dragPlaylist.id}`
+                                            }
+                                            isSelectionMode={
+                                              isPlaylistSelectionMode
+                                            }
+                                            isSelected={selectedPlaylistIds.has(
+                                              dragPlaylist.id
+                                            )}
+                                            isEditing={false}
+                                            editingName=""
+                                            playbackBadge={renderPlaybackBadge(
+                                              `playlist-${dragPlaylist.id}`
+                                            )}
+                                            dragHandleProps={{
+                                              style: { cursor: "grabbing" },
+                                            }}
+                                            isSortable={true}
+                                            className="bg-background border rounded-md shadow-xl scale-105 ring-1 ring-primary/20 cursor-grabbing opacity-90"
+                                            onOpenMenu={() => {}}
+                                            onSelect={() => {}}
+                                            onToggleSelect={() => {}}
+                                            onLongPress={() => {}}
+                                            onPlayPlaylist={() => {}}
+                                            onEditingNameChange={() => {}}
+                                            onCommitRename={() => {}}
+                                            onCancelRename={() => {}}
+                                          />
+                                        );
+                                      })()
+                                    : null}
+                                </DragOverlay>,
+                                document.body
+                              )}
+                          </DndContext>
                         </>
                       )}
                     </div>

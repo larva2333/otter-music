@@ -21,6 +21,7 @@ export interface PlaylistSlice {
     tracks: MusicTrack[]
   ) => void;
   reorderPlaylistTracks: (playlistId: string, tracks: MusicTrack[]) => void;
+  reorderPlaylists: (playlists: Playlist[]) => void;
   updateTrackInPlaylists: (
     trackId: string,
     newTrack: MusicTrack,
@@ -144,6 +145,17 @@ export const createPlaylistSlice: StateCreator<
         tracks: [...tracks, ...p.tracks.filter((t) => t.is_deleted)],
         is_deleted: false,
       })),
+    })),
+  reorderPlaylists: (playlists) =>
+    set((s) => ({
+      playlists: [
+        ...playlists.map((p) => ({
+          ...p,
+          update_time: Date.now(),
+          is_deleted: false,
+        })),
+        ...s.playlists.filter((p) => p.is_deleted),
+      ],
     })),
   updateTrackInPlaylists: (tid, newTrack, pid) => {
     let count = 0;

@@ -19,9 +19,11 @@ import { useNavigate } from "react-router-dom";
 import { useMusicStore, type MusicState } from "@/store/music-store";
 import { useMarketSession } from "@/store/session/market-session";
 import { PlaylistGrid } from "./PlaylistGrid";
+import { SubTabBar } from "./SubTabBar";
 import { useNeteaseStore } from "@/store/netease-store";
 import { logger } from "@/lib/logger";
 import { usePullToRefresh } from "@/hooks/use-pull-to-refresh";
+import { useTabReclick } from "@/hooks/use-tab-reclick";
 import { PullRefreshIndicator } from "@/components/PullRefreshIndicator";
 import { t2s } from "@/lib/utils/t2s";
 
@@ -225,10 +227,12 @@ const AlbumGrid = ({
 export function MineSection({
   embedded = false,
   scrollRef: scrollRefProp,
+  isActive = true,
 }: {
   embedded?: boolean;
   /** 外层滚动容器；传入时在其上启用下拉刷新 */
   scrollRef?: RefObject<HTMLElement | null>;
+  isActive?: boolean;
 } = {}) {
   const navigate = useNavigate();
   const localScrollRef = useRef<HTMLElement>(null);
@@ -338,38 +342,36 @@ export function MineSection({
   const activeTabConfig = tabs.find((t) => t.id === mineTab) || tabs[0];
   const isDataReady = !!mineData[mineTab as keyof typeof mineData];
 
+  // 发现页「我的」激活时再次点击底部「发现」tab：循环切换 创建 / 收藏 / 专辑
+  useTabReclick("search", () => {
+    if (embedded || !isActive) return;
+    const idx = tabs.findIndex((t) => t.id === mineTab);
+    const nextTab = tabs[(idx + 1) % tabs.length];
+    if (nextTab) setMineTab(nextTab.id);
+    activeScrollRef.current?.scrollTo({ top: 0, behavior: "smooth" });
+  });
+
   return (
     <div
       className={cn(
         // embedded：嵌在「我的」页里时不再自带外边距，由父级控制节奏
-        embedded ? "space-y-4" : "p-4 pb-bottom-stack"
+        embedded ? "space-y-4" : "px-4 pb-bottom-stack"
       )}
     >
       <PullRefreshIndicator indicatorRef={indicatorRef} status={pullStatus} />
-      {/* 与「推荐」页 tab 行同构：外层 p-4 提供 16px 顶距、tab 行不再用
-          h-8 + items-center（会把文字再居中下移 4px），mb-3 对齐推荐的 pb-3 */}
-      <div className="flex items-center justify-between mb-3 px-1 relative gap-4">
-        <div className="flex-1 min-w-0 overflow-x-auto no-scrollbar">
-          <div className="flex items-center gap-6 w-max">
-            {tabs.map((tab) => (
-              <button
-                key={tab.id}
-                onClick={() => setMineTab(tab.id)}
-                className={cn(
-                  "text-base transition-all whitespace-nowrap",
-                  mineTab === tab.id
-                    ? "font-bold text-foreground tracking-wide"
-                    : "font-medium text-muted-foreground hover:text-foreground"
-                )}
-              >
-                {tab.label}{" "}
-                {tab.count !== undefined && (
-                  <span className="text-xs opacity-60 ml-0.5">{tab.count}</span>
-                )}
-              </button>
-            ))}
-          </div>
-        </div>
+      {/* 与「推荐」页 tab 行同构并对齐底边线 */}
+      <div
+        className={cn(
+          "flex items-center justify-between relative gap-4",
+          embedded ? "h-10 mb-3 px-1" : "-mx-4 px-5 h-[52px] pt-1 border-b mb-4"
+        )}
+      >
+        <SubTabBar
+          tabs={tabs}
+          activeId={mineTab}
+          onChange={(id) => setMineTab(id as MusicState["lastMineTab"])}
+          scrollable
+        />
         {/* Action Button Area */}
         <div className="transition-opacity animate-in fade-in duration-200 shrink-0">
           {activeTabConfig.action}

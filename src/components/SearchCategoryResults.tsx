@@ -250,7 +250,7 @@ export function SearchCategoryResults({
   return (
     <div className="flex h-full min-h-0 flex-col">
       <div
-        className="relative flex shrink-0 border-b border-border/40"
+        className="relative mx-4 flex shrink-0 border-b border-border/40"
         role="tablist"
       >
         {SEARCH_RESULT_TABS.map((item) => {
@@ -263,8 +263,10 @@ export function SearchCategoryResults({
               aria-selected={active}
               onClick={() => onTabChange(item.id)}
               className={cn(
-                "flex-1 py-2.5 text-sm transition-colors",
-                active ? "font-medium text-foreground" : "text-muted-foreground"
+                "flex-1 py-2.5 text-sm font-medium transition-colors",
+                active
+                  ? "text-primary"
+                  : "text-muted-foreground hover:text-foreground"
               )}
             >
               {item.label}
@@ -274,7 +276,7 @@ export function SearchCategoryResults({
         <div
           ref={indicatorRef}
           aria-hidden
-          className="pointer-events-none absolute bottom-0 left-0 h-0.5 bg-foreground will-change-transform"
+          className="pointer-events-none absolute bottom-0 left-0 h-0.5 rounded-full bg-primary will-change-transform"
           style={{ width: `${100 / SEARCH_RESULT_TABS.length}%` }}
         />
       </div>

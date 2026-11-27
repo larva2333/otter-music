@@ -219,9 +219,9 @@ export function ArtistSection() {
   }, [area, type, initial]);
 
   return (
-    <div className="p-4 pb-bottom-stack">
+    <div className="px-4 pb-bottom-stack">
       {/* 标题行：标题与筛选按钮都可打开抽屉；抽屉内选完要点「确认」才筛选 */}
-      <div className="flex items-center gap-2 mb-4 px-1 h-8">
+      <div className="flex items-center gap-2 -mx-4 px-5 h-[52px] pt-1 border-b mb-4">
         <Drawer open={drawerOpen} onOpenChange={setDrawerOpen}>
           <DrawerTrigger asChild>
             <button

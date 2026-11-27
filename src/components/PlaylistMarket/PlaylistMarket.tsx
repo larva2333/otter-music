@@ -65,8 +65,8 @@ const MARKET_SECTIONS: Record<string, ComponentType> = {
 /** 还没挂载过的分类页用轻量骨架占位：手指滑出来时直接有结构、不是一块空白 */
 function MarketPaneSkeleton({ title }: { title: string }) {
   return (
-    <div className="flex-1 min-h-0 overflow-hidden p-4 pb-bottom-stack">
-      <div className="flex items-center h-8 mb-4 px-1">
+    <div className="flex-1 min-h-0 overflow-hidden px-4 pb-bottom-stack">
+      <div className="flex items-center -mx-4 px-5 h-[52px] pt-1 border-b mb-4">
         <h2 className="text-base font-bold text-foreground tracking-wide truncate">
           {title}
         </h2>
@@ -278,20 +278,24 @@ function MarketCategoryPane({
 
       {ActiveSection ? (
         effectiveCategory === "mine" ? (
-          <MineSection scrollRef={paneScrollRef} />
+          <MineSection scrollRef={paneScrollRef} isActive={isActive} />
         ) : effectiveCategory === "recommend" ? (
-          <RecommendSection scrollRef={paneScrollRef} />
+          <RecommendSection scrollRef={paneScrollRef} isActive={isActive} />
+        ) : effectiveCategory === "Billboard" ? (
+          <BillboardSection scrollRef={paneScrollRef} isActive={isActive} />
         ) : (
           <ActiveSection />
         )
       ) : (
-        <div className="p-4 pb-bottom-stack">
-          {barId === "toplist" && (
-            <div className="flex items-center h-8 mb-4 px-1">
+        <div className="px-4 pb-bottom-stack">
+          {barId === "toplist" ? (
+            <div className="flex items-center -mx-4 px-5 h-[52px] pt-1 border-b mb-4">
               <h2 className="text-base font-bold text-foreground tracking-wide truncate">
                 排行榜
               </h2>
             </div>
+          ) : (
+            <div className="pt-4" />
           )}
 
           {showGridSkeleton ? (
@@ -563,21 +567,21 @@ export function PlaylistMarket() {
     }
   );
 
-  // 再次点击底部「发现」tab：在当前页内循环切换分类，并滚动回到顶部
+  // 再次点击底部「发现」tab：不再切换顶栏分类；
+  // 有子 tab 的分类由对应 Section 切换页内子 tab，其余分类滚回顶部
   useTabReclick("search", () => {
-    const ids = displayFilters.map((f) => f.id);
-    const index = ids.indexOf(activeCategory);
-    const nextId = ids[(index + 1) % ids.length];
-    if (nextId && nextId !== activeCategory) {
-      setActiveCategory(nextId);
-      paneScrollRefs.current
-        .get(nextId)
-        ?.scrollTo({ top: 0, behavior: "smooth" });
-    } else {
-      paneScrollRefs.current
-        .get(activeCategory)
-        ?.scrollTo({ top: 0, behavior: "smooth" });
+    const effective =
+      activeCategory === "全部" && marketFilter ? marketFilter : activeCategory;
+    if (
+      effective === "mine" ||
+      effective === "recommend" ||
+      effective === "Billboard"
+    ) {
+      return;
     }
+    paneScrollRefs.current
+      .get(activeCategory)
+      ?.scrollTo({ top: 0, behavior: "smooth" });
   });
 
   const handleOpenPlaylist = useCallback(

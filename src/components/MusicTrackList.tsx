@@ -7,6 +7,7 @@ import React, {
   useState,
   useCallback,
 } from "react";
+import { createPortal } from "react-dom";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import {
   DndContext,
@@ -206,10 +207,10 @@ export function MusicTrackList({
   const internalRef = useRef<HTMLDivElement | null>(null);
 
   const sensors = useSensors(
-    // 长按 350ms 才进入拖拽，避免手指一碰行就开始拖（滑动多选也靠滑动手势）
+    // 专属拖拽手柄已启用 touch-none，200ms 轻按即可起拖，兼顾防误触与跟手响应
     useSensor(PointerSensor, {
       activationConstraint: {
-        delay: 350,
+        delay: 200,
         tolerance: 8,
       },
     }),
@@ -799,12 +800,7 @@ export function MusicTrackList({
         >
           <div
             ref={listContainerRef}
-            className={cn(
-              // 隐藏表头（推荐流这类纯内容列表）没有表头下边框可用，自己补一条上边框；
-              // 底部不再收边线（按需求去掉）
-              "relative w-full",
-              hideHeader && "border-t"
-            )}
+            className="relative w-full"
             style={{
               height: Math.max(0, virtualizer.getTotalSize() - scrollMargin),
             }}
@@ -919,34 +915,43 @@ export function MusicTrackList({
             })}
           </div>
         </SortableContext>
-        <DragOverlay
-          modifiers={[restrictToVerticalAxis, restrictToWindowEdges]}
-          dropAnimation={dropAnimation}
-        >
-          {activeId
-            ? (() => {
-                const track = tracks.find((t) => t.id === activeId);
-                if (!track) return null;
-                return (
-                  <MusicTrackItem
-                    track={track}
-                    playlistId={playlistId}
-                    index={tracks.findIndex((t) => t.id === activeId)}
-                    isCurrent={track.id === currentTrackId}
-                    isPlaying={isPlaying}
-                    onPlay={() => {}}
-                    showCheckbox={isSelectionMode}
-                    isSelected={selectedIds.has(track.id)}
-                    quality={quality}
-                    showSourceBadge={true}
-                    dragHandleProps={{ style: { cursor: "grabbing" } }}
-                    isSortable={true}
-                    className="bg-background border rounded-md shadow-xl scale-105 ring-1 ring-primary/20 cursor-grabbing opacity-90"
-                  />
-                );
-              })()
-            : null}
-        </DragOverlay>
+        {typeof document !== "undefined" &&
+          createPortal(
+            <DragOverlay
+              modifiers={[restrictToVerticalAxis, restrictToWindowEdges]}
+              dropAnimation={dropAnimation}
+            >
+              {activeId
+                ? (() => {
+                    const track = tracks.find((t) => t.id === activeId);
+                    if (!track) return null;
+                    return (
+                      <MusicTrackItem
+                        track={track}
+                        playlistId={playlistId}
+                        index={tracks.findIndex((t) => t.id === activeId)}
+                        isCurrent={track.id === currentTrackId}
+                        isPlaying={isPlaying}
+                        onPlay={() => {}}
+                        showCheckbox={isSelectionMode}
+                        isSelected={selectedIds.has(track.id)}
+                        quality={quality}
+                        showCover={showCover}
+                        showInlineCover={showInlineCover}
+                        showSourceBadge={true}
+                        dragHandleProps={{ style: { cursor: "grabbing" } }}
+                        isSortable={true}
+                        className={cn(
+                          dense && "py-1.5",
+                          "bg-background border rounded-md shadow-xl scale-105 ring-1 ring-primary/20 cursor-grabbing opacity-90"
+                        )}
+                      />
+                    );
+                  })()
+                : null}
+            </DragOverlay>,
+            document.body
+          )}
       </DndContext>
 
       <AddToPlaylistDrawer

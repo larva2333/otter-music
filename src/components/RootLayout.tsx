@@ -723,7 +723,7 @@ export function RootLayout() {
             data-root-pager-track
             className="flex h-full w-full will-change-transform"
           >
-            {ROOT_TAB_ORDER.map((path) => {
+            {ROOT_TAB_ORDER.map((path, idx) => {
               const active = isTab && path === currentTabPath;
               const isMounted = mountedTabs.has(path);
               // 生产环境中 4 个根 Tab 与 renderDefaultRootTab 一一对应，始终复用同一组件实例，
@@ -746,7 +746,13 @@ export function RootLayout() {
                 <div
                   key={path}
                   data-root-slot-shell={path}
-                  className="h-full w-full shrink-0"
+                  className={cn(
+                    "relative h-full w-full shrink-0",
+                    // 滑动衔接时在相邻页面接缝处提供细微边界线与边缘阴影，
+                    // 将两页区分为独立画布，避免不同高度的横线直接视觉碰撞
+                    idx > 0 &&
+                      "before:pointer-events-none before:absolute before:inset-y-0 before:-left-3 before:z-30 before:w-3 before:bg-gradient-to-l before:from-black/[0.06] before:to-transparent dark:before:from-black/30 after:pointer-events-none after:absolute after:inset-y-0 after:left-0 after:z-30 after:w-px after:bg-border/50"
+                  )}
                 >
                   <div
                     ref={(node) => {

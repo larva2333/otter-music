@@ -18,10 +18,12 @@ import { useMusicStore } from "@/store/music-store";
 import { useMarketSession } from "@/store/session/market-session";
 import { useNeteaseStore } from "@/store/netease-store";
 import { PlaylistGrid } from "./PlaylistGrid";
+import { SubTabBar } from "./SubTabBar";
 import { MusicPlaylistView } from "@/components/MusicPlaylistView";
 import { usePlayContextHandler } from "@/hooks/usePlayContextHandler";
 import { logger } from "@/lib/logger";
 import { usePullToRefresh } from "@/hooks/use-pull-to-refresh";
+import { useTabReclick } from "@/hooks/use-tab-reclick";
 import { PullRefreshIndicator } from "@/components/PullRefreshIndicator";
 import type { MusicTrack } from "@/types/music";
 
@@ -45,9 +47,11 @@ function EmptyState({
  */
 export function RecommendSection({
   scrollRef: scrollRefProp,
+  isActive = true,
 }: {
   /** 外层滚动容器；传入时在其上启用下拉刷新 */
   scrollRef?: RefObject<HTMLElement | null>;
+  isActive?: boolean;
 }) {
   const navigate = useNavigate();
   const cookie = useNeteaseStore((s) => s.cookie);
@@ -159,37 +163,33 @@ export function RecommendSection({
     }
   );
 
+  // 发现页「推荐」激活时再次点击底部「发现」tab：在「单曲推荐 / 歌单推荐」间切换
+  useTabReclick("search", () => {
+    if (!isActive) return;
+    setActiveTab((prev) => (prev === "songs" ? "playlists" : "songs"));
+    activeScrollRef.current?.scrollTo({ top: 0, behavior: "smooth" });
+  });
+
   // 外层不再统一 p-4：单曲推荐是「无界」列表，要顶到屏幕两边，
   // 内边距交给各自的分区（tab 行 px-5、歌单推荐 px-4）。
   return (
     <div className="pb-bottom-stack">
       <PullRefreshIndicator indicatorRef={indicatorRef} status={pullStatus} />
 
-      {/* 并列子 tab 行，样式与「我的」页 tab 行对齐 */}
-      <div className="flex items-center gap-6 px-5 pt-4 pb-3">
-        {(
-          [
+      {/* 并列子 tab 行，高度与其它发现页子 tab 标题严格对齐并加通栏底边线 */}
+      <div className="px-5 h-[52px] pt-1 border-b">
+        <SubTabBar
+          tabs={[
             { id: "songs", label: "单曲推荐" },
             { id: "playlists", label: "歌单推荐" },
-          ] as const
-        ).map((tab) => (
-          <button
-            key={tab.id}
-            onClick={() => setActiveTab(tab.id)}
-            className={cn(
-              "text-base transition-all",
-              activeTab === tab.id
-                ? "font-bold text-foreground tracking-wide"
-                : "font-medium text-muted-foreground hover:text-foreground"
-            )}
-          >
-            {tab.label}
-          </button>
-        ))}
+          ]}
+          activeId={activeTab}
+          onChange={(id) => setActiveTab(id as "songs" | "playlists")}
+        />
       </div>
 
       {activeTab === "songs" ? (
-        <section>
+        <section className="pt-2.5">
           {dailyLoading && dailyTracks.length === 0 ? (
             <div className="h-60 flex items-center justify-center text-muted-foreground">
               <Loader2 className="h-6 w-6 animate-spin text-primary" />
@@ -223,7 +223,7 @@ export function RecommendSection({
           )}
         </section>
       ) : (
-        <section className="space-y-4 px-4">
+        <section className="space-y-4 px-4 pt-4">
           {playlistsLoading && !recommendPlaylists ? (
             <div className="h-60 flex items-center justify-center text-muted-foreground">
               <Loader2 className="h-6 w-6 animate-spin text-primary" />

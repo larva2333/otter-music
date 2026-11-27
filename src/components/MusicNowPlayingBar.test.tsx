@@ -338,7 +338,7 @@ describe("MusicNowPlayingBar", () => {
     expect(slider.className).toContain("-bottom-[0.5px]");
     expect(slider.className).toContain("translate-y-1/2");
     expect(slider.className).toContain("pointer-events-none");
-    expect(thumb.className).toContain("opacity-0");
+    expect(thumb.className).toContain("opacity-100");
     expect(thumb.className).toContain("pointer-events-none");
     // 红调封面派生出的高亮珊瑚色（而非固定亮金色）
     expect(fillEl.style.backgroundColor).not.toBe("rgb(251, 191, 36)");
@@ -373,7 +373,7 @@ describe("MusicNowPlayingBar", () => {
     expect(slider.className).toContain("-bottom-[0.5px]");
     expect(slider.className).toContain("translate-y-1/2");
     expect(slider.className).toContain("pointer-events-none");
-    expect(thumb.className).toContain("opacity-0");
+    expect(thumb.className).toContain("opacity-100");
     expect(playBtn.querySelector("svg circle")).toBeNull();
     expect(playBtn.className).toContain("player-play-btn-light");
     expect(track.className).toContain("h-[1px]");
@@ -424,7 +424,7 @@ describe("MusicNowPlayingBar", () => {
     // 横向滑动抬手后吞掉本次 click，不误展开控制按钮，圆球隐藏
     expectControlsVisible(false);
     expect(track.className).toContain("h-[1px]");
-    expect(thumb.className).toContain("opacity-0");
+    expect(thumb.className).toContain("opacity-100");
 
     // 2. 单击播放条展开控制按钮后，进度条变粗且显现可拖拽圆球；点击进度条轨道仍不触发 seek
     act(() => {

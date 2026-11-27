@@ -9,7 +9,7 @@ import { forceHttps } from "@otter-music/shared";
 import { IS_NATIVE } from "@/lib/api/config";
 import { logger } from "@/lib/logger";
 
-const artworkCache = new Map<string, boolean>();
+const BLOB_CONVERT_TIMEOUT_MS = 3000;
 
 /**
  * 通知栏上的自定义按钮，不属于 MediaSession 标准动作，需要插件原生支持。
@@ -34,28 +34,29 @@ function syncActionState(options: ActionStateOptions) {
   }
 }
 
-async function prefetchArtwork(url: string): Promise<boolean> {
-  const cached = artworkCache.get(url);
-  if (cached !== undefined) return cached;
-
+/**
+ * 将同源 blob: 封面（如 B 站原生代理封面）转为 base64 data URL，
+ * 使原生 MediaSessionPlugin 可以直接解码为 Bitmap。
+ */
+async function blobUrlToDataUrl(blobUrl: string): Promise<string | null> {
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 3000);
-
+  const timer = setTimeout(() => controller.abort(), BLOB_CONVERT_TIMEOUT_MS);
   try {
-    const res = await fetch(url, { signal: controller.signal });
-    clearTimeout(timer);
-    if (!res.ok) {
-      artworkCache.set(url, false);
-      return false;
-    }
-    const contentType = res.headers.get("content-type") || "";
-    const valid = contentType.includes("image");
-    artworkCache.set(url, valid);
-    return valid;
+    const res = await fetch(blobUrl, { signal: controller.signal });
+    if (!res.ok) return null;
+    const blob = await res.blob();
+    if (!blob.type.startsWith("image/")) return null;
+    return await new Promise<string | null>((resolve) => {
+      const reader = new FileReader();
+      reader.onloadend = () =>
+        resolve(typeof reader.result === "string" ? reader.result : null);
+      reader.onerror = () => resolve(null);
+      reader.readAsDataURL(blob);
+    });
   } catch {
+    return null;
+  } finally {
     clearTimeout(timer);
-    artworkCache.set(url, false);
-    return false;
   }
 }
 
@@ -115,25 +116,30 @@ export function useMediaSessionIntegration(
   }, [playMode]);
 
   useEffect(() => {
+    let cancelled = false;
+
     const updateMetadata = async () => {
       if (!currentTrack) return;
       if (!hasUserGesture) return;
 
       try {
-        const safeArtworkUrl = sanitizeMediaSessionArtworkUrl(coverUrl);
-        // 内嵌封面是内联 data URL，离线也能用，不该被 navigator.onLine 拦掉
-        const isInlineArtwork = !!safeArtworkUrl?.startsWith("data:");
-
-        let safeArtwork: { src: string }[] = [];
-        if (safeArtworkUrl && (isInlineArtwork || navigator.onLine)) {
-          if (IS_NATIVE && !isInlineArtwork) {
-            const valid = await prefetchArtwork(safeArtworkUrl);
-            if (valid) safeArtwork = [{ src: safeArtworkUrl }];
-          } else {
-            safeArtwork = [{ src: safeArtworkUrl }];
-          }
+        let resolvedArtworkUrl = sanitizeMediaSessionArtworkUrl(coverUrl);
+        if (!resolvedArtworkUrl && coverUrl?.trim().startsWith("blob:")) {
+          const dataUrl = await blobUrlToDataUrl(coverUrl.trim());
+          if (cancelled) return;
+          resolvedArtworkUrl = sanitizeMediaSessionArtworkUrl(dataUrl);
         }
 
+        // 内嵌封面/blob 转换结果是内联 data URL，离线也能用，不该被 navigator.onLine 拦掉；
+        // 远端 HTTPS 图床不能在 WebView 用 fetch() 预检（QQ 等无 CORS 头的图床会直接报错丢图），
+        // 直接把合法 URL 交给原生 HttpURLConnection 拉取解码。
+        const isInlineArtwork = !!resolvedArtworkUrl?.startsWith("data:");
+        const safeArtwork: { src: string }[] =
+          resolvedArtworkUrl && (isInlineArtwork || navigator.onLine)
+            ? [{ src: resolvedArtworkUrl }]
+            : [];
+
+        if (cancelled) return;
         await MediaSession.setMetadata({
           title: currentTrack.name || "Unknown Track",
           artist: currentTrack.artist?.join("/") || "Unknown Artist",
@@ -144,7 +150,11 @@ export function useMediaSessionIntegration(
         logger.error("MediaSession", "MediaSession metadata error:", e);
       }
     };
-    updateMetadata();
+    void updateMetadata();
+
+    return () => {
+      cancelled = true;
+    };
   }, [currentTrack, coverUrl, hasUserGesture]);
 
   useEffect(() => {

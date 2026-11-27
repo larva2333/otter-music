@@ -290,12 +290,13 @@ export function RootLayout() {
     setMountedTabs((prev) => new Set(prev).add(activeTabPath));
   }
 
-  // 空闲时预挂载当前页的左右直接相邻根页，确保首次滑动即真实呈现相邻内容
+  // 空闲时预挂载当前页的左右直接相邻音乐根页，确保首次滑动即真实呈现相邻内容；
+  // /settings 节点较多（1000+），不在进入 /mine 时抢占主线程预挂载，留到滑动意向或切换时再挂载。
   useEffect(() => {
     if (!activeTabPath) return;
     const idx = ROOT_TAB_ORDER.indexOf(activeTabPath);
     const neighbors = [ROOT_TAB_ORDER[idx - 1], ROOT_TAB_ORDER[idx + 1]].filter(
-      (p): p is RootTabPath => Boolean(p)
+      (p): p is RootTabPath => Boolean(p) && p !== "/settings"
     );
     if (neighbors.every((p) => mountedTabs.has(p))) return;
 
@@ -341,10 +342,16 @@ export function RootLayout() {
     dir: "next" | "prev";
   } | null>(null);
 
+  const settleCleanupRef = useRef<(() => void) | null>(null);
+
   const clearSettleTimer = useCallback(() => {
     if (settleTimerRef.current !== null) {
       clearTimeout(settleTimerRef.current);
       settleTimerRef.current = null;
+    }
+    if (settleCleanupRef.current) {
+      settleCleanupRef.current();
+      settleCleanupRef.current = null;
     }
   }, []);
 
@@ -367,12 +374,13 @@ export function RootLayout() {
       el.style.display = "block";
       restoreScrollPositions(el);
     }
-    el.style.visibility = "visible";
-    el.style.pointerEvents = "";
+    if (el.style.visibility !== "visible") el.style.visibility = "visible";
+    if (el.style.pointerEvents !== "") el.style.pointerEvents = "";
   }, []);
 
-  // 后台预热相邻槽位：保持 display:block + visibility:hidden 占位，提前跑完虚拟列表测量，
-  // 滑动露出时仅需翻 visible，不触发 80ms+ ResizeObserver 爆炸。
+  // 后台预热相邻槽位：保持 display:block + visibility:visible + pointer-events:none
+  // （由外层 rootViewport 的 overflow-hidden 裁剪），提前跑完虚拟列表测量与 GPU 光栅化，
+  // 滑动露出时 0 重排、0 首次光栅化掉帧。
   const warmSlotHidden = useCallback((path: RootTabPath) => {
     const el = slotRefs.current[path];
     if (!el) return;
@@ -380,18 +388,27 @@ export function RootLayout() {
       el.style.display = "block";
       restoreScrollPositions(el);
     }
-    el.style.visibility = "hidden";
-    el.style.pointerEvents = "none";
+    if (el.style.visibility !== "visible") el.style.visibility = "visible";
+    if (el.style.pointerEvents !== "none") el.style.pointerEvents = "none";
   }, []);
 
   const resetSlotVisibilities = useCallback((keepPath: RootTabPath) => {
-    for (const path of ROOT_TAB_ORDER) {
+    const keepIdx = ROOT_TAB_ORDER.indexOf(keepPath);
+    for (let i = 0; i < ROOT_TAB_ORDER.length; i++) {
+      const path = ROOT_TAB_ORDER[i];
       if (path === keepPath) continue;
       const el = slotRefs.current[path];
-      if (
-        el &&
-        (el.style.display || el.style.visibility || el.style.pointerEvents)
-      ) {
+      if (!el) continue;
+
+      const isNeighbor = keepIdx !== -1 && Math.abs(i - keepIdx) === 1;
+      if (isNeighbor && el.style.display === "block") {
+        // 直接相邻页若已展开，保持后台预热态，避免切页后反复 display:none <-> block 震荡重排
+        if (el.style.visibility !== "visible") el.style.visibility = "visible";
+        if (el.style.pointerEvents !== "none") el.style.pointerEvents = "none";
+        continue;
+      }
+
+      if (el.style.display || el.style.visibility || el.style.pointerEvents) {
         saveScrollPositions(el);
         el.style.display = "";
         el.style.visibility = "";
@@ -497,23 +514,38 @@ export function RootLayout() {
     warmSlotHidden,
   ]);
 
-  // 进入设置页或喜欢页后空闲预热：在后台把直接相邻的 /mine（或 /favorites）
-  // 对齐好对应端并提前展开布局（visibility:hidden），右滑/左滑瞬间 0 卡顿。
+  // 进入根页后空闲预热：在后台把直接相邻的根页提前展开布局（visibility:hidden），
+  // 并在需要首尾对齐的页面提前对齐对应端，侧滑瞬间 0 卡顿。
   useEffect(() => {
     if (!isTab || !activeTabPath) return;
-    if (activeTabPath !== "/settings" && activeTabPath !== "/favorites") return;
 
     const timer = window.setTimeout(() => {
       if (draggingRef.current || pendingCommitRef.current) return;
-      if (activeTabPath === "/settings" && mountedTabs.has("/mine")) {
-        warmSlotHidden("/mine");
-        alignedTargetRef.current = "/mine";
-        alignersRef.current["/mine"]?.previewAlign("end");
+      if (activeTabPath === "/settings") {
+        if (mountedTabs.has("/mine")) {
+          warmSlotHidden("/mine");
+          alignedTargetRef.current = "/mine";
+          alignersRef.current["/mine"]?.previewAlign("end");
+        }
+      } else if (activeTabPath === "/mine") {
+        if (mountedTabs.has("/favorites")) {
+          warmSlotHidden("/favorites");
+        }
+        if (mountedTabs.has("/settings")) {
+          warmSlotHidden("/settings");
+        }
       } else if (activeTabPath === "/favorites") {
         if (mountedTabs.has("/mine")) {
           warmSlotHidden("/mine");
           alignedTargetRef.current = "/mine";
           alignersRef.current["/mine"]?.previewAlign("start");
+        }
+        if (mountedTabs.has("/search")) {
+          warmSlotHidden("/search");
+        }
+      } else if (activeTabPath === "/search") {
+        if (mountedTabs.has("/favorites")) {
+          warmSlotHidden("/favorites");
         }
       }
     }, 180);
@@ -621,14 +653,27 @@ export function RootLayout() {
         showSlotTemporarily(target);
         clearSettleTimer();
         pendingCommitRef.current = { target, dir };
-        // 先在纯 GPU 合成层跑完 260ms 滑行过渡，结束后再切换路由与高亮，避免起跑期掉帧
+        // 先在纯 GPU 合成层跑完 260ms 滑行过渡，等 transitionend 真正到达终点后再切换路由，避免提前截断最后一帧
         applyRootTrack(-targetIndex * width, true);
-        settleTimerRef.current = setTimeout(() => {
-          settleTimerRef.current = null;
-          if (rootTrackRef.current)
+        const track = rootTrackRef.current;
+        const finish = () => {
+          clearSettleTimer();
+          if (rootTrackRef.current) {
             rootTrackRef.current.style.transition = "none";
+          }
           flushPendingCommit();
-        }, ROOT_SETTLE_MS);
+        };
+        if (track) {
+          const onTransitionEnd = (e: TransitionEvent) => {
+            if (e.target !== track || e.propertyName !== "transform") return;
+            finish();
+          };
+          track.addEventListener("transitionend", onTransitionEnd);
+          settleCleanupRef.current = () => {
+            track.removeEventListener("transitionend", onTransitionEnd);
+          };
+        }
+        settleTimerRef.current = setTimeout(finish, ROOT_SETTLE_MS + 60);
       },
       registerAligner: (path, aligner) => {
         alignersRef.current[path] = aligner;
@@ -681,11 +726,21 @@ export function RootLayout() {
             {ROOT_TAB_ORDER.map((path) => {
               const active = isTab && path === currentTabPath;
               const isMounted = mountedTabs.has(path);
+              // 生产环境中 4 个根 Tab 与 renderDefaultRootTab 一一对应，始终复用同一组件实例，
+              // 避免从预挂载组件切换成 Router outlet（RenderedRoute）时整棵树卸载重建。
+              const useTestOutlet = Boolean(import.meta.env.VITEST);
               const content = isMounted
-                ? path === activeTabPath && outlet
-                  ? outlet
+                ? useTestOutlet
+                  ? path === activeTabPath && outlet
+                    ? outlet
+                    : (tabPagesRef.current.get(path) ??
+                      renderDefaultRootTab(path))
                   : (tabPagesRef.current.get(path) ??
-                    renderDefaultRootTab(path))
+                    (() => {
+                      const node = renderDefaultRootTab(path);
+                      tabPagesRef.current.set(path, node);
+                      return node;
+                    })())
                 : null;
               return (
                 <div
@@ -701,7 +756,7 @@ export function RootLayout() {
                     data-page-active={active ? "true" : "false"}
                     aria-hidden={!active || undefined}
                     className={cn(
-                      "h-full w-full [contain:layout_style_paint]",
+                      "h-full w-full will-change-transform [contain:layout_style_paint]",
                       !active && "hidden",
                       active && pageAnimClass
                     )}

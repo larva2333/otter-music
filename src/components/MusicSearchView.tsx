@@ -42,6 +42,7 @@ import { SearchCategoryResults } from "./SearchCategoryResults";
 import { PlaylistMarket } from "./PlaylistMarket/PlaylistMarket";
 import { type MusicTrack, type SearchSuggestionItem } from "@/types/music";
 import { logger } from "@/lib/logger";
+import { cn } from "@/lib/utils";
 
 interface MusicSearchViewProps {
   onPlay: (track: MusicTrack, list: MusicTrack[], contextId?: string) => void;
@@ -655,14 +656,14 @@ export function MusicSearchView({
           }
         />
       )}
-      <div data-tap-top="" className="shrink-0 border-b border-border/40 p-3">
+      <div data-tap-top="" className="shrink-0 px-4 py-3">
         <div ref={wrapperRef} className="relative w-full">
-          {/* 搜索框主体 */}
-          <div className="relative flex h-11 items-center rounded-xl bg-muted/40 px-3 transition-colors focus-within:bg-background focus-within:ring-1 focus-within:ring-ring focus-within:shadow-sm hover:bg-muted/60">
+          {/* 搜索框主体：沿用「我的喜欢」胶囊样式，首页高度与宽度更大便于点击 */}
+          <div className="relative">
             {searchLoading ? (
-              <Loader2 className="h-4 w-4 shrink-0 animate-spin text-primary" />
+              <Loader2 className="absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 animate-spin text-primary" />
             ) : (
-              <Search className="h-4 w-4 shrink-0 text-muted-foreground" />
+              <Search className="absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
             )}
 
             <Input
@@ -674,21 +675,23 @@ export function MusicSearchView({
               onClick={openHistory}
               onBlur={handleInputBlur}
               placeholder="搜索音乐、歌手或专辑..."
-              className="h-full flex-1 border-0 bg-transparent! px-3 text-sm shadow-none focus-visible:ring-0 placeholder:text-placeholder"
+              className={cn(
+                "h-11 w-full rounded-full pl-10 text-sm",
+                searchQuery && "pr-10"
+              )}
             />
 
-            {/* 清空按钮 */}
-            <button
-              type="button"
-              className={`flex h-6 w-6 items-center justify-center rounded-full transition-all duration-200 ${
-                searchQuery
-                  ? "opacity-100 scale-100"
-                  : "pointer-events-none opacity-0 scale-90"
-              } text-muted-foreground hover:bg-muted hover:text-foreground`}
-              onClick={() => resetSearch(true)}
-            >
-              <X className="h-3.5 w-3.5" />
-            </button>
+            {/* 有内容时显示清除按钮，一键清空搜索词 */}
+            {searchQuery && (
+              <button
+                type="button"
+                onClick={() => resetSearch(true)}
+                aria-label="清除搜索"
+                className="absolute right-3 top-1/2 flex h-5 w-5 -translate-y-1/2 items-center justify-center rounded-full bg-muted-foreground/20 text-muted-foreground transition-colors hover:bg-muted-foreground/30 hover:text-foreground"
+              >
+                <X className="h-3 w-3" />
+              </button>
+            )}
           </div>
 
           {/* 搜索建议弹窗 */}

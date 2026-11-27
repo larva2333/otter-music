@@ -10,6 +10,7 @@ import type { MusicSource } from "@/types/music";
 import toast from "react-hot-toast";
 import { logger } from "@/lib/logger";
 import { resolveTrackUrl } from "@/lib/audio-resolver";
+import { shouldSkipOfficialResolve } from "@/lib/playback-access";
 import { resolveViaLxPlayback } from "@/lib/imported-sources/lx-playback";
 import { resolveViaHigequFallback } from "@/lib/higequ/higequ-fallback";
 import { resolveViaCrossPlatform } from "@/lib/cross-platform-fallback";
@@ -23,6 +24,8 @@ const LX_FALLBACK_TIMEOUT = 7000;
 const HIGEQU_FALLBACK_TIMEOUT = 15000;
 /** 播放失败后跨平台搜同曲+并发取链的时限（多平台搜索） */
 const CROSS_PLATFORM_FALLBACK_TIMEOUT = 20000;
+/** 网易/QQ 免费曲官方直链失效后，强制刷新再取一次的时限 */
+const OFFICIAL_RETRY_TIMEOUT = 10000;
 type FallbackStage = "none" | "proxy" | "final";
 
 /** 带超时的 Promise：超时返回 null，不抛错 */
@@ -42,32 +45,20 @@ function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T | null> {
 }
 
 /**
- * 并发兜底：第一个拿到结果的胜出；全部落空才返回 null。
- * 某个源先返回 null 不代表失败结束，另一个源可能还在取链。
+ * 优先级并发兜底：所有任务同时发起取链，但按数组顺序决定胜负。
+ *
+ * 高优先级一旦拿到结果就立即返回，其余请求即便仍在跑，结果也会被丢弃；
+ * 高优先级失败/超时才依次看下一个。这和「谁先返回谁播放」相反 ——
+ * 洛雪必须排在嗨歌曲和其他平台前面，后两者先拿到链也要等洛雪认输。
  */
-async function firstFallbackResult<T>(
+async function priorityFallbackResult<T>(
   tasks: Promise<T | null>[]
 ): Promise<T | null> {
-  return new Promise((resolve) => {
-    let pending = tasks.length;
-    let settled = false;
-    const finish = (result: T | null) => {
-      if (settled) return;
-      if (result) {
-        settled = true;
-        resolve(result);
-        return;
-      }
-      pending -= 1;
-      if (pending === 0) {
-        settled = true;
-        resolve(null);
-      }
-    };
-    tasks.forEach((task) => {
-      void task.then(finish, () => finish(null));
-    });
-  });
+  for (const task of tasks) {
+    const result = await task.catch(() => null);
+    if (result) return result;
+  }
+  return null;
 }
 
 /** 校验歌曲在当前网络/缓存状态下是否可播 */
@@ -387,87 +378,78 @@ export function useAudioTrackLoader(
         // 都不该再花 7 秒重复取链，直接进入换源
         const isVipSkip = errorMsg === "VIP_NO_ACCESS";
         const skipLxFallback = fromLxRef.current || isVipSkip;
+
+        // 官方直链播不出来时，所有生效的替代源一起取链，但播放有固定优先级：
+        // 网易/QQ 免费曲先重试官方 → 洛雪 → 嗨歌曲 → 其他平台。
+        // 高优先级拿到链就直接用它，其余结果丢弃；低优先级即便先返回，
+        // 也要等前面的失败/超时才轮到。
+        type FallbackWinner =
+          | { kind: "official"; url: string }
+          | { kind: "lx"; url: string; sourceName: string }
+          | { kind: "higequ"; url: string }
+          | { kind: "cross"; url: string; source: MusicSource };
+        const canFallback =
+          getState().enableAutoMatch &&
+          source !== "local" &&
+          source !== "podcast" &&
+          !isStale();
+        // 顺序即优先级：priorityFallbackResult 按此顺序收敛
+        const fallbackTasks: Promise<FallbackWinner | null>[] = [];
+
+        // ① 网易/QQ 免费曲先重试官方：官方本来就能给完整链接，只是这次签名过期/
+        // 节点抖动。强制刷新绕开已删的缓存再取一次，比直接让洛雪接管更稳。
+        // 会员曲（shouldSkipOfficialResolve）官方只给试听片段，不在这里重试。
+        const canRetryOfficial =
+          !currentTrack.pendingSourceFrom &&
+          (currentTrack.source === "_netease" ||
+            currentTrack.source === "qq") &&
+          !isVipSkip &&
+          !shouldSkipOfficialResolve(currentTrack);
+        if (canRetryOfficial) {
+          fallbackTasks.push(
+            withTimeout(
+              resolveTrackUrl(currentTrack, parseInt(quality, 10), {
+                forceRefresh: true,
+              }),
+              OFFICIAL_RETRY_TIMEOUT
+            )
+              .then((result) => (result?.url ? result : null))
+              .catch(() => null)
+              .then((result) =>
+                result ? { kind: "official" as const, url: result.url } : null
+              )
+          );
+        }
+
+        // ② 洛雪：脚本按同曲换直链，不动 songmid。
+        // 洛雪已试过（fromLx）、待匹配目标源 id 尚未拿到、或跳过官方的会员曲都不重复取链。
         if (
+          !currentTrack.pendingSourceFrom &&
           source !== "local" &&
           source !== "podcast" &&
           !skipLxFallback &&
           lxFallbackTrackRef.current !== trackKey
         ) {
           lxFallbackTrackRef.current = trackKey;
-          toast("官方链接不可播，正在用洛雪源重新取链…", {
-            id: "lx-fallback",
-            icon: "🎵",
-          });
-          const lxResult = await withTimeout(
-            resolveViaLxPlayback(currentTrack, parseInt(quality, 10)),
-            LX_FALLBACK_TIMEOUT
-          );
-          if (lxResult && !isStale() && lxResult.url !== remoteUrlRef.current) {
-            remoteUrlRef.current = lxResult.url;
-            fromLxRef.current = true;
-            getState().setCurrentAudioOrigin({
-              via: "lx",
-              source,
-              lxName: lxResult.sourceName,
-            });
-            getState().recordTrackOrigin(currentTrack, {
-              via: "lx",
-              source,
-              lxName: lxResult.sourceName,
-            });
-            try {
-              await play(lxResult.url);
-              toast.success("洛雪源已接管播放", { id: "lx-fallback" });
-              return;
-            } catch (lxError) {
-              logger.warn("useAudioTrackLoader", "洛雪源兜底播放仍失败", {
-                trackId,
-                source,
-                lxError,
-              });
-              // 取到了链但播放仍失败：这条 if 不会走下面的 else，
-              // 不在这里 dismiss，「正在取链」的 toast 就会残留
-              toast.dismiss("lx-fallback");
-            }
-          } else {
-            toast.dismiss("lx-fallback");
-          }
-        }
-
-        // 跨平台同曲与嗨歌曲同名曲一起并发搜，谁先拿到完整可播直链谁胜出。
-        // 两者都只换播放地址、不动队列曲目；「自动换源」总开关同时管住它们。
-        type FallbackWinner =
-          | { kind: "cross"; url: string; source: MusicSource }
-          | { kind: "higequ"; url: string };
-        const canFallback =
-          getState().enableAutoMatch &&
-          source !== "local" &&
-          source !== "podcast" &&
-          !isStale();
-        const fallbackTasks: Promise<FallbackWinner | null>[] = [];
-
-        if (canFallback && crossPlatformFallbackTrackRef.current !== trackKey) {
-          crossPlatformFallbackTrackRef.current = trackKey;
           fallbackTasks.push(
             withTimeout(
-              resolveViaCrossPlatform(
-                currentTrack,
-                parseInt(quality, 10),
-                CROSS_PLATFORM_FALLBACK_TIMEOUT
-              ),
-              CROSS_PLATFORM_FALLBACK_TIMEOUT
-            ).then((result) =>
-              result
-                ? {
-                    kind: "cross" as const,
-                    url: result.url,
-                    source: result.track.source,
-                  }
-                : null
+              resolveViaLxPlayback(currentTrack, parseInt(quality, 10)),
+              LX_FALLBACK_TIMEOUT
             )
+              .catch(() => null)
+              .then((result) =>
+                result
+                  ? {
+                      kind: "lx" as const,
+                      url: result.url,
+                      sourceName: result.sourceName,
+                    }
+                  : null
+              )
           );
         }
 
+        // ③ 嗨歌曲：同名曲直链，不动队列曲目。
         const higequEnabled = getState().sourceConfigs.some(
           (c) => c.source === "higequ" && c.enabled && c.visible
         );
@@ -482,32 +464,68 @@ export function useAudioTrackLoader(
             withTimeout(
               resolveViaHigequFallback(currentTrack, 4000),
               HIGEQU_FALLBACK_TIMEOUT
-            ).then((result) =>
-              result ? { kind: "higequ" as const, url: result.url } : null
             )
+              .then((result) =>
+                result ? { kind: "higequ" as const, url: result.url } : null
+              )
+              .catch(() => null)
+          );
+        }
+
+        // ④ 其他平台：搜同曲后并发取链，同样不动队列曲目。
+        if (canFallback && crossPlatformFallbackTrackRef.current !== trackKey) {
+          crossPlatformFallbackTrackRef.current = trackKey;
+          fallbackTasks.push(
+            withTimeout(
+              resolveViaCrossPlatform(
+                currentTrack,
+                parseInt(quality, 10),
+                CROSS_PLATFORM_FALLBACK_TIMEOUT
+              ),
+              CROSS_PLATFORM_FALLBACK_TIMEOUT
+            )
+              .then((result) =>
+                result
+                  ? {
+                      kind: "cross" as const,
+                      url: result.url,
+                      source: result.track.source,
+                    }
+                  : null
+              )
+              .catch(() => null)
           );
         }
 
         if (fallbackTasks.length > 0) {
           toast("正在寻找可播的替代音源…", { id: "playback-fallback" });
-          const winner = await firstFallbackResult(fallbackTasks);
+          const winner = await priorityFallbackResult(fallbackTasks);
           toast.dismiss("playback-fallback");
           if (isStale()) return;
 
           if (winner && winner.url !== remoteUrlRef.current) {
             remoteUrlRef.current = winner.url;
             const origin =
-              winner.kind === "cross"
-                ? { via: "official" as const, source: winner.source }
-                : { via: "higequ" as const, source };
+              winner.kind === "lx"
+                ? { via: "lx" as const, source, lxName: winner.sourceName }
+                : winner.kind === "cross"
+                  ? { via: "official" as const, source: winner.source }
+                  : winner.kind === "official"
+                    ? { via: "official" as const, source: currentTrack.source }
+                    : { via: "higequ" as const, source };
+            if (winner.kind === "lx") fromLxRef.current = true;
             getState().setCurrentAudioOrigin(origin);
             getState().recordTrackOrigin(currentTrack, origin);
             try {
               await play(winner.url);
               toast.success(
-                winner.kind === "cross"
-                  ? `已切换到${winner.source}音源播放`
-                  : "嗨歌曲已接管播放",
+                winner.kind === "official"
+                  ? "官方源已重新取链播放"
+                  : winner.kind === "lx"
+                    ? `洛雪源「${winner.sourceName}」已接管播放`
+                    : winner.kind === "cross"
+                      ? `已切换到${winner.source}音源播放`
+                      : "嗨歌曲已接管播放",
                 { id: "playback-fallback" }
               );
               return;

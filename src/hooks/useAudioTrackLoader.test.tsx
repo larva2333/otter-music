@@ -9,6 +9,7 @@ import { resolveTrackUrl } from "@/lib/audio-resolver";
 import { getProxyUrl } from "@/lib/api";
 import { resolveViaHigequFallback } from "@/lib/higequ/higequ-fallback";
 import { resolveViaCrossPlatform } from "@/lib/cross-platform-fallback";
+import { resolveViaLxPlayback } from "@/lib/imported-sources/lx-playback";
 import toast from "react-hot-toast";
 import type { MusicTrack } from "@/types/music";
 
@@ -39,6 +40,10 @@ vi.mock("@/lib/higequ/higequ-fallback", () => ({
 
 vi.mock("@/lib/cross-platform-fallback", () => ({
   resolveViaCrossPlatform: vi.fn().mockResolvedValue(null),
+}));
+
+vi.mock("@/lib/imported-sources/lx-playback", () => ({
+  resolveViaLxPlayback: vi.fn().mockResolvedValue(null),
 }));
 
 vi.mock("react-hot-toast", () => ({
@@ -73,6 +78,13 @@ const VIP_NETEASE_TRACK = {
   id: "vip-1",
   source: "_netease",
   privilege: { fee: 1 },
+} as unknown as MusicTrack;
+
+const FREE_NETEASE_TRACK = {
+  ...TRACK,
+  id: "free-1",
+  source: "_netease",
+  privilege: { fee: 0 },
 } as unknown as MusicTrack;
 
 /** 单一品质音源样本（站点恒定 128kbps mp3，切音质无流可换） */
@@ -145,6 +157,8 @@ describe("useAudioTrackLoader", () => {
     vi.mocked(resolveViaHigequFallback).mockResolvedValue(null);
     vi.mocked(resolveViaCrossPlatform).mockReset();
     vi.mocked(resolveViaCrossPlatform).mockResolvedValue(null);
+    vi.mocked(resolveViaLxPlayback).mockReset();
+    vi.mocked(resolveViaLxPlayback).mockResolvedValue(null);
   });
 
   afterEach(() => {
@@ -282,7 +296,7 @@ describe("useAudioTrackLoader", () => {
     cleanup();
   });
 
-  it("跨平台与嗨歌曲同时发起，先拿到链接的胜出", async () => {
+  it("洛雪失败后，先返回的嗨歌曲优先于跨平台", async () => {
     useMusicStore.setState({ enableAutoMatch: true });
     let resolveCross!: (
       value: { url: string; track: MusicTrack } | null
@@ -311,7 +325,7 @@ describe("useAudioTrackLoader", () => {
     });
     await flushAsync();
 
-    // 两个搜索都已发出：不等先发的那个返回
+    // 洛雪默认取链落空，嗨歌曲与跨平台都已同时发出
     expect(resolveViaCrossPlatform).toHaveBeenCalledTimes(1);
     expect(resolveViaHigequFallback).toHaveBeenCalledTimes(1);
 
@@ -329,6 +343,130 @@ describe("useAudioTrackLoader", () => {
     // 迟到的跨平台结果不得覆盖已经胜出的链接
     resolveCross({ url: "https://cdn.example.com/cross.mp3", track: TRACK });
     expect(audio.src).toContain("higequ.mp3");
+    cleanup();
+  });
+
+  it("洛雪最先返回时立即播放，不等先到的嗨歌曲", async () => {
+    useMusicStore.setState({ enableAutoMatch: true });
+    let resolveLx!: (value: { url: string; sourceName: string } | null) => void;
+    let resolveHigequ!: (
+      value: { url: string; trackId: string } | null
+    ) => void;
+    vi.mocked(resolveViaLxPlayback).mockImplementation(
+      () =>
+        new Promise((res) => {
+          resolveLx = res;
+        })
+    );
+    vi.mocked(resolveViaHigequFallback).mockImplementation(
+      () =>
+        new Promise((res) => {
+          resolveHigequ = res;
+        })
+    );
+
+    const { audio, cleanup } = await setup((a) => {
+      a.play = vi
+        .fn()
+        .mockRejectedValueOnce(new Error("PLAY_FAIL"))
+        .mockResolvedValue(undefined);
+    });
+    await flushAsync();
+
+    expect(resolveViaLxPlayback).toHaveBeenCalledTimes(1);
+    expect(resolveViaHigequFallback).toHaveBeenCalledTimes(1);
+
+    // 嗨歌曲先返回，但洛雪优先级更高，此时还不能开播
+    await act(async () => {
+      resolveHigequ({
+        url: "https://cdn.example.com/higequ.mp3",
+        trackId: "h1",
+      });
+      await drainMicrotasks();
+      await new Promise((r) => setTimeout(r, 0));
+      await drainMicrotasks();
+    });
+    expect(audio.src).not.toContain("higequ.mp3");
+
+    // 洛雪返回后立刻用它播放
+    await act(async () => {
+      resolveLx({
+        url: "https://cdn.example.com/lx.mp3",
+        sourceName: "测试洛雪源",
+      });
+      await drainMicrotasks();
+      await new Promise((r) => setTimeout(r, 0));
+      await drainMicrotasks();
+    });
+    expect(audio.src).toContain("lx.mp3");
+    expect(useMusicStore.getState().currentAudioOrigin?.via).toBe("lx");
+    cleanup();
+  });
+
+  it("网易免费曲官方重试先返回时直接播放，洛雪迟到不覆盖", async () => {
+    useMusicStore.setState({
+      queue: [FREE_NETEASE_TRACK],
+      currentIndex: 0,
+      enableAutoMatch: false,
+    });
+    const RETRY_URL = "https://cdn.example.com/official-retry.mp3";
+    vi.mocked(resolveTrackUrl)
+      .mockResolvedValueOnce({ url: MOCK_URL })
+      .mockResolvedValueOnce({ url: RETRY_URL });
+    let resolveLx!: (value: { url: string; sourceName: string } | null) => void;
+    vi.mocked(resolveViaLxPlayback).mockImplementation(
+      () =>
+        new Promise((res) => {
+          resolveLx = res;
+        })
+    );
+
+    const { audio, cleanup } = await setup((a) => {
+      a.play = vi
+        .fn()
+        .mockRejectedValueOnce(new Error("PLAY_FAIL"))
+        .mockResolvedValue(undefined);
+    });
+    await flushAsync();
+
+    expect(resolveTrackUrl).toHaveBeenCalledTimes(2);
+    expect(resolveViaLxPlayback).toHaveBeenCalledTimes(1);
+    expect(audio.src).toContain("official-retry.mp3");
+    expect(useMusicStore.getState().currentAudioOrigin).toMatchObject({
+      via: "official",
+      source: "_netease",
+    });
+
+    resolveLx({
+      url: "https://cdn.example.com/lx.mp3",
+      sourceName: "测试洛雪源",
+    });
+    expect(audio.src).toContain("official-retry.mp3");
+    cleanup();
+  });
+
+  it("网易会员曲不走官方重试，直接跳过官方接口", async () => {
+    useMusicStore.setState({
+      queue: [VIP_NETEASE_TRACK],
+      currentIndex: 0,
+      enableAutoMatch: false,
+    });
+    vi.mocked(resolveTrackUrl)
+      .mockRejectedValueOnce(new Error("VIP_NO_ACCESS"))
+      .mockResolvedValueOnce({
+        url: MOCK_URL,
+        origin: { via: "official", source: "_netease" },
+      });
+
+    const { cleanup } = await setup();
+    await flushAsync();
+
+    // 会员曲官方只给试听片段：主流程一次 + 末尾试听兜底一次，没有中间那次 forceRefresh 重试
+    expect(resolveTrackUrl).toHaveBeenCalledTimes(2);
+    expect(resolveTrackUrl).toHaveBeenLastCalledWith(VIP_NETEASE_TRACK, 320, {
+      forceRefresh: true,
+      allowVipPreview: true,
+    });
     cleanup();
   });
 

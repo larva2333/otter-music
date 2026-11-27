@@ -32,8 +32,10 @@ export function QueuePage({
   const clearButton =
     queue.length > 0 ? (
       <Button
-        variant="ghost"
-        size="sm"
+        variant="secondary"
+        size="icon"
+        className="h-8 w-8 rounded-full"
+        aria-label="清空播放列表"
         onClick={async () => {
           if (
             await confirmDialog({

@@ -225,7 +225,14 @@ export const musicApi = {
       return withImageSize(idOrUrl, size) ?? idOrUrl;
     }
     const key = `pic:v3:${source}:${idOrUrl}:${size}`;
-    return syncPicCache.get(key) ?? null;
+    const hit = syncPicCache.get(key);
+    if (hit !== undefined) {
+      // 命中即续命（LRU 移到队尾），避免常看队列封面被冷门图挤出同步缓存
+      syncPicCache.delete(key);
+      syncPicCache.set(key, hit);
+      return hit;
+    }
+    return null;
   },
 
   /**
@@ -239,20 +246,29 @@ export const musicApi = {
     size: number = 800,
     trackInfo?: MusicTrack | null
   ): Promise<string | null> {
-    if (idOrUrl.startsWith("http") && source !== "bilibili") {
+    const picSource = trackInfo?.pendingSourceFrom ?? source;
+    if (idOrUrl.startsWith("http") && picSource !== "bilibili") {
       return withImageSize(idOrUrl, size) ?? idOrUrl;
     }
     // v2：咪咕封面由相对路径改为补全 CDN 域名，旧缓存需作废，避免继续命中失效地址
     // v3：本地曲目改为携带完整元信息在线匹配，旧的「匹配失败」缓存需作废
-    const key = `pic:v3:${source}:${idOrUrl}:${size}`;
+    const key = `pic:v3:${picSource}:${idOrUrl}:${size}`;
     const resolved = await cachedFetch<string | null>(
       key,
       async () => {
         try {
           const track = trackInfo
-            ? ({ ...trackInfo, source, pic_id: idOrUrl } as MusicTrack)
-            : ({ id: idOrUrl, pic_id: idOrUrl, source } as MusicTrack);
-          return await MusicProviderFactory.getProvider(source).getPic(
+            ? ({
+                ...trackInfo,
+                source: picSource,
+                pic_id: idOrUrl,
+              } as MusicTrack)
+            : ({
+                id: idOrUrl,
+                pic_id: idOrUrl,
+                source: picSource,
+              } as MusicTrack);
+          return await MusicProviderFactory.getProvider(picSource).getPic(
             track,
             size
           );
@@ -275,17 +291,24 @@ export const musicApi = {
     source: MusicSource,
     trackInfo?: MusicTrack | null
   ): Promise<SongLyric | null> {
+    const lyricSource = trackInfo?.pendingSourceFrom ?? source;
     // v2：本地曲目改为携带完整元信息在线匹配，旧的「匹配失败」缓存需作废
-    const key = `lyric:v2:${source}:${id}`;
+    const key = `lyric:v2:${lyricSource}:${id}`;
 
     return cachedFetch<SongLyric | null>(
       key,
       async () => {
         try {
           const track = trackInfo
-            ? ({ ...trackInfo, source, lyric_id: id } as MusicTrack)
-            : ({ id, lyric_id: id, source } as MusicTrack);
-          return await MusicProviderFactory.getProvider(source).getLyric(track);
+            ? ({
+                ...trackInfo,
+                source: lyricSource,
+                lyric_id: id,
+              } as MusicTrack)
+            : ({ id, lyric_id: id, source: lyricSource } as MusicTrack);
+          return await MusicProviderFactory.getProvider(lyricSource).getLyric(
+            track
+          );
         } catch (e) {
           logger.error("music-api", "getLyric failed", e);
           return null;

@@ -20,10 +20,10 @@ index e273185..b430341 100644
 +    }
  }
 diff --git a/node_modules/@jofr/capacitor-media-session/android/src/main/java/io/github/jofr/capacitor/mediasessionplugin/MediaSessionPlugin.java b/node_modules/@jofr/capacitor-media-session/android/src/main/java/io/github/jofr/capacitor/mediasessionplugin/MediaSessionPlugin.java
-index 6f54b7f..59ac0e8 100644
+index 6f54b7f..0d9d1a5 100644
 --- a/node_modules/@jofr/capacitor-media-session/android/src/main/java/io/github/jofr/capacitor/mediasessionplugin/MediaSessionPlugin.java
 +++ b/node_modules/@jofr/capacitor-media-session/android/src/main/java/io/github/jofr/capacitor/mediasessionplugin/MediaSessionPlugin.java
-@@ -1,11 +1,13 @@
+@@ -1,12 +1,16 @@
  package io.github.jofr.capacitor.mediasessionplugin;
  
 +import android.app.Activity;
@@ -34,10 +34,27 @@ index 6f54b7f..59ac0e8 100644
  import android.graphics.Bitmap;
  import android.graphics.BitmapFactory;
 +import android.net.Uri;
++import android.os.Handler;
  import android.os.IBinder;
++import android.os.Looper;
  import android.support.v4.media.session.PlaybackStateCompat;
  import android.util.Base64;
-@@ -35,16 +37,23 @@ import java.util.Map;
+ import android.util.Log;
+@@ -23,28 +27,41 @@ import com.getcapacitor.annotation.CapacitorPlugin;
+ import org.json.JSONException;
+ import org.json.JSONObject;
+ 
+-import java.io.IOException;
+ import java.io.InputStream;
+ import java.net.HttpURLConnection;
+ import java.net.URL;
+ import java.util.HashMap;
+ import java.util.List;
+ import java.util.Map;
++import java.util.concurrent.ExecutorService;
++import java.util.concurrent.Executors;
+ 
+ @CapacitorPlugin(name = "MediaSession")
  public class MediaSessionPlugin extends Plugin {
      private static final String TAG = "MediaSessionPlugin";
  
@@ -50,6 +67,11 @@ index 6f54b7f..59ac0e8 100644
      private String artist = "";
      private String album = "";
      private Bitmap artwork = null;
++    private String artworkUrl = null;
++    private long metadataSeq = 0L;
++    private final Object metadataLock = new Object();
++    private final Handler mainHandler = new Handler(Looper.getMainLooper());
++    private final ExecutorService artworkExecutor = Executors.newCachedThreadPool();
 +    /** 车载歌词（覆写 AVRCP 的 TITLE 字段）；服务未就绪时先缓存 */
 +    private String carLyric = null;
      private String playbackState = "none";
@@ -61,7 +83,7 @@ index 6f54b7f..59ac0e8 100644
      private final Map<String, PluginCall> actionHandlers = new HashMap<>();
  
      private MediaSessionService service = null;
-@@ -54,8 +63,9 @@ public class MediaSessionPlugin extends Plugin {
+@@ -54,8 +71,9 @@ public class MediaSessionPlugin extends Plugin {
          public void onServiceConnected(ComponentName componentName, IBinder iBinder) {
              MediaSessionService.LocalBinder binder = (MediaSessionService.LocalBinder) iBinder;
              service = binder.getService();
@@ -73,7 +95,7 @@ index 6f54b7f..59ac0e8 100644
              updateServiceMetadata();
              updateServicePlaybackState();
              updateServicePositionState();
-@@ -64,9 +74,41 @@ public class MediaSessionPlugin extends Plugin {
+@@ -64,9 +82,41 @@ public class MediaSessionPlugin extends Plugin {
          @Override
          public void onServiceDisconnected(ComponentName componentName) {
              Log.d(TAG, "Disconnected from MediaSessionService");
@@ -115,7 +137,7 @@ index 6f54b7f..59ac0e8 100644
      @Override
      public void load() {
          super.load();
-@@ -82,7 +124,8 @@ public class MediaSessionPlugin extends Plugin {
+@@ -82,62 +132,145 @@ public class MediaSessionPlugin extends Plugin {
      }
  
      public void startMediaService() {
@@ -125,15 +147,176 @@ index 6f54b7f..59ac0e8 100644
          ContextCompat.startForegroundService(getContext(), intent);
          getContext().bindService(intent, serviceConnection, Context.BIND_AUTO_CREATE);
      }
-@@ -92,6 +135,7 @@ public class MediaSessionPlugin extends Plugin {
-         service.setArtist(artist);
-         service.setAlbum(album);
-         service.setArtwork(artwork);
-+        service.setCarLyric(carLyric);
-         service.update();
+ 
+     private void updateServiceMetadata() {
+-        service.setTitle(title);
+-        service.setArtist(artist);
+-        service.setAlbum(album);
+-        service.setArtwork(artwork);
+-        service.update();
++        final MediaSessionService activeService = service;
++        if (activeService == null) return;
++        activeService.setTitle(title);
++        activeService.setArtist(artist);
++        activeService.setAlbum(album);
++        activeService.setArtwork(artwork);
++        activeService.setCarLyric(carLyric);
++        activeService.update();
      }
  
-@@ -187,10 +231,78 @@ public class MediaSessionPlugin extends Plugin {
++    @Override
++    protected void handleOnDestroy() {
++        artworkExecutor.shutdownNow();
++        super.handleOnDestroy();
++    }
+ 
+-    private Bitmap urlToBitmap(String url) throws IOException {
+-        final boolean blobUrl = url.startsWith("blob:");
+-        if (blobUrl) {
+-            Log.i(TAG, "Converting Blob URLs to Bitmap for media artwork is not yet supported");
+-        }
+-
+-        final boolean httpUrl = url.startsWith("http");
+-        if (httpUrl) {
+-            HttpURLConnection connection = (HttpURLConnection) (new URL(url)).openConnection();
+-            connection.setDoInput(true);
+-            connection.connect();
+-            InputStream inputStream = connection.getInputStream();
+-            return BitmapFactory.decodeStream(inputStream);
+-        }
+-
++    private Bitmap decodeDataUrlBitmap(String url) {
+         int base64Index = url.indexOf(";base64,");
+-        if (base64Index != -1) {
++        if (base64Index == -1) return null;
++        try {
+             String base64Data = url.substring(base64Index + 8);
+             byte[] decoded = Base64.decode(base64Data, Base64.DEFAULT);
+             return BitmapFactory.decodeByteArray(decoded, 0, decoded.length);
++        } catch (Exception e) {
++            Log.w(TAG, "Failed to decode inline artwork", e);
++            return null;
+         }
++    }
+ 
+-        return null;
++    private Bitmap downloadHttpBitmap(String url) {
++        HttpURLConnection connection = null;
++        try {
++            connection = (HttpURLConnection) (new URL(url)).openConnection();
++            connection.setInstanceFollowRedirects(true);
++            connection.setConnectTimeout(5000);
++            connection.setReadTimeout(8000);
++            connection.setDoInput(true);
++            connection.setRequestProperty(
++                    "User-Agent",
++                    "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Mobile Safari/537.36"
++            );
++            connection.connect();
++            if (connection.getResponseCode() >= 400) {
++                return null;
++            }
++            try (InputStream inputStream = connection.getInputStream()) {
++                return BitmapFactory.decodeStream(inputStream);
++            }
++        } catch (Exception e) {
++            Log.w(TAG, "Failed to download artwork: " + url, e);
++            return null;
++        } finally {
++            if (connection != null) {
++                connection.disconnect();
++            }
++        }
+     }
+ 
+     @PluginMethod
+-    public void setMetadata(PluginCall call) throws JSONException, IOException {
+-        title = call.getString("title", title);
+-        artist = call.getString("artist", artist);
+-        album = call.getString("album", album);
++    public void setMetadata(PluginCall call) throws JSONException {
++        final String nextTitle = call.getString("title", title);
++        final String nextArtist = call.getString("artist", artist);
++        final String nextAlbum = call.getString("album", album);
+ 
++        String nextSrc = null;
+         final JSArray artworkArray = call.getArray("artwork");
+-        final List<JSONObject> artworkList = artworkArray.toList();
+-        for (JSONObject artwork : artworkList) {
+-            String src = artwork.getString("src");
+-            if (src != null) {
+-                this.artwork = urlToBitmap(src);
++        if (artworkArray != null) {
++            final List<JSONObject> artworkList = artworkArray.toList();
++            for (JSONObject item : artworkList) {
++                if (item == null) continue;
++                String src = item.optString("src", "");
++                if (!src.trim().isEmpty()) {
++                    nextSrc = src.trim();
++                    break;
++                }
++            }
++        }
++
++        final long seq;
++        final String downloadUrl;
++        synchronized (metadataLock) {
++            title = nextTitle;
++            artist = nextArtist;
++            album = nextAlbum;
++            seq = ++metadataSeq;
++
++            if (nextSrc == null) {
++                artworkUrl = null;
++                artwork = null;
++                downloadUrl = null;
++            } else if (nextSrc.startsWith("data:")) {
++                if (!nextSrc.equals(artworkUrl) || artwork == null) {
++                    artworkUrl = nextSrc;
++                    artwork = decodeDataUrlBitmap(nextSrc);
++                }
++                downloadUrl = null;
++            } else if (nextSrc.startsWith("http")) {
++                if (nextSrc.equals(artworkUrl) && artwork != null) {
++                    downloadUrl = null;
++                } else {
++                    // 切到新图床链接时先清空旧封面，避免通知栏/灵动岛残留上一首歌的图
++                    artworkUrl = nextSrc;
++                    artwork = null;
++                    downloadUrl = nextSrc;
++                }
++            } else {
++                if (nextSrc.startsWith("blob:")) {
++                    Log.i(TAG, "Converting Blob URLs to Bitmap for media artwork is not yet supported");
++                }
++                artworkUrl = null;
++                artwork = null;
++                downloadUrl = null;
+             }
++            updateServiceMetadata();
+         }
+ 
+-        if (service != null) { updateServiceMetadata(); };
+         call.resolve();
++
++        if (downloadUrl != null) {
++            artworkExecutor.execute(() -> {
++                final Bitmap downloaded = downloadHttpBitmap(downloadUrl);
++                mainHandler.post(() -> {
++                    synchronized (metadataLock) {
++                        if (seq != metadataSeq || !downloadUrl.equals(artworkUrl)) {
++                            return;
++                        }
++                        artwork = downloaded;
++                        updateServiceMetadata();
++                    }
++                });
++            });
++        }
+     }
+ 
+     private void updateServicePlaybackState() {
+@@ -187,10 +320,78 @@ public class MediaSessionPlugin extends Plugin {
          call.resolve();
      }
  

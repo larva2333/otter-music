@@ -11,6 +11,13 @@ interface LocalMusicState {
 
   setFiles: (files: LocalMusicFile[]) => void;
   updateFiles: (updater: (files: LocalMusicFile[]) => LocalMusicFile[]) => void;
+  /** 写回在线匹配到的封面/歌词，随列表持久化 */
+  updateLocalMeta: (
+    localPath: string,
+    patch: Partial<
+      Pick<LocalMusicFile, "matchedCoverUrl" | "matchedLyric" | "matchedTlyric">
+    >
+  ) => void;
   clear: () => void;
   setScanning: (isScanning: boolean, scanType?: "quick" | "full") => void;
 }
@@ -25,6 +32,12 @@ export const useLocalMusicStore = create<LocalMusicState>()(
       setFiles: (files) => set({ files }),
       updateFiles: (updater) =>
         set((state) => ({ files: updater(state.files) })),
+      updateLocalMeta: (localPath, patch) =>
+        set((state) => ({
+          files: state.files.map((f) =>
+            f.localPath === localPath ? { ...f, ...patch } : f
+          ),
+        })),
       clear: () => set({ files: [] }),
       setScanning: (isScanning, scanType) =>
         set({ isScanning, scanType: scanType || null }),

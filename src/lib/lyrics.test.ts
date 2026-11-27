@@ -74,6 +74,32 @@ describe("逐字歌词", () => {
     expect(lines[1].text).toBe("ab");
   });
 
+  it("方括号逐字 LRC 只产生一行并提取字级时间", () => {
+    expect(
+      parseSimpleLrc("[00:00.00]陈[00:00.10]奕[00:00.20]迅[00:00.30]好")
+    ).toEqual([
+      {
+        time: 0,
+        text: "陈奕迅好",
+        words: [
+          { text: "陈", start: 0, end: 100 },
+          { text: "奕", start: 100, end: 200 },
+          { text: "迅", start: 200, end: 300 },
+          { text: "好", start: 300, end: 800 },
+        ],
+      },
+    ]);
+  });
+
+  it("QQ 逐字歌词不会展开成整行重复", () => {
+    const lines = parseLrc(
+      "[ar:陈奕迅 ]\r\n[ti:是但求其爱]\r\n[00:01.02]若[00:01.17]爱[00:01.42]是\r\n[00:05.94]要[00:06.19]不[00:06.55]要"
+    );
+    expect(lines).toHaveLength(2);
+    expect(lines[0].text).toBe("若爱是");
+    expect(lines[1].text).toBe("要不要");
+  });
+
   it("普通 LRC 不产生 words 字段", () => {
     expect(parseLrc("[00:01.00]hi")[0].words).toBeUndefined();
   });

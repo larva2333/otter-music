@@ -49,6 +49,8 @@ import {
   ArrowDownUp,
   ArrowUp,
   ArrowDown,
+  Link2,
+  RefreshCw,
 } from "lucide-react";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
@@ -69,7 +71,16 @@ import { useMusicStore } from "@/store/music-store";
 import { useLoadMoreOnVisible } from "@/hooks/use-load-more-on-visible";
 import { useExitLayerStore } from "@/hooks/useExitLayer";
 import { setDragSelecting } from "@/hooks/gesture-axis";
-import { MusicTrack } from "@/types/music";
+import { MusicSource, MusicTrack } from "@/types/music";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { batchSwitchTrackSource } from "@/lib/audio-match";
+import { getAllVisibleSourcesForSwitch } from "@/hooks/use-aggregated-sources";
+import { getSourceLabel } from "@/lib/imported-sources/labels";
 import toast from "react-hot-toast";
 import { processBatchCPU, cn } from "@/lib/utils";
 import { sortTracks, type TrackSortKey } from "@/lib/utils/sort-tracks";
@@ -99,12 +110,16 @@ interface MusicTrackListProps {
   onSelectionModeChange?: (active: boolean) => void;
   /** 行首显示封面（代替序号），用于推荐流这类轻量列表 */
   showCover?: boolean;
+  /** 第二列信息左侧显示小封面（保留第一列序号），对齐「我的歌单」列表样式 */
+  showInlineCover?: boolean;
   /**
    * 不渲染顶部「# / 排序 / 多选」表头（纯内容列表）。
    * 表头同时承载批量操作条，隐藏后没有地方放「退出多选 / 全选」，
    * 所以这个模式下一并禁用长按多选，用行尾菜单做单曲操作。
    */
   hideHeader?: boolean;
+  /** 是否显示批量「替换音源」。本地音乐/离线歌单这类曲目没有可换的音源，传 false 隐藏入口 */
+  showReplaceSource?: boolean;
   /** 紧凑行（播放列表这类纯队列视图用）：行内上下留白更小、估算行高更矮 */
   dense?: boolean;
   /**
@@ -176,7 +191,9 @@ export function MusicTrackList({
   preselectedIds,
   onSelectionModeChange,
   showCover,
+  showInlineCover,
   hideHeader,
+  showReplaceSource = true,
   dense = true,
   incrementalBatch,
 }: MusicTrackListProps) {
@@ -184,6 +201,8 @@ export function MusicTrackList({
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [activeId, setActiveId] = useState<string | null>(null);
   const [isAddToPlaylistOpen, setIsAddToPlaylistOpen] = useState(false);
+  const [batchMenuOpen, setBatchMenuOpen] = useState(false);
+  const [replaceSourceOpen, setReplaceSourceOpen] = useState(false);
   const internalRef = useRef<HTMLDivElement | null>(null);
 
   const sensors = useSensors(
@@ -418,6 +437,13 @@ export function MusicTrackList({
     return () => popExitLayer(id);
   }, [isSelectionMode, pushExitLayer, popExitLayer]);
 
+  // 「替换音源」选源弹窗同样挂一层退出栈：返回键先关它，再退出多选
+  useEffect(() => {
+    if (!replaceSourceOpen) return;
+    const id = pushExitLayer({ close: () => setReplaceSourceOpen(false) });
+    return () => popExitLayer(id);
+  }, [replaceSourceOpen, pushExitLayer, popExitLayer]);
+
   const getSelectedTracks = useCallback(
     () => tracks.filter((t) => selectedIds.has(t.id)),
     [tracks, selectedIds]
@@ -480,6 +506,24 @@ export function MusicTrackList({
     if (!selected.length) return;
     resetSelection();
     await downloadMusicTrackBatch(selected, parseInt(quality));
+  };
+
+  /**
+   * 批量直接切换音源标签：只更新各列表中的音源标识，不实时搜源或校验，
+   * 等到实际播放该曲时再向目标音源解析曲目与播放链接。
+   */
+  const handleBatchReplaceSource = (target: MusicSource) => {
+    const selected = getSelectedTracks();
+    if (!selected.length) return;
+    setBatchMenuOpen(false);
+    setReplaceSourceOpen(false);
+    const switched = batchSwitchTrackSource(selected, target);
+    if (switched > 0) {
+      toast.success(`已将 ${switched} 首音源切换为${getSourceLabel(target)}`);
+    } else {
+      toast(`所选歌曲已是${getSourceLabel(target)}或不支持换源`);
+    }
+    resetSelection();
   };
 
   const dropAnimation: DropAnimation = {
@@ -662,7 +706,7 @@ export function MusicTrackList({
 
             {/* 第三列：更多操作 + 退出 */}
             <div className="flex items-center gap-1 justify-end">
-              <Popover>
+              <Popover open={batchMenuOpen} onOpenChange={setBatchMenuOpen}>
                 <PopoverTrigger asChild>
                   <Button
                     size="icon"
@@ -692,6 +736,17 @@ export function MusicTrackList({
                   >
                     <Download className="mr-2 h-3.5 w-3.5" /> 下载
                   </div>
+                  {showReplaceSource && (
+                    <div
+                      className="flex items-center px-2 py-1.5 text-sm rounded-sm hover:bg-accent cursor-pointer"
+                      onClick={() => {
+                        setBatchMenuOpen(false);
+                        setReplaceSourceOpen(true);
+                      }}
+                    >
+                      <RefreshCw className="mr-2 h-3.5 w-3.5" /> 替换音源
+                    </div>
+                  )}
                   <div
                     className="flex items-center px-2 py-1.5 text-sm rounded-sm hover:bg-accent cursor-pointer"
                     onClick={() => setIsAddToPlaylistOpen(true)}
@@ -794,6 +849,7 @@ export function MusicTrackList({
                   confirmRemove={confirmRemove}
                   quality={quality}
                   showCover={showCover}
+                  showInlineCover={showInlineCover}
                   showSourceBadge={
                     isSelectionMode || storeShowBadge || showSourceBadge
                   }
@@ -899,6 +955,27 @@ export function MusicTrackList({
         tracks={getSelectedTracks()}
         onDone={resetSelection}
       />
+
+      <Dialog open={replaceSourceOpen} onOpenChange={setReplaceSourceOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>替换音源 · 已选 {selectedIds.size} 首</DialogTitle>
+          </DialogHeader>
+          <div className="flex flex-col gap-2 max-h-[60vh] overflow-y-auto">
+            {getAllVisibleSourcesForSwitch().map((source) => (
+              <Button
+                key={source}
+                variant="ghost"
+                className="justify-start w-full"
+                onClick={() => handleBatchReplaceSource(source)}
+              >
+                <Link2 className="mr-2 h-4 w-4 shrink-0" />
+                {getSourceLabel(source)}
+              </Button>
+            ))}
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

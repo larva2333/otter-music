@@ -626,9 +626,10 @@ describe("MusicSearchView", () => {
     await click(tab("专辑"));
     expect(tab("专辑").getAttribute("aria-selected")).toBe("true");
     expect(container?.textContent).toContain("叶惠美");
-    expect(
-      container?.querySelector('[data-testid="music-track-list"]')
-    ).toBeNull();
+    const songPane = container
+      ?.querySelector('[data-testid="music-track-list"]')
+      ?.closest("[data-page-active]");
+    expect(songPane?.getAttribute("data-page-active")).toBe("false");
 
     await click(tab("歌单"));
     expect(container?.textContent).toContain("周杰伦热门");

@@ -6,7 +6,6 @@ import {
   Music,
   HardDrive,
   HardDriveDownload,
-  WifiOff,
   FolderX,
   Plus,
   Trash2,
@@ -36,8 +35,17 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import toast from "react-hot-toast";
-import { convertToMusicTrack } from "@/lib/utils/download";
+import { buildLocalAndDownloadedTracks } from "@/lib/utils/local-artist-playlists";
+import {
+  AUDIO_EXTENSIONS,
+  DEFAULT_SCAN_FILTER,
+  filterScannedFiles,
+  SIZE_OPTIONS,
+  type AudioExtension,
+  type ScanFilter,
+} from "@/lib/utils/local-audio-filter";
 import { useMusicStore } from "@/store/music-store";
+import { useDownloadStore } from "@/store/download-store";
 import { useShallow } from "zustand/react/shallow";
 import { getPlayAllStartIndex } from "@/hooks/usePlayHelper";
 import {
@@ -46,7 +54,6 @@ import {
 } from "@/store/local-music-store";
 import { LocalMusicPermissionDialog } from "./LocalMusicPermissionDialog";
 import { logger } from "@/lib/logger";
-import { useNavigate } from "react-router-dom";
 
 function mergeLocalMusicFiles(
   oldFiles: LocalMusicFile[],
@@ -98,6 +105,7 @@ export function LocalMusicPage({
 
   // 扫描与排除目录状态
   const [scanDrawerOpen, setScanDrawerOpen] = useState(false);
+  const [scanFilter, setScanFilter] = useState<ScanFilter>(DEFAULT_SCAN_FILTER);
   const [excludedFolders, setExcludedFolders] = useState<string[]>([]);
   const [excludedExpanded, setExcludedExpanded] = useState(false);
   const [pickingFolder, setPickingFolder] = useState(false);
@@ -114,7 +122,13 @@ export function LocalMusicPage({
   );
   const { files, setFiles, updateFiles, setScanning, scanType } =
     useLocalMusicStore();
-  const navigate = useNavigate();
+  // 各平台下载到本地的曲目（和本地文件一起在这里展示）
+  const { downloadRecords, removeDownloadRecord } = useDownloadStore(
+    useShallow((state) => ({
+      downloadRecords: state.records,
+      removeDownloadRecord: state.removeRecord,
+    }))
+  );
 
   /* --- 扫描逻辑 --- */
   const performScan = useCallback(
@@ -130,10 +144,13 @@ export function LocalMusicPage({
             : await LocalMusicPlugin.scanAllStorage();
 
         if (result.success) {
-          const merged =
+          // 全盘扫描按弹窗里选的类型/大小过滤；快速扫描（含冷启动自动扫）不受影响
+          const scanned =
             type === "full"
-              ? mergeLocalMusicFiles(files, result.files)
+              ? filterScannedFiles(result.files, scanFilter)
               : result.files;
+          const merged =
+            type === "full" ? mergeLocalMusicFiles(files, scanned) : scanned;
           // 显示层繁转简：只改列表里的文字，不动文件
           const simplified = await simplifyLocalFilesText(
             normalizeLocalMusicFiles(merged)
@@ -156,7 +173,7 @@ export function LocalMusicPage({
         setScanning(false);
       }
     },
-    [files, setFiles, setScanning]
+    [files, setFiles, setScanning, scanFilter]
   );
 
   const initRef = useRef(false);
@@ -211,6 +228,13 @@ export function LocalMusicPage({
   /* --- 删除逻辑 --- */
   const removeLocalTrack = useCallback(
     async (track: MusicTrack, shouldDeleteFile: boolean) => {
+      // 下载曲目：只删下载记录，不动本地文件扫描结果
+      if (track.source !== "local") {
+        const key = `${track.source}:${track.id}`;
+        await removeDownloadRecord(key);
+        if (queue[currentIndex]?.id === track.id) skipToNext();
+        return;
+      }
       if (!track.url_id) throw new Error("缺少文件路径");
       try {
         if (shouldDeleteFile) {
@@ -229,7 +253,7 @@ export function LocalMusicPage({
         throw error;
       }
     },
-    [currentIndex, queue, skipToNext, updateFiles]
+    [currentIndex, queue, skipToNext, updateFiles, removeDownloadRecord]
   );
 
   const resetDeleteState = () => {
@@ -291,16 +315,8 @@ export function LocalMusicPage({
 
   /* --- 数据转换与播放 --- */
   const tracks = useMemo(
-    () =>
-      files
-        .map((file, index) => ({ file, index }))
-        .sort(
-          (a, b) =>
-            (b.file.modifiedTime ?? -Infinity) -
-              (a.file.modifiedTime ?? -Infinity) || a.index - b.index
-        )
-        .map(({ file }) => convertToMusicTrack(file)),
-    [files]
+    () => buildLocalAndDownloadedTracks(files, downloadRecords),
+    [files, downloadRecords]
   );
 
   const handlePlay = (track: MusicTrack | null, index?: number) => {
@@ -313,20 +329,20 @@ export function LocalMusicPage({
   };
 
   /* --- 渲染部分 --- */
-  const isEmpty = files.length === 0;
+  const isEmpty = tracks.length === 0;
 
-  const fullScanButton = (
-    <button
+  const localActions = (
+    <Button
+      variant="secondary"
+      size="icon"
       onClick={() => setScanDrawerOpen(true)}
       disabled={isLoading}
-      className={cn(
-        "flex items-center gap-1.5 px-3 h-8 rounded-full text-xs text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors",
-        isLoading && "opacity-50 cursor-not-allowed"
-      )}
+      aria-label="全盘扫描"
+      title="全盘扫描"
+      className="h-8 w-8 rounded-full shrink-0"
     >
-      <HardDrive className="h-3.5 w-3.5 shrink-0" />
-      全盘扫描
-    </button>
+      <HardDrive className="h-4 w-4" />
+    </Button>
   );
 
   const body = (
@@ -354,6 +370,7 @@ export function LocalMusicPage({
         <MusicPlaylistView
           title="本地音乐"
           compactHeader={embedded}
+          showReplaceSource={false}
           incrementalBatch={10}
           tracks={tracks}
           icon={<HardDriveDownload className="h-8 w-8 text-primary/80" />}
@@ -364,16 +381,8 @@ export function LocalMusicPage({
           onBatchRemove={setDeleteTargets}
           removeLabel="删除"
           confirmRemove={false}
-          // 全盘扫描放头部右上角，不跟播放按钮挤在标题下方那一行
-          headerRight={embedded ? fullScanButton : undefined}
-          action={
-            <button
-              onClick={() => navigate("/playlist/__offline__")}
-              className="flex items-center gap-1.5 px-3 h-8 rounded-full text-xs text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors"
-            >
-              <WifiOff size={14} className="shrink-0" />
-            </button>
-          }
+          // 全盘扫描与按歌手建单放在播放按钮旁
+          action={localActions}
         />
       )}
 
@@ -463,6 +472,84 @@ export function LocalMusicPage({
               onPick={handlePickExcluded}
               onRemove={handleRemoveExcluded}
             />
+            {/* 类型 / 大小过滤：只作用于本次全盘扫描 */}
+            <div className="space-y-3">
+              <div>
+                <div className="flex items-center justify-between mb-1.5">
+                  <p className="text-xs text-muted-foreground">
+                    格式（可多选）
+                  </p>
+                  <button
+                    type="button"
+                    data-testid="scan-ext-all"
+                    onClick={() =>
+                      setScanFilter((f) => ({
+                        ...f,
+                        extensions:
+                          f.extensions.size === AUDIO_EXTENSIONS.length
+                            ? new Set()
+                            : new Set<AudioExtension>(AUDIO_EXTENSIONS),
+                      }))
+                    }
+                    className="text-xs text-primary"
+                  >
+                    {scanFilter.extensions.size === AUDIO_EXTENSIONS.length
+                      ? "全部取消"
+                      : "全选"}
+                  </button>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  {AUDIO_EXTENSIONS.map((ext) => {
+                    const active = scanFilter.extensions.has(ext);
+                    return (
+                      <button
+                        key={ext}
+                        type="button"
+                        data-testid={`scan-ext-${ext}`}
+                        onClick={() =>
+                          setScanFilter((f) => {
+                            const next = new Set(f.extensions);
+                            next.has(ext) ? next.delete(ext) : next.add(ext);
+                            return { ...f, extensions: next };
+                          })
+                        }
+                        className={cn(
+                          "px-3 h-8 rounded-full text-xs transition-colors",
+                          active
+                            ? "bg-primary text-primary-foreground"
+                            : "bg-muted text-muted-foreground hover:text-foreground"
+                        )}
+                      >
+                        {ext.toUpperCase()}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+              <div>
+                <p className="text-xs text-muted-foreground mb-1.5">文件大小</p>
+                <div className="flex flex-wrap gap-2">
+                  {SIZE_OPTIONS.map((opt) => (
+                    <button
+                      key={opt.value}
+                      type="button"
+                      data-testid={`scan-size-${opt.value}`}
+                      onClick={() =>
+                        setScanFilter((f) => ({ ...f, minSize: opt.value }))
+                      }
+                      className={cn(
+                        "px-3 h-8 rounded-full text-xs transition-colors",
+                        scanFilter.minSize === opt.value
+                          ? "bg-primary text-primary-foreground"
+                          : "bg-muted text-muted-foreground hover:text-foreground"
+                      )}
+                    >
+                      {opt.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
             <button
               type="button"
               data-testid="confirm-full-scan"
@@ -504,7 +591,7 @@ export function LocalMusicPage({
   if (embedded) return body;
 
   return (
-    <PageLayout title="本地音乐" onBack={onBack} action={fullScanButton}>
+    <PageLayout title="本地音乐" onBack={onBack}>
       {body}
     </PageLayout>
   );

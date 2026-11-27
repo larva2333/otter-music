@@ -48,9 +48,33 @@ export type { LyricAlign } from "./ui-slice";
 export type { CoverStyle } from "./ui-slice";
 export { DEFAULT_VINYL_COLOR, TRANSPARENT_VINYL_COLOR } from "./ui-slice";
 
+const AUDIO_TIME_STORAGE_KEY = "oh_audio_time";
+
+function readSavedAudioTime(): number | null {
+  try {
+    if (typeof localStorage === "undefined") return null;
+    const raw = localStorage.getItem(AUDIO_TIME_STORAGE_KEY);
+    if (raw === null) return null;
+    const num = Number(raw);
+    return Number.isFinite(num) && num >= 0 ? num : null;
+  } catch {
+    return null;
+  }
+}
+
+function writeSavedAudioTime(time: number): void {
+  try {
+    if (typeof localStorage === "undefined") return;
+    localStorage.setItem(AUDIO_TIME_STORAGE_KEY, String(time));
+  } catch {
+    // 忽略配额或隐私模式异常
+  }
+}
+
 /**
  * 跳过未持久化字段变更（isLoading / isPlaying / coverUrl / currentAudioUrl / currentAudioOrigin 等）
- * 触发的无效 500KB+ JSON.stringify，并按引用缓存 cleanTrack/cleanPlaylist 结果。
+ * 触发的无效 500KB+ JSON.stringify，并按引用缓存 cleanTrack/cleanPlaylist 结果；
+ * 若仅有高频变动的 currentAudioTime 变化，则仅写入轻量级 localStorage，避免每秒全量写 IndexedDB 阻塞滑动帧率。
  */
 function createDeduplicatedMusicStorage(): PersistStorage<MusicState> {
   const base = createJSONStorage<MusicState>(() => idbStorage)!;
@@ -58,26 +82,56 @@ function createDeduplicatedMusicStorage(): PersistStorage<MusicState> {
   let lastVersion: number | undefined;
 
   return {
-    getItem: (name) => base.getItem(name),
+    getItem: async (name) => {
+      const value = await base.getItem(name);
+      if (value?.state) {
+        const savedTime = readSavedAudioTime();
+        if (savedTime !== null) {
+          value.state.currentAudioTime = savedTime;
+        }
+      }
+      return value;
+    },
     removeItem: (name) => {
       lastSnapshot = null;
+      try {
+        if (typeof localStorage !== "undefined") {
+          localStorage.removeItem(AUDIO_TIME_STORAGE_KEY);
+        }
+      } catch {
+        // ignore
+      }
       return base.removeItem(name);
     },
     setItem: (name, value: StorageValue<MusicState>) => {
       const next = value.state as unknown as Record<string, unknown>;
       if (lastSnapshot && lastVersion === value.version) {
         const keys = Object.keys(next);
-        let changed = keys.length !== Object.keys(lastSnapshot).length;
-        if (!changed) {
+        let nonTimeChanged = keys.length !== Object.keys(lastSnapshot).length;
+        let timeChanged = false;
+        if (!nonTimeChanged) {
           for (let i = 0; i < keys.length; i++) {
             const k = keys[i];
             if (!Object.is(next[k], lastSnapshot[k])) {
-              changed = true;
-              break;
+              if (k === "currentAudioTime") {
+                timeChanged = true;
+              } else {
+                nonTimeChanged = true;
+                break;
+              }
             }
           }
         }
-        if (!changed) return;
+        if (!nonTimeChanged) {
+          if (timeChanged && typeof next.currentAudioTime === "number") {
+            writeSavedAudioTime(next.currentAudioTime);
+            lastSnapshot = next;
+          }
+          return;
+        }
+      }
+      if (typeof next.currentAudioTime === "number") {
+        writeSavedAudioTime(next.currentAudioTime);
       }
       lastSnapshot = next;
       lastVersion = value.version;

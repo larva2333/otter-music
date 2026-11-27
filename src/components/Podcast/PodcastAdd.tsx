@@ -255,7 +255,7 @@ export function PodcastAdd({ open, onOpenChange }: PodcastAddProps) {
             <div className="flex gap-2">
               <Input
                 autoFocus
-                className="h-10 flex-1 rounded-xl border-none bg-muted/50"
+                className="h-9 flex-1 rounded-full text-sm"
                 placeholder="输入播客名称"
                 value={search.kw}
                 onChange={(e) =>

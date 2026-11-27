@@ -68,3 +68,39 @@ export function isTextInputTarget(target: Element | null): boolean {
   if (!target || typeof target.closest !== "function") return false;
   return Boolean(target.closest("input, textarea, select"));
 }
+
+/** 播放条上下边缘保护带高度（px）：手指贴近播放条上下缘滑动时不触发页面侧滑 */
+const NOW_PLAYING_GUARD_TOP_PX = 24;
+const NOW_PLAYING_GUARD_BOTTOM_PX = 24;
+
+/**
+ * 触摸起点是否落在悬浮播放条及其上下防误触带内。
+ * - 抽屉/弹窗（如评论抽屉）内部的手势不受影响；
+ * - 隐藏中（祖先含 aria-hidden="true"）或未布局（宽高为 0）的播放条忽略。
+ */
+export function isInsideNowPlayingSwipeGuard(
+  clientY: number,
+  target?: Element | null
+): boolean {
+  if (typeof document === "undefined") return false;
+  if (
+    target?.closest?.(
+      '[role="dialog"], [data-vaul-drawer], [data-slot="drawer-content"]'
+    )
+  ) {
+    return false;
+  }
+  const bars = document.querySelectorAll<HTMLElement>("[data-now-playing-bar]");
+  for (const bar of bars) {
+    if (bar.closest('[aria-hidden="true"]')) continue;
+    const rect = bar.getBoundingClientRect();
+    if (rect.width === 0 || rect.height === 0) continue;
+    if (
+      clientY >= rect.top - NOW_PLAYING_GUARD_TOP_PX &&
+      clientY <= rect.bottom + NOW_PLAYING_GUARD_BOTTOM_PX
+    ) {
+      return true;
+    }
+  }
+  return false;
+}

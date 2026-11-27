@@ -25,9 +25,10 @@ export async function prefetchTrackCover(
 ): Promise<void> {
   if (!track?.pic_id || typeof Image === "undefined") return;
   try {
+    const picSource = track.pendingSourceFrom ?? track.source;
     const raw =
-      musicApi.getSyncPic(track.pic_id, track.source, COVER_SIZE) ??
-      (await musicApi.getPic(track.pic_id, track.source, COVER_SIZE, track));
+      musicApi.getSyncPic(track.pic_id, picSource, COVER_SIZE) ??
+      (await musicApi.getPic(track.pic_id, picSource, COVER_SIZE, track));
     const url = forceHttps(raw);
     if (!url || prefetchedUrls.has(url)) return;
     markPrefetched(url);
@@ -47,43 +48,50 @@ export async function prefetchTrackCover(
 
 export function useMusicCover(
   track: MusicTrack | null | undefined,
-  enabled: boolean = true
+  enabled: boolean = true,
+  size: number = COVER_SIZE
 ) {
   const [state, setState] = useState<{
     url: string | null;
     picId: string | undefined;
     source: string | undefined;
+    size: number;
   }>({
     url: null,
     picId: undefined,
     source: undefined,
+    size,
   });
+
+  const picSource = track
+    ? (track.pendingSourceFrom ?? track.source)
+    : undefined;
 
   // 渲染期同步直出已知封面（HTTP 直链 / 会话内已缓存结果），避免先返回 null 闪出占位图
   const syncUrl =
-    enabled && track?.pic_id
-      ? musicApi.getSyncPic(track.pic_id, track.source, COVER_SIZE)
+    enabled && track?.pic_id && picSource
+      ? musicApi.getSyncPic(track.pic_id, picSource, size)
       : null;
 
   useEffect(() => {
-    if (!track?.pic_id || !enabled || syncUrl !== null) {
+    if (!track?.pic_id || !picSource || !enabled || syncUrl !== null) {
       return;
     }
 
     let active = true;
-    const { pic_id, source } = track;
+    const { pic_id } = track;
 
     const fetchCover = async () => {
       try {
         // 传完整曲目：本地音源要靠歌名/歌手在线反查封面，只给路径查不到
-        const url = await musicApi.getPic(pic_id, source, COVER_SIZE, track);
+        const url = await musicApi.getPic(pic_id, picSource, size, track);
         if (active) {
-          setState({ url, picId: pic_id, source });
+          setState({ url, picId: pic_id, source: picSource, size });
         }
       } catch (e) {
         logger.error("useMusicCover", "Failed to fetch cover:", e);
         if (active) {
-          setState({ url: null, picId: pic_id, source });
+          setState({ url: null, picId: pic_id, source: picSource, size });
         }
       }
     };
@@ -93,7 +101,7 @@ export function useMusicCover(
     return () => {
       active = false;
     };
-  }, [track, enabled, syncUrl]);
+  }, [track, picSource, enabled, size, syncUrl]);
 
   if (!enabled || !track?.pic_id) {
     return null;
@@ -104,7 +112,11 @@ export function useMusicCover(
   }
 
   // 尚未异步解析完成时返回 null
-  if (track.pic_id !== state.picId || track.source !== state.source) {
+  if (
+    track.pic_id !== state.picId ||
+    picSource !== state.source ||
+    size !== state.size
+  ) {
     return null;
   }
 

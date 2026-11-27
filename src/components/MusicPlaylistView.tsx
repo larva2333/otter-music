@@ -1,5 +1,5 @@
 import { Button } from "@/components/ui/button";
-import { confirmDialog } from "@/components/ui/confirm-dialog";
+import { confirmDialog, promptDialog } from "@/components/ui/confirm-dialog";
 import { Play, Search, X } from "lucide-react";
 import { filterTracks } from "@/lib/utils/filter-tracks";
 import { MusicTrackList } from "./MusicTrackList";
@@ -62,6 +62,8 @@ interface MusicPlaylistViewProps {
    * 推荐流这类「内容即全部」的页面用，避免一块与内容无关的表头占掉半屏。
    */
   hideHeader?: boolean;
+  /** 是否显示批量「替换音源」。本地音乐/离线歌单传 false 隐藏入口 */
+  showReplaceSource?: boolean;
   /** 行首显示歌曲封面（代替序号），与 hideHeader 搭配使用 */
   showTrackCover?: boolean;
   /**
@@ -111,6 +113,7 @@ export function MusicPlaylistView({
   confirmRemove,
   icon,
   hideHeader,
+  showReplaceSource = true,
   showTrackCover,
   headerRight,
   titleClassName = "text-base font-bold tracking-tight",
@@ -259,21 +262,64 @@ export function MusicPlaylistView({
         externalScrollRef ? "w-full" : "flex-1 min-h-0 overflow-y-auto"
       )}
     >
-      {/* Header：默认与「喜欢」页一致；compactHeader 嵌在「歌单」tab 时去掉大图标，
-          标题左边缘与「我的歌单」对齐（px-6 = 外层 px-5 + 标题行 px-1） */}
-      {hideHeader ? null : (
-        <div
-          className={cn(
-            "border-b bg-muted/10 relative",
-            compactHeader ? "px-6 pt-1 pb-3" : "p-4 flex gap-4 items-end"
-          )}
-        >
-          <div
-            className={cn(
-              "h-20 w-20 bg-primary/10 rounded-lg flex items-center justify-center shadow-sm border overflow-hidden shrink-0 flex-[0_0_80px] min-w-20 min-h-20",
-              compactHeader && "hidden"
-            )}
-          >
+      {/* Header：compactHeader 嵌在「歌单」tab 时与「我的喜欢」一致（标题+右上角按钮 + 整宽圆角搜索框） */}
+      {hideHeader ? null : compactHeader ? (
+        <>
+          <div className="flex shrink-0 items-center gap-2 px-5 pt-2 pb-2.5">
+            <h2 className="text-base font-bold tracking-wide line-clamp-1 text-foreground">
+              {t2s(title)}
+            </h2>
+            <span className="shrink-0 text-xs text-muted-foreground">
+              {tracks.length} 首
+            </span>
+            <div className="ml-auto flex shrink-0 items-center gap-1.5">
+              {action}
+              <Button
+                onClick={() => onPlay(null)}
+                className="h-8 w-8 rounded-full p-0"
+                size="icon"
+                aria-label="播放全部"
+              >
+                <Play className="size-3.5 fill-current" />
+              </Button>
+              {headerRight}
+            </div>
+          </div>
+
+          <div className="shrink-0 px-5 pb-3">
+            <div className="relative">
+              <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+              <Input
+                ref={searchInputRef}
+                placeholder="搜索..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                onFocus={() => setIsSearchFocused(true)}
+                onBlur={() => setIsSearchFocused(false)}
+                className={cn(
+                  "h-9 w-full rounded-full pl-9 text-sm",
+                  searchQuery && "pr-9"
+                )}
+              />
+              {searchQuery && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSearchQuery("");
+                    searchInputRef.current?.focus();
+                  }}
+                  aria-label="清除搜索"
+                  className="absolute right-2.5 top-1/2 flex h-5 w-5 -translate-y-1/2 items-center justify-center rounded-full bg-muted-foreground/20 text-muted-foreground transition-colors hover:bg-muted-foreground/30 hover:text-foreground"
+                >
+                  <X className="h-3 w-3" />
+                </button>
+              )}
+            </div>
+          </div>
+        </>
+      ) : (
+        <div className="border-b bg-muted/10 relative p-4 flex gap-4 items-end">
+          <div className="h-20 w-20 bg-primary/10 rounded-lg flex items-center justify-center shadow-sm border overflow-hidden shrink-0 flex-[0_0_80px] min-w-20 min-h-20">
             {playlist ? (
               <PlaylistCover
                 playlist={playlist}
@@ -291,18 +337,11 @@ export function MusicPlaylistView({
               />
             )}
           </div>
-          <div
-            className={cn(
-              "flex-1 flex flex-col gap-1",
-              compactHeader ? "" : "self-stretch justify-center"
-            )}
-          >
+          <div className="flex-1 flex flex-col gap-1 self-stretch justify-center">
             <h2
               className={cn(
                 titleClassName,
                 "line-clamp-1",
-                compactHeader &&
-                  "text-base font-bold tracking-wide text-foreground",
                 // 右上角有操作按钮时给标题让位，避免长标题压到按钮下面
                 headerRight && "pr-24"
               )}
@@ -337,11 +376,13 @@ export function MusicPlaylistView({
                 <PlaylistOperations
                   onRename={
                     onRename
-                      ? () => {
-                          const newName = window.prompt(
-                            "请输入新歌单名称",
-                            t2s(title)
-                          );
+                      ? async () => {
+                          const newName = await promptDialog({
+                            title: "重命名歌单",
+                            placeholder: "请输入新歌单名称",
+                            defaultValue: t2s(title),
+                            confirmText: "保存",
+                          });
                           if (newName && newName.trim()) {
                             onRename(playlistId, newName.trim());
                           }
@@ -375,7 +416,7 @@ export function MusicPlaylistView({
               )}
 
               <div className="relative ml-auto flex-1 min-w-0">
-                <Search className="absolute left-2 top-2.5 h-3 w-3 text-muted-foreground md:h-4 md:w-4 md:top-2" />
+                <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
                 <Input
                   ref={searchInputRef}
                   placeholder="搜索..."
@@ -384,8 +425,8 @@ export function MusicPlaylistView({
                   onFocus={() => setIsSearchFocused(true)}
                   onBlur={() => setIsSearchFocused(false)}
                   className={cn(
-                    "pl-8 h-8 text-xs md:h-9 md:text-sm w-full",
-                    searchQuery && "pr-8"
+                    "h-7 w-full rounded-full pl-8 text-xs",
+                    searchQuery && "pr-7"
                   )}
                 />
                 {/* 有内容时显示清除按钮，一键清空搜索词 */}
@@ -397,9 +438,9 @@ export function MusicPlaylistView({
                       searchInputRef.current?.focus();
                     }}
                     aria-label="清除搜索"
-                    className="absolute right-2 top-1/2 -translate-y-1/2 h-5 w-5 flex items-center justify-center rounded-full bg-muted-foreground/20 text-muted-foreground hover:bg-muted-foreground/30 hover:text-foreground transition-colors"
+                    className="absolute right-1.5 top-1/2 flex h-4 w-4 -translate-y-1/2 items-center justify-center rounded-full bg-muted-foreground/20 text-muted-foreground transition-colors hover:bg-muted-foreground/30 hover:text-foreground"
                   >
-                    <X className="h-3 w-3" />
+                    <X className="h-2.5 w-2.5" />
                   </button>
                 )}
               </div>
@@ -440,6 +481,7 @@ export function MusicPlaylistView({
           preselectedIds={dedupeSelectedIds}
           showCover={showTrackCover}
           hideHeader={hideHeader}
+          showReplaceSource={showReplaceSource}
           onSelectionModeChange={(active) => {
             if (!active) setDedupeSelectedIds(undefined);
           }}

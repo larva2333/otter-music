@@ -106,7 +106,10 @@ function CommentsTabPane({
       aria-hidden={!active || undefined}
       className="h-full w-full shrink-0 overflow-hidden"
     >
-      <ScrollArea className="h-full px-6" viewportRef={scrollViewportRef}>
+      <ScrollArea
+        className="h-full px-6 [&>[data-slot=scroll-area-viewport]]:!overflow-x-hidden"
+        viewportRef={scrollViewportRef}
+      >
         <div className="flex flex-col pb-12">
           {state.loading ? (
             <div className="flex flex-col gap-6 pt-4 animate-pulse">
@@ -164,6 +167,70 @@ function CommentsTabPane({
   );
 }
 
+/** 挂在 DrawerContent 内部的分页视口：确保 Portal 就绪后再绑定 usePagerSwipe 监听 */
+function CommentsPager({
+  open,
+  tab,
+  onTabChange,
+  hot,
+  fresh,
+  onLoadMore,
+}: {
+  open: boolean;
+  tab: CommentTab;
+  onTabChange: (next: CommentTab) => void;
+  hot: TabState;
+  fresh: TabState;
+  onLoadMore: (tab: CommentTab, nextPage: number) => void;
+}) {
+  const pagerViewportRef = useRef<HTMLDivElement>(null);
+  const pagerTrackRef = useRef<HTMLDivElement>(null);
+  const activeIndex = TABS.indexOf(tab);
+
+  usePagerSwipe(
+    { viewportRef: pagerViewportRef, trackRef: pagerTrackRef },
+    {
+      count: TABS.length,
+      index: activeIndex,
+      onChange: (idx) => {
+        const next = TABS[idx];
+        if (next) onTabChange(next);
+      },
+      enabled: open,
+    }
+  );
+
+  return (
+    <div
+      ref={pagerViewportRef}
+      data-testid="comments-pager-viewport"
+      className="relative flex-1 min-h-0 w-full overflow-hidden"
+      style={{ touchAction: "pan-y" }}
+    >
+      <div
+        ref={pagerTrackRef}
+        data-testid="comments-pager-track"
+        className="flex h-full will-change-transform"
+      >
+        <CommentsTabPane
+          tab="hot"
+          open={open}
+          active={tab === "hot"}
+          state={hot}
+          onLoadMore={onLoadMore}
+        />
+        <CommentsTabPane
+          tab="new"
+          open={open}
+          active={tab === "new"}
+          state={fresh}
+          onLoadMore={onLoadMore}
+        />
+      </div>
+    </div>
+  );
+}
+
 export function MusicCommentsDrawer({
   track,
   open,
@@ -174,9 +241,6 @@ export function MusicCommentsDrawer({
   const [fresh, setFresh] = useState<TabState>(emptyTab);
   const [sourceDrawerOpen, setSourceDrawerOpen] = useState(false);
   const commentSource = useMusicStore((s) => s.commentSource);
-
-  const pagerViewportRef = useRef<HTMLDivElement>(null);
-  const pagerTrackRef = useRef<HTMLDivElement>(null);
 
   const state = tab === "hot" ? hot : fresh;
   const hotRef = useRef(hot);
@@ -280,38 +344,31 @@ export function MusicCommentsDrawer({
     [fetchPage]
   );
 
-  const activeIndex = TABS.indexOf(tab);
-  usePagerSwipe(
-    { viewportRef: pagerViewportRef, trackRef: pagerTrackRef },
-    {
-      count: TABS.length,
-      index: activeIndex,
-      onChange: (idx) => {
-        const next = TABS[idx];
-        if (next) setTab(next);
-      },
-      enabled: open,
-    }
-  );
-
   return (
     <>
       <Drawer open={open} onOpenChange={onOpenChange}>
         <DrawerContent className="h-[85vh] flex flex-col p-0 gap-0 rounded-t-3xl border-none bg-background/95 backdrop-blur-xl outline-none">
           <DrawerHeader className="px-6 py-5 pb-2 border-none text-left">
-            <div className="flex items-baseline gap-2">
-              <DrawerTitle className="text-lg font-semibold tracking-tight">
-                {track?.name ? `${t2s(track.name)} · 评论` : "评论"}
+            <div className="flex items-baseline gap-2 min-w-0">
+              <DrawerTitle className="flex items-baseline min-w-0 text-lg font-semibold tracking-tight">
+                {track?.name ? (
+                  <>
+                    <span className="truncate">{t2s(track.name)}</span>
+                    <span className="shrink-0 whitespace-nowrap"> · 评论</span>
+                  </>
+                ) : (
+                  "评论"
+                )}
               </DrawerTitle>
               {totalCount > 0 && (
-                <span className="text-xs text-muted-foreground/50 font-light">
+                <span className="shrink-0 whitespace-nowrap text-xs text-muted-foreground/50 font-light">
                   {formatCount(totalCount)} 条
                 </span>
               )}
               <button
                 type="button"
                 onClick={() => setSourceDrawerOpen(true)}
-                className="ml-auto -my-1 rounded-full px-2.5 py-1 text-xs text-muted-foreground/60 transition-colors hover:bg-muted/40 hover:text-foreground"
+                className="ml-auto shrink-0 whitespace-nowrap -my-1 rounded-full px-2.5 py-1 text-xs text-muted-foreground/60 transition-colors hover:bg-muted/40 hover:text-foreground"
                 aria-label="切换评论来源"
                 title="切换评论来源"
               >
@@ -348,31 +405,14 @@ export function MusicCommentsDrawer({
             </div>
           </DrawerHeader>
 
-          <div
-            ref={pagerViewportRef}
-            className="relative flex-1 min-h-0 w-full overflow-hidden"
-            style={{ touchAction: "pan-y" }}
-          >
-            <div
-              ref={pagerTrackRef}
-              className="flex h-full will-change-transform"
-            >
-              <CommentsTabPane
-                tab="hot"
-                open={open}
-                active={tab === "hot"}
-                state={hot}
-                onLoadMore={handleLoadMore}
-              />
-              <CommentsTabPane
-                tab="new"
-                open={open}
-                active={tab === "new"}
-                state={fresh}
-                onLoadMore={handleLoadMore}
-              />
-            </div>
-          </div>
+          <CommentsPager
+            open={open}
+            tab={tab}
+            onTabChange={handleTabChange}
+            hot={hot}
+            fresh={fresh}
+            onLoadMore={handleLoadMore}
+          />
         </DrawerContent>
       </Drawer>
       <CommentSourceDrawer

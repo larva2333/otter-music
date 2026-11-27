@@ -3,6 +3,7 @@ import {
   DIRECTION_RATIO,
   isDragSelecting,
   isInsideHorizontalScroller,
+  isInsideNowPlayingSwipeGuard,
   isTextInputTarget,
   lockAxis,
 } from "./gesture-axis";
@@ -139,8 +140,11 @@ export function useSwipeCategories(
         return;
       }
       const touch = event.touches[0];
-      const target = touch.target as Element | null;
-      if (isTextInputTarget(target)) {
+      const target = (touch.target ?? event.target) as Element | null;
+      if (
+        isTextInputTarget(target) ||
+        isInsideNowPlayingSwipeGuard(touch.clientY, target)
+      ) {
         tracking = false;
         return;
       }

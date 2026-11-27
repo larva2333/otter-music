@@ -172,6 +172,7 @@ describe("RootLayout", () => {
           element: <RootLayout />,
           children: [
             { path: "search", element: <div>Search Page</div> },
+            { path: "favorites", element: <div>Favorites Page</div> },
             { path: "playlist/:id", element: <div>Playlist Page</div> },
             { path: "mine", element: <div>Mine Page</div> },
             { path: "settings", element: <div>Settings Page</div> },
@@ -434,5 +435,34 @@ describe("RootLayout", () => {
 
     expect(drawerClose).toHaveBeenCalledTimes(1);
     expect(useExitLayerStore.getState().stack).toHaveLength(0);
+  });
+
+  it("warms adjacent /favorites slot in the background without premounting heavy /settings when idle on /mine", async () => {
+    vi.useFakeTimers();
+    try {
+      renderLayout(["/mine"]);
+
+      await act(async () => {
+        vi.advanceTimersByTime(500);
+      });
+      await act(async () => {
+        vi.advanceTimersByTime(200);
+      });
+
+      const favoritesSlot = container!.querySelector<HTMLElement>(
+        '[data-page-route="/favorites"]'
+      );
+      const settingsSlot = container!.querySelector<HTMLElement>(
+        '[data-page-route="/settings"]'
+      );
+
+      expect(favoritesSlot?.style.display).toBe("block");
+      expect(favoritesSlot?.style.visibility).toBe("visible");
+      expect(favoritesSlot?.style.pointerEvents).toBe("none");
+
+      expect(settingsSlot?.style.display).toBe("");
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

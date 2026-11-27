@@ -5,6 +5,7 @@ import type { MusicTrack, Playlist } from "@/types/music";
 import { Plus } from "lucide-react";
 import toast from "react-hot-toast";
 import { Drawer, DrawerContent, DrawerHeader, DrawerTitle } from "./ui/drawer";
+import { promptDialog } from "./ui/confirm-dialog";
 import { ScrollArea } from "./ui/scroll-area";
 import { PlaylistCover } from "./PlaylistCover";
 import { t2s } from "@/lib/utils/t2s";
@@ -82,20 +83,27 @@ export function AddToPlaylistDrawer({
     onOpenChange(false);
   };
 
-  const handleCreatePlaylist = () => {
-    const name = window.prompt("请输入新歌单名称");
-    if (name) {
-      const id = createPlaylist(name);
-      if (isBatch) {
-        addBatchToPlaylist(id, tracks!);
-        toast.success(`已创建并加入「${name}」${tracks!.length} 首`);
-      } else {
-        addToPlaylist(id, track!);
-        toast.success(`已创建并加入「${name}」`);
-      }
-      onDone?.();
-      onOpenChange(false);
+  const handleCreatePlaylist = async () => {
+    // 先收起抽屉，避免 Vaul Drawer 的焦点锁定干扰 Dialog 输入框聚焦
+    onOpenChange(false);
+    const name = await promptDialog({
+      title: "新建歌单",
+      placeholder: "请输入新歌单名称",
+      confirmText: "创建",
+    });
+    if (!name) {
+      onOpenChange(true);
+      return;
     }
+    const id = createPlaylist(name);
+    if (isBatch) {
+      addBatchToPlaylist(id, tracks!);
+      toast.success(`已创建并加入「${name}」${tracks!.length} 首`);
+    } else {
+      addToPlaylist(id, track!);
+      toast.success(`已创建并加入「${name}」`);
+    }
+    onDone?.();
   };
 
   const title = isBatch ? `添加 ${tracks!.length} 首到歌单` : "添加到歌单";

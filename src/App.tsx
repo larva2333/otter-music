@@ -12,6 +12,7 @@ import { App as CapacitorApp } from "@capacitor/app";
 import { IS_NATIVE } from "@/lib/api/config";
 import { preloadRouteChunks } from "@/routes/preload";
 import { applyTopSafeAreaFallback } from "@/lib/safe-area";
+import { ensureLocalArtistPlaylistsSeededOnce } from "@/lib/utils/local-artist-playlists";
 export default function App() {
   // Sync Logic
   const { syncKey } = useSyncStore();
@@ -48,8 +49,9 @@ export default function App() {
       }
     }, 2000);
 
-    // 初始化下载记录
-    useDownloadStore.getState().init();
+    // 初始化下载记录，并在 store 恢复后一次性将已有本地音乐按歌手建歌单
+    const downloadInitPromise = useDownloadStore.getState().init();
+    void ensureLocalArtistPlaylistsSeededOnce(downloadInitPromise);
 
     // 延迟执行缓存清理，避免阻塞首屏
     if ("requestIdleCallback" in window) {

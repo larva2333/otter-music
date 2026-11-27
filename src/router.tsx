@@ -6,7 +6,6 @@ import {
   FavoritesRoute,
   MineRoute,
   PlaylistDetailRoute,
-  LocalMusicRoute,
   MarketPlaylistDetailRoute,
   ArtistDetailRoute,
   AlbumDetailRoute,
@@ -56,10 +55,6 @@ export const router = createBrowserRouter([
       {
         path: "playlist/:id",
         element: <PlaylistDetailRoute />,
-      },
-      {
-        path: "local",
-        element: <LocalMusicRoute />,
       },
       {
         path: "netease-playlist/:id",

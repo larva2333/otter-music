@@ -1,8 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { MusicSource, MusicTrack } from "@/types/music";
 import { toast } from "react-hot-toast";
-import { handleAutoMatch } from "./audio-match";
+import {
+  batchSwitchTrackSource,
+  handleAutoMatch,
+  resolvePendingSourceMatch,
+} from "./audio-match";
 import { useMusicStore } from "@/store/music-store";
+import { useHistoryStore } from "@/store/history-store";
 import { MusicProviderFactory } from "./music-provider";
 
 vi.mock("@/lib/storage-adapter", () => ({
@@ -112,6 +117,7 @@ describe("handleAutoMatch", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.mocked(MusicProviderFactory.getProvider).mockReset();
+    useHistoryStore.setState({ history: [] });
     useMusicStore.setState({
       favorites: [],
       playlists: [],
@@ -146,6 +152,95 @@ describe("handleAutoMatch", () => {
     expect(MusicProviderFactory.getProvider).not.toHaveBeenCalledWith(
       "netease"
     );
+  });
+
+  it("手动换源同步所有集合：歌单、队列、喜欢、历史，与当前页面无关", async () => {
+    const sourceTrack = createTrack("same", "netease");
+    const match = createTrack("new", "joox");
+    useMusicStore.setState({
+      queue: [sourceTrack],
+      originalQueue: [sourceTrack],
+      favorites: [sourceTrack],
+      playlists: [
+        { id: "p1", name: "歌单1", tracks: [sourceTrack], createdAt: 0 },
+        { id: "p2", name: "歌单2", tracks: [sourceTrack], createdAt: 0 },
+      ],
+      contextId: "search",
+    });
+    useHistoryStore.setState({ history: [sourceTrack] });
+    const search = vi
+      .fn()
+      .mockResolvedValue({ items: [match], hasMore: false });
+    vi.mocked(MusicProviderFactory.getProvider).mockReturnValue({
+      source: "joox",
+      search,
+      getUrl: vi.fn(),
+      getPic: vi.fn(),
+      getLyric: vi.fn(),
+    });
+
+    // 从任意页面发起（这里故意用 /history），都应同步全部集合
+    await handleAutoMatch(
+      sourceTrack,
+      "joox",
+      "/history",
+      undefined,
+      false,
+      true
+    );
+
+    const state = useMusicStore.getState();
+    expect(state.queue[0]?.id).toBe("new");
+    expect(state.originalQueue[0]?.id).toBe("new");
+    expect(state.favorites[0]?.id).toBe("new");
+    expect(state.playlists[0]?.tracks[0]?.id).toBe("new");
+    expect(state.playlists[1]?.tracks[0]?.id).toBe("new");
+    expect(useHistoryStore.getState().history[0]?.id).toBe("new");
+  });
+
+  it("历史换源后同步到 id 不同的歌单副本（按歌名+歌手兜底）", async () => {
+    // 历史里这首是 netease id=history-id，歌单里同一首却是 qq id=playlist-id
+    const historyTrack = createTrack("history-id", "netease", "晴天", [
+      "周杰伦",
+    ]);
+    const playlistTrack = createTrack("playlist-id", "qq", "晴天", ["周杰伦"]);
+    const match = createTrack("new-id", "joox", "晴天", ["周杰伦"]);
+    useMusicStore.setState({
+      queue: [historyTrack],
+      originalQueue: [historyTrack],
+      playlists: [
+        { id: "p1", name: "歌单1", tracks: [playlistTrack], createdAt: 0 },
+      ],
+      favorites: [],
+      contextId: "history",
+    });
+    useHistoryStore.setState({ history: [historyTrack] });
+    const search = vi
+      .fn()
+      .mockResolvedValue({ items: [match], hasMore: false });
+    vi.mocked(MusicProviderFactory.getProvider).mockReturnValue({
+      source: "joox",
+      search,
+      getUrl: vi.fn(),
+      getPic: vi.fn(),
+      getLyric: vi.fn(),
+    });
+
+    await handleAutoMatch(
+      historyTrack,
+      "joox",
+      "/history",
+      undefined,
+      false,
+      true
+    );
+
+    // 歌单里那条 id 不同、但歌名歌手一致的副本也被换成新源
+    const pl = useMusicStore.getState().playlists[0]?.tracks[0];
+    expect(pl?.id).toBe("new-id");
+    expect(pl?.source).toBe("joox");
+    // 历史自身也更新
+    expect(useHistoryStore.getState().history[0]?.id).toBe("new-id");
   });
 
   it("picks Wang Leehom's solo Ai Cuo over the first duet live result", async () => {
@@ -564,5 +659,126 @@ describe("handleAutoMatch", () => {
     expect(state.queue.map((t) => t.id)).toEqual(["first", "second", "new"]);
     expect(state.currentIndex).toBe(2);
     expect(state.isPlaying).toBe(true);
+  });
+});
+
+describe("batchSwitchTrackSource / resolvePendingSourceMatch", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(MusicProviderFactory.getProvider).mockReset();
+    useHistoryStore.setState({ history: [] });
+    useMusicStore.setState({
+      favorites: [],
+      playlists: [],
+      queue: [],
+      originalQueue: [],
+      searchResults: [],
+      trackOrigins: {},
+      currentIndex: 0,
+      sourceConfigs: [
+        { source: "joox", enabled: true, visible: true },
+        { source: "netease", enabled: true, visible: true },
+        { source: "qq", enabled: true, visible: true },
+        { source: "kuwo", enabled: true, visible: true },
+      ],
+    });
+  });
+
+  it("批量切换只改音源标签并记录 pendingSourceFrom，不发任何搜索请求，切回原源后自动清除标记", () => {
+    const neteaseTrack = createTrack("186016", "netease", "晴天", ["周杰伦"]);
+    const qqTrack = createTrack("0039MnYb0qxYhV", "qq", "七里香", ["周杰伦"]);
+    const localTrack = createTrack("file://song.mp3", "local", "本地曲", [
+      "周杰伦",
+    ]);
+
+    useMusicStore.setState({
+      queue: [neteaseTrack, qqTrack, localTrack],
+      originalQueue: [neteaseTrack, qqTrack, localTrack],
+      favorites: [neteaseTrack],
+      playlists: [
+        { id: "pl-1", name: "测试", tracks: [neteaseTrack], createdAt: 1 },
+      ],
+    });
+    useHistoryStore.setState({ history: [neteaseTrack] });
+    useMusicStore.getState().recordTrackOrigin(neteaseTrack, {
+      via: "lx",
+      source: "netease",
+      lxName: "测试脚本",
+    });
+
+    const switched = batchSwitchTrackSource(
+      [neteaseTrack, qqTrack, localTrack],
+      "qq"
+    );
+
+    // local 与本就是 qq 的曲目不计入切换，也不发起任何搜源请求
+    expect(switched).toBe(1);
+    expect(MusicProviderFactory.getProvider).not.toHaveBeenCalled();
+
+    const s = useMusicStore.getState();
+    expect(s.queue[0]).toMatchObject({
+      id: "186016",
+      source: "qq",
+      pendingSourceFrom: "netease",
+    });
+    expect(s.queue[1]).toMatchObject({ id: "0039MnYb0qxYhV", source: "qq" });
+    expect(s.queue[1].pendingSourceFrom).toBeUndefined();
+    expect(s.queue[2].source).toBe("local");
+    expect(s.favorites[0].source).toBe("qq");
+    expect(s.playlists[0].tracks[0].pendingSourceFrom).toBe("netease");
+    expect(useHistoryStore.getState().history[0].source).toBe("qq");
+    expect(Object.keys(s.trackOrigins)).toHaveLength(0);
+
+    // 播放前切回原音源 netease：直接还原为未修改状态
+    const reverted = batchSwitchTrackSource([s.queue[0]], "netease");
+    expect(reverted).toBe(1);
+    const s2 = useMusicStore.getState();
+    expect(s2.queue[0].source).toBe("netease");
+    expect(s2.queue[0].pendingSourceFrom).toBeUndefined();
+    expect(MusicProviderFactory.getProvider).not.toHaveBeenCalled();
+  });
+
+  it("延迟解析 pendingSourceFrom 曲目：按目标源搜到同曲后同步全部集合并移除标记", async () => {
+    const pendingTrack: MusicTrack = {
+      ...createTrack("186016", "qq", "晴天", ["周杰伦"]),
+      pendingSourceFrom: "netease",
+    };
+    const matchedQqTrack = createTrack("0039MnYb0qxYhV", "qq", "晴天", [
+      "周杰伦",
+    ]);
+
+    useMusicStore.setState({
+      queue: [pendingTrack],
+      originalQueue: [pendingTrack],
+      favorites: [pendingTrack],
+      playlists: [
+        { id: "pl-1", name: "测试", tracks: [pendingTrack], createdAt: 1 },
+      ],
+    });
+    useHistoryStore.setState({ history: [pendingTrack] });
+
+    const search = vi
+      .fn()
+      .mockResolvedValue({ items: [matchedQqTrack], hasMore: false });
+    vi.mocked(MusicProviderFactory.getProvider).mockReturnValue({
+      source: "qq",
+      search,
+      getUrl: vi.fn(),
+      getPic: vi.fn(),
+      getLyric: vi.fn(),
+    });
+
+    const resolved = await resolvePendingSourceMatch(pendingTrack);
+
+    expect(search).toHaveBeenCalledTimes(1);
+    expect(resolved).toMatchObject({ id: "0039MnYb0qxYhV", source: "qq" });
+    expect(resolved?.pendingSourceFrom).toBeUndefined();
+
+    const s = useMusicStore.getState();
+    expect(s.queue[0].id).toBe("0039MnYb0qxYhV");
+    expect(s.queue[0].pendingSourceFrom).toBeUndefined();
+    expect(s.favorites[0].id).toBe("0039MnYb0qxYhV");
+    expect(s.playlists[0].tracks[0].id).toBe("0039MnYb0qxYhV");
+    expect(useHistoryStore.getState().history[0].id).toBe("0039MnYb0qxYhV");
   });
 });

@@ -153,6 +153,48 @@ describe("useMediaSessionIntegration", () => {
     cleanup();
   });
 
+  it("原生端不依赖 fetch 预检，无 CORS 图床也直接下发封面地址", async () => {
+    configMocks.isNative = true;
+    const fetchSpy = vi
+      .spyOn(globalThis, "fetch")
+      .mockRejectedValue(new TypeError("Failed to fetch"));
+
+    useMusicStore.setState({
+      queue: [
+        {
+          id: "qq-1",
+          name: "晴天",
+          artist: ["周杰伦"],
+          album: "叶惠美",
+          pic_id: "pic-qq",
+          url_id: "url-qq",
+          lyric_id: "lyric-qq",
+          source: "qq",
+        },
+      ],
+      currentIndex: 0,
+      hasUserGesture: true,
+    });
+
+    const cleanup = await renderHook(
+      "https://y.gtimg.cn/music/photo_new/T002R800x800M000000MkMni19ClKG.jpg"
+    );
+
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(mediaSessionMocks.setMetadata).toHaveBeenCalledWith({
+      title: "晴天",
+      artist: "周杰伦",
+      album: "叶惠美",
+      artwork: [
+        {
+          src: "https://y.gtimg.cn/music/photo_new/T002R800x800M000000MkMni19ClKG.jpg",
+        },
+      ],
+    });
+
+    cleanup();
+  });
+
   it("drops artwork when URL is unsafe", async () => {
     useMusicStore.setState({
       queue: [

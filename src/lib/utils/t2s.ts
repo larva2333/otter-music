@@ -36,6 +36,17 @@ loadChars(charsRaw);
 // 日文新字体表是可选的，格式与单字表相同
 loadChars(jpRaw);
 
+// OpenCC TSCharacters 未收录部分台港常用异体代词（如「妳聽得到」），
+// 与 music-key.ts 保持一致做单字兜底，避免显示与本地曲目反查漏匹配。
+for (const [traditional, simplified] of Object.entries({
+  妳: "你",
+  祢: "你",
+  牠: "它",
+  祂: "他",
+})) {
+  if (!charMap.has(traditional)) charMap.set(traditional, simplified);
+}
+
 for (const line of phrasesRaw.split("\n")) {
   const text = line.trim();
   if (text.length < 4 || text.length % 2 !== 0 || text.startsWith("#"))

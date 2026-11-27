@@ -7,9 +7,8 @@ import { usePlayContextHandler } from "@/hooks/usePlayContextHandler";
 import { PageLoader } from "@/components/PageLoader";
 import { PageLayout } from "@/components/PageLayout";
 import { MusicPlaylistView } from "@/components/MusicPlaylistView";
-import { ListMusic, WifiOff } from "lucide-react";
+import { ListMusic } from "lucide-react";
 import { useActivePlaylists } from "@/hooks/use-active-playlists";
-import { useOfflinePlaylist } from "@/hooks/use-offline-playlist";
 
 // ==========================================
 // 1. 懒加载路由组件 (保持极速首屏)
@@ -35,11 +34,6 @@ const HistoryPage = lazy(() =>
 );
 const SettingsPage = lazy(() =>
   import("@/components/SettingsPage").then((m) => ({ default: m.SettingsPage }))
-);
-const LocalMusicPage = lazy(() =>
-  import("@/components/LocalMusicPage").then((m) => ({
-    default: m.LocalMusicPage,
-  }))
 );
 const NeteaseDetail = lazy(() =>
   import("@/components/NeteaseDetail").then((m) => ({
@@ -149,33 +143,13 @@ export const FavoritesRoute = withSuspense(() => {
 export const PlaylistDetailRoute = withSuspense(() => {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
-  const offlineTracks = useOfflinePlaylist();
-  const isOffline = id === "__offline__";
 
   const activePlaylists = useActivePlaylists();
-  const playlist = isOffline ? null : activePlaylists.find((p) => p.id === id);
+  const playlist = activePlaylists.find((p) => p.id === id);
   const activeTracks = playlist?.tracks.filter((t) => !t.is_deleted) ?? [];
   const { currentTrackId, isPlaying } = usePlaybackState();
 
-  const onPlay = usePlayContextHandler(
-    isOffline ? offlineTracks : activeTracks,
-    isOffline ? "offline" : `playlist-${id}`
-  );
-
-  if (isOffline) {
-    return (
-      <PageLayout title="离线歌单">
-        <MusicPlaylistView
-          title="离线歌单"
-          tracks={offlineTracks}
-          icon={<WifiOff className="h-8 w-8 text-primary/80" />}
-          onPlay={onPlay}
-          currentTrackId={currentTrackId}
-          isPlaying={isPlaying}
-        />
-      </PageLayout>
-    );
-  }
+  const onPlay = usePlayContextHandler(activeTracks, `playlist-${id}`);
 
   if (!playlist) {
     return (
@@ -218,19 +192,6 @@ export const PlaylistDetailRoute = withSuspense(() => {
 export const MineRoute = withSuspense(() => {
   const navigate = useNavigate();
   return <MinePage onSelectPlaylist={(id) => navigate(`/playlist/${id}`)} />;
-});
-
-export const LocalMusicRoute = withSuspense(() => {
-  const { handlePlay } = usePlayHelper();
-  const { currentTrackId, isPlaying } = usePlaybackState();
-
-  return (
-    <LocalMusicPage
-      onPlay={handlePlay}
-      currentTrackId={currentTrackId}
-      isPlaying={isPlaying}
-    />
-  );
 });
 
 // -- 网易云API详情路由复用逻辑 --
@@ -294,6 +255,11 @@ export const HistoryRoute = withSuspense(() => {
       onPlay={onPlay}
       onRemove={(track) =>
         useHistoryStore.getState().removeFromHistory(track.id)
+      }
+      onBatchRemove={(tracks) =>
+        useHistoryStore
+          .getState()
+          .removeBatchFromHistory(tracks.map((t) => t.id))
       }
       onClear={() => useHistoryStore.getState().clearHistory()}
     />

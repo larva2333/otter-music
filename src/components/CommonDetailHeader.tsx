@@ -84,16 +84,11 @@ export const CommonDetailHeader = memo(function CommonDetailHeader({
       : "mt-auto flex items-center gap-2",
     btn: hasDesc
       ? "rounded-full px-1.5 h-9 w-24 justify-center shrink-0 text-xs"
-      : "rounded-full px-3 h-8 md:h-9 gap-1.5 min-w-0 shrink",
-    searchWrapper: hasDesc
-      ? "relative flex-1 min-w-0"
-      : "relative flex-1 min-w-0",
-    searchIcon: hasDesc
-      ? "absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground/60"
-      : "absolute left-2 top-2.5 h-3 w-3 text-muted-foreground md:h-4 md:w-4 md:top-2",
-    input: hasDesc
-      ? "pl-9 h-9 rounded-md text-xs bg-muted/50 border-none focus-visible:ring-1 focus-visible:ring-primary/50 w-full"
-      : "pl-8 h-8 text-xs w-full md:h-9 md:text-sm",
+      : "rounded-full px-3 h-9 gap-1.5 min-w-0 shrink",
+    searchWrapper: "relative flex-1 min-w-0",
+    searchIcon:
+      "absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground",
+    input: "h-9 w-full rounded-full pl-9 text-sm",
   };
 
   const playSearchBar = showBar && (
@@ -124,7 +119,7 @@ export const CommonDetailHeader = memo(function CommonDetailHeader({
             onChange={(e) => onSearchChange(e.target.value)}
             onFocus={() => setIsSearchFocused(true)}
             onBlur={() => setIsSearchFocused(false)}
-            className={cn(styles.input, searchQuery && "pr-8")}
+            className={cn(styles.input, searchQuery && "pr-9")}
           />
           {/* 有内容时显示清除按钮，一键清空搜索词 */}
           {searchQuery && (
@@ -135,7 +130,7 @@ export const CommonDetailHeader = memo(function CommonDetailHeader({
                 searchInputRef.current?.focus();
               }}
               aria-label="清除搜索"
-              className="absolute right-2 top-1/2 -translate-y-1/2 h-5 w-5 flex items-center justify-center rounded-full bg-muted-foreground/20 text-muted-foreground hover:bg-muted-foreground/30 hover:text-foreground transition-colors"
+              className="absolute right-2.5 top-1/2 flex h-5 w-5 -translate-y-1/2 items-center justify-center rounded-full bg-muted-foreground/20 text-muted-foreground transition-colors hover:bg-muted-foreground/30 hover:text-foreground"
             >
               <X className="h-3 w-3" />
             </button>

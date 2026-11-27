@@ -2,6 +2,7 @@ import { useEffect, useLayoutEffect, useRef, type RefObject } from "react";
 import {
   isDragSelecting,
   isInsideHorizontalScroller,
+  isInsideNowPlayingSwipeGuard,
   isTextInputTarget,
   lockAxis,
 } from "./gesture-axis";
@@ -146,11 +147,14 @@ export function usePagerSwipe(
     node.style.transform = `translate3d(${offset}px, 0, 0)`;
   };
 
-  // 首次定位 + 尺寸变化时重新对齐（手机旋转、分屏）。
+  // 首次定位 + 尺寸变化时重新对齐（手机旋转、分屏、延迟挂载）。
   useLayoutEffect(() => {
     const viewport = viewportRef.current;
     const track = trackRef?.current;
-    if (!viewport) return;
+    if (!viewport || options.enabled === false) {
+      firstPositionRef.current = true;
+      return;
+    }
 
     const align = () => {
       const measured = viewport.clientWidth;
@@ -170,13 +174,14 @@ export function usePagerSwipe(
     const observer = new ResizeObserver(align);
     observer.observe(viewport);
     return () => observer.disconnect();
-  }, [stageRef, trackRef, viewportRef]);
+  }, [stageRef, trackRef, viewportRef, options.enabled]);
 
   // 点 tab / 再次点击底部 tab / 外部对齐：翻到新的一页
   useLayoutEffect(() => {
     const viewport = viewportRef.current;
     const track = trackRef?.current;
-    if (!viewport || !track || draggingRef.current) return;
+    if (!viewport || !track || draggingRef.current || options.enabled === false)
+      return;
     const measured = viewport.clientWidth;
     if (measured > 0) widthRef.current = measured;
     const width = widthRef.current || measured || window.innerWidth;
@@ -194,11 +199,11 @@ export function usePagerSwipe(
     const animate =
       !firstPositionRef.current && latest.current.isPageActive !== false;
     applyTrack(track, targetX, animate);
-  }, [options.index, options.count, trackRef, viewportRef]);
+  }, [options.index, options.count, trackRef, viewportRef, options.enabled]);
 
   useEffect(() => {
     const viewport = viewportRef.current;
-    if (!viewport) return;
+    if (!viewport || options.enabled === false) return;
 
     let tracking = false;
     let axis: "none" | "x" | "y" = "none";
@@ -260,8 +265,11 @@ export function usePagerSwipe(
         return;
       }
       const touch = event.touches[0];
-      const target = touch.target as Element | null;
-      if (isTextInputTarget(target)) {
+      const target = (touch.target ?? event.target) as Element | null;
+      if (
+        isTextInputTarget(target) ||
+        isInsideNowPlayingSwipeGuard(touch.clientY, target)
+      ) {
         tracking = false;
         return;
       }
@@ -498,5 +506,5 @@ export function usePagerSwipe(
       viewport.removeEventListener("touchend", handleEnd);
       viewport.removeEventListener("touchcancel", handleCancel);
     };
-  }, [stageRef, trackRef, viewportRef]);
+  }, [stageRef, trackRef, viewportRef, options.enabled]);
 }

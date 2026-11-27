@@ -24,6 +24,85 @@ const TIME_EXP = /\[(\d{2}):(\d{2})\.(\d{2,3})]/g;
 const WORD_TIME_EXP = /<(-?\d+),(-?\d+)(?:,-?\d+)?>/g;
 const MATCH_TOLERANCE = 0.5;
 
+function toSeconds(m: RegExpMatchArray): number {
+  return Number(m[1]) * 60 + Number(m[2]) + Number(m[3].padEnd(3, "0")) / 1000;
+}
+
+/** 纯空格 token 不占独立的逐字 step，并入相邻字，避免高亮时上一字突然消失 */
+function mergeSpaceTokens(words: LyricWord[]): LyricWord[] | undefined {
+  const merged: LyricWord[] = [];
+  let leadingSpace = "";
+  for (const w of words) {
+    if (w.text.trim() === "") {
+      if (merged.length > 0) {
+        const prev = merged[merged.length - 1];
+        prev.text += w.text;
+        prev.end = Math.max(prev.end, w.end);
+      } else {
+        leadingSpace += w.text;
+      }
+      continue;
+    }
+    if (leadingSpace) {
+      w.text = leadingSpace + w.text;
+      leadingSpace = "";
+    }
+    merged.push(w);
+  }
+  if (leadingSpace && merged.length > 0) {
+    merged[merged.length - 1].text += leadingSpace;
+  }
+  return merged.length > 0 ? merged : undefined;
+}
+
+/**
+ * QQ 等来源的逐字 LRC：`[00:00.00]陈[00:00.10]奕[00:00.15]迅`。
+ * 第一个时间戳是整行起点，后面的时间戳是各字起点。
+ * 连续时间戳中间没有文字（如 `[00:01.00][00:02.00]歌词`）不算逐字，
+ * 仍是「同一行在两个时间点重复」的普通 LRC。
+ */
+function extractBracketWordTimestamps(line: string): LyricWord[] | undefined {
+  const matches = [...line.matchAll(TIME_EXP)];
+  if (matches.length < 2) return undefined;
+
+  let hasTextBetween = false;
+  for (let i = 1; i < matches.length; i++) {
+    const from = (matches[i - 1].index ?? 0) + matches[i - 1][0].length;
+    const to = matches[i].index ?? line.length;
+    if (line.slice(from, to).trim()) {
+      hasTextBetween = true;
+      break;
+    }
+  }
+  if (!hasTextBetween) return undefined;
+
+  const base = toSeconds(matches[0]);
+  const words: LyricWord[] = [];
+  for (let i = 0; i < matches.length; i++) {
+    const from = (matches[i].index ?? 0) + matches[i][0].length;
+    const to =
+      i + 1 < matches.length
+        ? (matches[i + 1].index ?? line.length)
+        : line.length;
+    const text = line.slice(from, to);
+    if (!text) continue;
+
+    const start = Math.max(
+      0,
+      Math.round((toSeconds(matches[i]) - base) * 1000)
+    );
+    const end =
+      i + 1 < matches.length
+        ? Math.max(
+            start + 1,
+            Math.round((toSeconds(matches[i + 1]) - base) * 1000)
+          )
+        : start + 500;
+    words.push({ text, start, end });
+  }
+  return mergeSpaceTokens(words);
+}
+
 /** 从行文本里切出逐字片段，时间戳是相对行起点的毫秒 */
 function extractWords(raw: string): LyricWord[] | undefined {
   const matches = [...raw.matchAll(WORD_TIME_EXP)];
@@ -55,33 +134,7 @@ function extractWords(raw: string): LyricWord[] | undefined {
     words.push({ text, start, end: start + duration });
   }
 
-  // 纯空格 token 不占独立的逐字 step：唱到空格时若上一字突然失去覆盖层，
-  // 看起来就是「上一行末字晃一下」。把空格并入相邻字的文本并延长其结束时间，
-  // 空格跟着字一起唱完，过渡连续。
-  const merged: LyricWord[] = [];
-  let leadingSpace = "";
-  for (const w of words) {
-    if (w.text.trim() === "") {
-      if (merged.length > 0) {
-        const prev = merged[merged.length - 1];
-        prev.text += w.text;
-        prev.end = Math.max(prev.end, w.end);
-      } else {
-        leadingSpace += w.text;
-      }
-      continue;
-    }
-    if (leadingSpace) {
-      w.text = leadingSpace + w.text;
-      leadingSpace = "";
-    }
-    merged.push(w);
-  }
-  if (leadingSpace && merged.length > 0) {
-    merged[merged.length - 1].text += leadingSpace;
-  }
-
-  return merged.length > 0 ? merged : undefined;
+  return mergeSpaceTokens(words);
 }
 
 export function parseSimpleLrc(lrc: string): LyricLine[] {
@@ -89,24 +142,28 @@ export function parseSimpleLrc(lrc: string): LyricLine[] {
 
   for (const line of lrc.split("\n")) {
     const timeMatches = [...line.matchAll(TIME_EXP)];
+    if (timeMatches.length === 0) continue;
 
-    if (timeMatches.length > 0) {
-      const raw = line.replace(TIME_EXP, "");
-      // text 始终剥掉字级标记，车载/桌面歌词拿到的仍是干净的逐行文本
-      const text = raw.replace(WORD_TIME_EXP, "").trim();
+    const raw = line.replace(TIME_EXP, "");
+    // text 始终剥掉字级标记，车载/桌面歌词拿到的仍是干净的逐行文本
+    const text = raw.replace(WORD_TIME_EXP, "").trim();
+    if (!text) continue;
 
-      if (text) {
-        const words = extractWords(raw);
+    // 逐字 LRC（[00:00.00]陈[00:00.10]奕...）只算一行，
+    // 否则每个字的时间戳都会被当成整行起点，界面出现几十条重复歌词。
+    const bracketWords = extractBracketWordTimestamps(line);
+    if (bracketWords) {
+      lines.push({
+        time: toSeconds(timeMatches[0]),
+        text,
+        words: bracketWords,
+      });
+      continue;
+    }
 
-        for (const m of timeMatches) {
-          const time =
-            Number(m[1]) * 60 +
-            Number(m[2]) +
-            Number(m[3].padEnd(3, "0")) / 1000;
-
-          lines.push({ time, text, ...(words && { words }) });
-        }
-      }
+    const words = extractWords(raw);
+    for (const m of timeMatches) {
+      lines.push({ time: toSeconds(m), text, ...(words && { words }) });
     }
   }
 

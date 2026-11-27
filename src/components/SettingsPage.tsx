@@ -277,7 +277,7 @@ export function SettingsPage({ onBack }: SettingsPageProps) {
           <SettingItem
             icon={Database}
             title="数据备份"
-            subtitle="导出或导入全部收藏、歌单与设置"
+            subtitle="管理本地自动备份与恢复数据"
             onClick={() => setDataBackupOpen(true)}
             showChevron
           />

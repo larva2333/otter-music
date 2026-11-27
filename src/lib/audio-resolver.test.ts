@@ -63,7 +63,7 @@ vi.mock("@/store/url-cache-store", () => ({
   whenUrlCacheReady: () => Promise.resolve(),
 }));
 vi.mock("@/lib/music-api", () => ({
-  musicApi: { getUrl: vi.fn() },
+  musicApi: { getUrl: vi.fn(), searchBestMatch: vi.fn() },
 }));
 
 import { LocalMusicPlugin } from "@/plugins/local-music";
@@ -360,5 +360,53 @@ describe("resolveTrackUrl 会员曲", () => {
 
     expect(result.url).toBe("https://official.example.com/free.mp3");
     expect(musicApi.getUrl).toHaveBeenCalled();
+  });
+
+  it("携带 pendingSourceFrom 时，先延迟匹配目标源真实 id 再取播放链接", async () => {
+    const pending: MusicTrack = {
+      ...localTrack,
+      id: "old_netease_id",
+      url_id: "old_netease_id",
+      source: "qq",
+      name: "晴天",
+      artist: ["周杰伦"],
+      pendingSourceFrom: "_netease",
+    };
+    const matched: MusicTrack = {
+      ...pending,
+      id: "0039MnYb0qxYhV",
+      url_id: "0039MnYb0qxYhV",
+      pendingSourceFrom: undefined,
+    };
+    vi.mocked(musicApi.searchBestMatch).mockResolvedValueOnce(matched);
+    vi.mocked(musicApi.getUrl).mockResolvedValueOnce(
+      "https://official.example.com/qq-matched.mp3" as never
+    );
+
+    const result = await resolveTrackUrl(pending, 320);
+
+    expect(musicApi.searchBestMatch).toHaveBeenCalledTimes(1);
+    expect(musicApi.getUrl).toHaveBeenCalledWith("0039MnYb0qxYhV", "qq", 320, {
+      forceRefresh: false,
+    });
+    expect(result.url).toBe("https://official.example.com/qq-matched.mp3");
+  });
+
+  it("携带 pendingSourceFrom 但目标源搜不到同曲时抛 PENDING_SOURCE_NOT_FOUND 交由上层兜底", async () => {
+    const pending: MusicTrack = {
+      ...localTrack,
+      id: "old_netease_id",
+      url_id: "old_netease_id",
+      source: "qq",
+      name: "冷门未收录歌曲",
+      artist: ["未知歌手"],
+      pendingSourceFrom: "_netease",
+    };
+    vi.mocked(musicApi.searchBestMatch).mockResolvedValueOnce(null);
+
+    await expect(resolveTrackUrl(pending, 320)).rejects.toThrow(
+      "PENDING_SOURCE_NOT_FOUND"
+    );
+    expect(musicApi.getUrl).not.toHaveBeenCalled();
   });
 });

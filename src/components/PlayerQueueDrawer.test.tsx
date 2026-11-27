@@ -6,6 +6,22 @@ import { MemoryRouter } from "react-router-dom";
 import type { MusicTrack } from "@/types/music";
 import { PlayerQueueDrawer } from "./PlayerQueueDrawer";
 
+// jsdom 没有真实滚动视口，虚拟滚动在这里退化为「全部渲染」，
+// 测试关注抽屉交互本身；真实列表窗口由 @tanstack/react-virtual 在设备上计算。
+vi.mock("@tanstack/react-virtual", () => ({
+  useVirtualizer: ({ count }: { count: number }) => ({
+    getTotalSize: () => count * 50,
+    getVirtualItems: () =>
+      Array.from({ length: count }, (_, index) => ({
+        index,
+        key: index,
+        start: index * 50,
+      })),
+    measureElement: () => {},
+    scrollToIndex: () => {},
+  }),
+}));
+
 const tracks: MusicTrack[] = [
   {
     id: "1",

@@ -19,12 +19,9 @@ vi.mock("react-router-dom", () => ({
   useNavigate: vi.fn(() => vi.fn()),
 }));
 
-vi.mock("@/hooks/use-offline-playlist", () => ({
-  useOfflinePlaylist: vi.fn(() => []),
-}));
-
 vi.mock("@/lib/logger", () => ({
   logger: {
+    info: vi.fn(),
     warn: vi.fn(),
     error: vi.fn(),
   },
@@ -48,6 +45,7 @@ vi.mock("react-hot-toast", () => {
   return {
     default: Object.assign(toastFn, {
       promise: vi.fn((promise) => promise),
+      success: vi.fn(),
       error: vi.fn(),
       loading: vi.fn(() => "toast-id"),
       dismiss: vi.fn(),
@@ -116,6 +114,7 @@ describe("LocalMusicPage", () => {
         tracks,
         onPlay,
         onRemove,
+        action,
       }: {
         tracks: MusicTrack[];
         onPlay: (track: MusicTrack | null, index?: number) => void;
@@ -123,10 +122,12 @@ describe("LocalMusicPage", () => {
           track: MusicTrack,
           silent?: boolean
         ) => void | Promise<void>;
+        action?: React.ReactNode;
       }) => (
         <div>
+          {action}
           {tracks.map((track) => (
-            <div key={track.id}>
+            <div key={track.id} data-testid="mock-track-row">
               <button type="button" onClick={() => onPlay(track)}>
                 {track.name}
               </button>
@@ -236,11 +237,11 @@ describe("LocalMusicPage", () => {
     });
   }
 
-  /** 点击"全盘扫描"按钮打开 Drawer。 */
+  /** 点击"全盘扫描"图标按钮打开 Drawer。 */
   function openScanDrawer() {
-    const btn = Array.from(
-      container?.querySelectorAll<HTMLButtonElement>("button") ?? []
-    ).find((button) => button.textContent?.includes("全盘扫描"));
+    const btn = container?.querySelector<HTMLButtonElement>(
+      'button[aria-label="全盘扫描"]'
+    );
     if (!btn) throw new Error("全盘扫描 button not found");
     btn.dispatchEvent(new MouseEvent("click", { bubbles: true }));
   }
@@ -314,7 +315,9 @@ describe("LocalMusicPage", () => {
 
     await act(async () => {
       container
-        ?.querySelector<HTMLButtonElement>("button:nth-of-type(2)")
+        ?.querySelector<HTMLButtonElement>(
+          "[data-testid='mock-track-row'] button:nth-of-type(2)"
+        )
         ?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     });
 
@@ -337,7 +340,9 @@ describe("LocalMusicPage", () => {
 
     await act(async () => {
       container
-        ?.querySelector<HTMLButtonElement>("button:nth-of-type(2)")
+        ?.querySelector<HTMLButtonElement>(
+          "[data-testid='mock-track-row'] button:nth-of-type(2)"
+        )
         ?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     });
     await act(async () => {

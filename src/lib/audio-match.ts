@@ -15,6 +15,8 @@ import {
 } from "./utils/music-key";
 import { logger } from "@/lib/logger";
 import { useUrlCacheStore, buildUrlCacheKey } from "@/store/url-cache-store";
+import { useHistoryStore } from "@/store/history-store";
+import { trackOriginKey } from "@/store/music-store/playback-slice";
 
 /**
  * 自动换源总时限。
@@ -24,6 +26,233 @@ import { useUrlCacheStore, buildUrlCacheKey } from "@/store/url-cache-store";
  * 超时后必须放行，让上层继续走「跳过下一首」。
  */
 const AUTO_MATCH_TIMEOUT = 12_000;
+
+/** 同一首待延迟解析曲目的并发去重，避免预加载与主播放重复查表 */
+const inflightPendingMatches = new Map<string, Promise<MusicTrack | null>>();
+
+function stripPendingSourceFrom(track: MusicTrack): MusicTrack {
+  if (!track.pendingSourceFrom) return track;
+  const { pendingSourceFrom: _, ...clean } = track;
+  return clean;
+}
+
+/** 构造切源后最终写入各集合的曲目（处理 B 站保留原歌名/歌手，并清掉待解析标记） */
+function buildMatchedFinalTrack(
+  originalTrack: MusicTrack,
+  match: MusicTrack
+): MusicTrack {
+  const { bilibiliKeepOriginalMeta } = useMusicStore.getState();
+  const base =
+    match.source === "bilibili" && bilibiliKeepOriginalMeta
+      ? { ...match, name: originalTrack.name, artist: originalTrack.artist }
+      : match;
+  return stripPendingSourceFrom(base);
+}
+
+/** 按目标音源执行带超时的最佳同曲搜索 */
+async function searchTargetSourceMatch(
+  track: MusicTrack,
+  sources: MusicSource[]
+): Promise<{ match: MusicTrack | null; timedOut: boolean }> {
+  const controller = new AbortController();
+  let timedOut = false;
+  let timer: ReturnType<typeof setTimeout> | null = null;
+
+  const timeoutPromise = new Promise<null>((resolve) => {
+    timer = setTimeout(() => {
+      timedOut = true;
+      controller.abort();
+      resolve(null);
+    }, AUTO_MATCH_TIMEOUT);
+  });
+
+  const searchPromise = musicApi
+    .searchBestMatch({
+      query: `${track.name} ${track.artist[0] ?? ""}`.trim(),
+      sources,
+      signal: controller.signal,
+      predicate: (item: MusicTrack) => {
+        if (!isNameMatch(track.name, item.name)) return false;
+        return isArtistMatch(track.artist, item.artist);
+      },
+      ranker: (item, originalIndex) =>
+        scoreAutoMatchCandidate(track, item, originalIndex),
+      targetTrack: track,
+    })
+    .catch((error) => {
+      if (timedOut) return null;
+      throw error;
+    });
+
+  try {
+    const match = await Promise.race([searchPromise, timeoutPromise]);
+    return { match, timedOut };
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
+/** 构造单首曲目直接切换音源标签后的状态 */
+function buildDirectSwitchedTrack(
+  existing: MusicTrack,
+  targetSource: MusicSource
+): MusicTrack {
+  // 切回原音源且尚未解析时，直接还原成未修改状态
+  if (existing.pendingSourceFrom === targetSource) {
+    return stripPendingSourceFrom({ ...existing, source: targetSource });
+  }
+  return {
+    ...existing,
+    source: targetSource,
+    pendingSourceFrom: existing.pendingSourceFrom ?? existing.source,
+  };
+}
+
+/**
+ * 批量直接切换音源标签：只改写各集合中的 `source` 标签并标记 `pendingSourceFrom`，
+ * 不发任何网络搜索或校验请求，等到实际播放该曲时再按目标音源解析。
+ * @returns 实际发生标签变更的曲目数量
+ */
+export function batchSwitchTrackSource(
+  tracks: MusicTrack[],
+  targetSource: MusicSource
+): number {
+  const targets = tracks.filter((t) => {
+    if (t.source && EXCLUDED_FOR_SEARCH.includes(t.source)) return false;
+    return t.source !== targetSource;
+  });
+  if (targets.length === 0) return 0;
+
+  const replaceList = (list: MusicTrack[]) =>
+    list.map((item) => {
+      const hit = targets.some((src) =>
+        isSameTrackAcrossCollections(item, src)
+      );
+      if (!hit || (item.source && EXCLUDED_FOR_SEARCH.includes(item.source))) {
+        return item;
+      }
+      if (item.source === targetSource) return item;
+      return buildDirectSwitchedTrack(item, targetSource);
+    });
+
+  const s = useMusicStore.getState();
+  const nextOrigins = { ...s.trackOrigins };
+  let originsChanged = false;
+  for (const t of targets) {
+    for (const key of [
+      trackOriginKey(t),
+      trackOriginKey({ ...t, source: targetSource }),
+    ]) {
+      if (key in nextOrigins) {
+        delete nextOrigins[key];
+        originsChanged = true;
+      }
+    }
+  }
+
+  useMusicStore.setState({
+    queue: replaceList(s.queue),
+    originalQueue: replaceList(s.originalQueue),
+    favorites: replaceList(s.favorites),
+    searchResults: replaceList(s.searchResults),
+    playlists: s.playlists.map((p) => ({
+      ...p,
+      tracks: replaceList(p.tracks),
+    })),
+    ...(originsChanged ? { trackOrigins: nextOrigins } : {}),
+  });
+  useHistoryStore.setState((h) => ({ history: replaceList(h.history) }));
+  return targets.length;
+}
+
+/**
+ * 实际播放/预加载「仅改过音源标签」的曲目时，再向目标音源搜索同曲并同步真实元数据。
+ */
+export async function resolvePendingSourceMatch(
+  track: MusicTrack
+): Promise<MusicTrack | null> {
+  if (!track.pendingSourceFrom || !track.source) return track;
+  if (EXCLUDED_FOR_SEARCH.includes(track.source)) return null;
+
+  const inflightKey = `${track.source}:${track.id}:${track.pendingSourceFrom}`;
+  const existing = inflightPendingMatches.get(inflightKey);
+  if (existing) return existing;
+
+  const task = (async (): Promise<MusicTrack | null> => {
+    try {
+      const { match } = await searchTargetSourceMatch(track, [track.source]);
+      if (!match) return null;
+
+      const finalTrack = buildMatchedFinalTrack(track, match);
+      const quality = useMusicStore.getState().quality;
+      useUrlCacheStore
+        .getState()
+        .delete(
+          buildUrlCacheKey(
+            finalTrack.source,
+            finalTrack.id,
+            finalTrack.url_id,
+            quality
+          )
+        );
+      useMusicStore.getState().recordTrackOrigin(track, null);
+      syncTrackAcrossCollections(track, finalTrack);
+      return finalTrack;
+    } catch (error) {
+      logger.error("audio-match", "Pending source match failed", error, {
+        trackId: track.id,
+        targetSource: track.source,
+      });
+      return null;
+    }
+  })();
+
+  inflightPendingMatches.set(inflightKey, task);
+  void task.then(
+    () => inflightPendingMatches.delete(inflightKey),
+    () => inflightPendingMatches.delete(inflightKey)
+  );
+  return task;
+}
+
+/**
+ * 同一首曲目在各集合里的副本可能 id 不同：
+ * 换源后 id 变成新音源的 id，而历史/歌单/播放列表里的旧副本还留着原 id。
+ * 先按 id+source 精确匹配，再按歌名+歌手兜底（与换源搜索同一套判定）。
+ */
+function isSameTrackAcrossCollections(a: MusicTrack, b: MusicTrack): boolean {
+  if (a.id === b.id && a.source === b.source) return true;
+  return isNameMatch(a.name, b.name) && isArtistMatch(a.artist, b.artist);
+}
+
+/** 把换源结果同步到所有集合，id 不一致时用歌名+歌手兜底 */
+function syncTrackAcrossCollections(
+  track: MusicTrack,
+  finalTrack: MusicTrack
+): void {
+  const replace = (list: MusicTrack[]) =>
+    list.map((t) => {
+      if (!isSameTrackAcrossCollections(t, track)) return t;
+      const merged = { ...t, ...finalTrack };
+      if (!finalTrack.pendingSourceFrom) {
+        return stripPendingSourceFrom(merged);
+      }
+      return merged;
+    });
+
+  const s = useMusicStore.getState();
+  useMusicStore.setState({
+    queue: replace(s.queue),
+    originalQueue: replace(s.originalQueue),
+    favorites: replace(s.favorites),
+    searchResults: replace(s.searchResults),
+    playlists: s.playlists.map((p) => ({
+      ...p,
+      tracks: replace(p.tracks),
+    })),
+  });
+  useHistoryStore.setState((h) => ({ history: replace(h.history) }));
+}
 
 /**
  * 计算自动换源的单源内排序分数，优先保证歌名与歌手完全一致。
@@ -71,6 +300,7 @@ function scoreAutoMatchCandidate(
  * @param pagePath 可选，当前页面路径（手动换源时传入，用于判断同步范围）
  * @param shouldAbort 可选，中止检查回调：搜索完成后、修改状态前调用，返回 true 则静默中止换源
  * @param playAfterMatch 可选，换源成功后立即播放：不在队列时插入到当前曲之后，已在队列时直接定位播放
+ * @param silent 可选，静默模式：不弹 toast（批量替换音源时用，由调用方统一报进度）
  * @returns 是否匹配并切换成功
  */
 export async function handleAutoMatch(
@@ -78,14 +308,17 @@ export async function handleAutoMatch(
   targetSource?: MusicSource,
   pagePath?: string,
   shouldAbort?: () => boolean,
-  playAfterMatch = false
+  playAfterMatch = false,
+  silent = false
 ): Promise<boolean> {
   if (track.source && EXCLUDED_FOR_SEARCH.includes(track.source)) {
     return false;
   }
-  const toastId = toast.loading("正在搜索免费音源...", {
-    id: `auto-match-${track.id}`,
-  });
+  const toastId = silent
+    ? `auto-match-${track.id}`
+    : toast.loading("正在搜索免费音源...", {
+        id: `auto-match-${track.id}`,
+      });
 
   try {
     const {
@@ -118,50 +351,20 @@ export async function handleAutoMatch(
 
     if (aggregatedSources.length === 0) {
       // 上面已经起了 loading toast，这里直接 return 会把它留下
-      toast.dismiss(toastId);
+      if (!silent) toast.dismiss(toastId);
       return false;
     }
 
-    // 超时控制：abort 让支持 signal 的 provider 立即收手，
-    // race 兜住那些不响应 abort 的原生请求（否则 await 永远不返回）
-    const controller = new AbortController();
-    let timedOut = false;
-    let timer: ReturnType<typeof setTimeout> | null = null;
-
-    const timeoutPromise = new Promise<null>((resolve) => {
-      timer = setTimeout(() => {
-        timedOut = true;
-        controller.abort();
-        resolve(null);
-      }, AUTO_MATCH_TIMEOUT);
-    });
-
-    const searchPromise = musicApi
-      .searchBestMatch({
-        query: `${track.name} ${track.artist[0]}`,
-        sources: aggregatedSources,
-        signal: controller.signal,
-        predicate: (item: MusicTrack) => {
-          if (!isNameMatch(track.name, item.name)) return false;
-          return isArtistMatch(track.artist, item.artist);
-        },
-        ranker: (item, originalIndex) =>
-          scoreAutoMatchCandidate(track, item, originalIndex),
-        targetTrack: track,
-      })
-      .catch((error) => {
-        // 超时后原请求才失败属于预期，不再当作异常抛出
-        if (timedOut) return null;
-        throw error;
-      });
-
-    const match = await Promise.race([searchPromise, timeoutPromise]);
-    if (timer) clearTimeout(timer);
+    const { match, timedOut } = await searchTargetSourceMatch(
+      track,
+      aggregatedSources
+    );
 
     if (!match) {
-      toast.error(timedOut ? "换源搜索超时，已跳过" : "未找到可用音源", {
-        id: toastId,
-      });
+      if (!silent)
+        toast.error(timedOut ? "换源搜索超时，已跳过" : "未找到可用音源", {
+          id: toastId,
+        });
       return false;
     }
 
@@ -176,16 +379,11 @@ export async function handleAutoMatch(
           source: track.source,
         }
       );
-      toast.dismiss(toastId);
+      if (!silent) toast.dismiss(toastId);
       return false;
     }
 
-    // 仅对 B 站音源保留原歌曲的 name 和 artist，避免标题杂乱与作者错位
-    const { bilibiliKeepOriginalMeta } = useMusicStore.getState();
-    const finalTrack: MusicTrack =
-      match.source === "bilibili" && bilibiliKeepOriginalMeta
-        ? { ...match, name: track.name, artist: track.artist }
-        : match;
+    const finalTrack = buildMatchedFinalTrack(track, match);
 
     // 自动模式下记录已尝试的音源（手动指定时不记录，避免干扰后续自动换源）
     if (!isManual) {
@@ -232,22 +430,12 @@ export async function handleAutoMatch(
     );
     useUrlCacheStore.getState().delete(newCacheKey);
 
-    // 判断当前页面上下文（手动换源时基于页面路径，自动换源时基于 contextId）
-    const isOnFavoritesPage = pagePath === "/favorites";
-    const isOnPlaylistPage = pagePath?.startsWith("/playlist/") ?? false;
-    const playlistId = isOnPlaylistPage ? pagePath!.split("/")[2] : null;
-
-    // 手动换源：根据当前页面同步；自动换源：根据 contextId 和设置项同步
+    // 手动换源（含批量替换）：不管从哪个页面发起，都把这首歌在所有集合里的
+    // 副本一起换掉 —— 歌单、播放队列、播放历史、我的喜欢、搜索结果。
+    // 各集合里的副本 id 可能不同（换源会换 id），按歌名+歌手兜底匹配。
     if (isManual) {
-      // 手动换源：仅同步当前页面
-      if (isOnPlaylistPage && playlistId) {
-        updateTrackInPlaylists(track.id, finalTrack, playlistId);
-      }
-      if (isOnFavoritesPage && isFavorite(track.id)) {
-        setFavorites(
-          favorites.map((t) => (t.id === track.id ? finalTrack : t))
-        );
-      }
+      void pagePath;
+      syncTrackAcrossCollections(track, finalTrack);
     } else {
       // 自动换源：保持原有逻辑
       if (autoMatchPlaylists && contextId?.startsWith("playlist-")) {
@@ -265,11 +453,11 @@ export async function handleAutoMatch(
     }
 
     const sourceLabel = sourceLabels[match.source] || match.source;
-    toast.success(`已切换至: ${sourceLabel}`, { id: toastId });
+    if (!silent) toast.success(`已切换至: ${sourceLabel}`, { id: toastId });
     return true;
   } catch (error) {
     logger.error("audio-match", "Auto match failed", error);
-    toast.error("自动匹配失败", { id: toastId });
+    if (!silent) toast.error("自动匹配失败", { id: toastId });
     return false;
   }
 }

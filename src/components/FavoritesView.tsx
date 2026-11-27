@@ -204,7 +204,7 @@ export function FavoritesView({
             onReorder={!searchQuery.trim() ? onReorder : undefined}
             onRemove={handleRemove}
             onBatchRemove={handleBatchRemove}
-            showCover
+            showInlineCover
             showItemRemove={false}
             preselectedIds={dedupeSelectedIds}
             onSelectionModeChange={(active) => {

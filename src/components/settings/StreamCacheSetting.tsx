@@ -11,6 +11,7 @@ import {
   Database,
   Globe2,
   ListChecks,
+  Loader2,
 } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import {
@@ -49,6 +50,7 @@ export function StreamCacheSetting() {
   const [expanded, setExpanded] = useState(false);
   const [usage, setUsage] = useState(0);
   const [details, setDetails] = useState<CacheDetail[]>([]);
+  const [loading, setLoading] = useState(false);
   const [busy, setBusy] = useState<CacheCategory | "all" | null>(null);
   const offlineCount = useOfflineStore(
     (state) => Object.keys(state.records ?? {}).length
@@ -63,12 +65,17 @@ export function StreamCacheSetting() {
     details.some((item) => item.count > 0 || item.size > 0);
 
   const load = useCallback(async () => {
-    const [bytes, items] = await Promise.all([
-      getStorageUsage(),
-      getCacheDetails(),
-    ]);
-    setUsage(bytes);
-    setDetails(items);
+    setLoading(true);
+    try {
+      const [bytes, items] = await Promise.all([
+        getStorageUsage(),
+        getCacheDetails(),
+      ]);
+      setUsage(bytes);
+      setDetails(items);
+    } finally {
+      setLoading(false);
+    }
   }, []);
 
   useEffect(() => {
@@ -115,6 +122,10 @@ export function StreamCacheSetting() {
     }
   };
 
+  const visibleDetails = details.filter((item) =>
+    item.category === "webview" ? item.size > 0 : item.count > 0
+  );
+
   return (
     <SettingItem
       icon={HardDrive}
@@ -129,15 +140,20 @@ export function StreamCacheSetting() {
             <p className="px-1 text-xs text-muted-foreground">
               缓存明细 · 可单独清理
             </p>
-            {details
-              .filter((item) => item.count > 0 || item.size > 0)
-              .map((item) => {
+            {loading && visibleDetails.length === 0 ? (
+              <div className="flex items-center justify-center gap-2 py-4 text-xs text-muted-foreground">
+                <div className="h-4 w-4 shrink-0 flex-[0_0_16px] min-w-4 min-h-4">
+                  <Loader2 className="h-full w-full animate-spin" />
+                </div>
+                <span>正在统计缓存...</span>
+              </div>
+            ) : visibleDetails.length === 0 ? (
+              <p className="py-4 text-center text-xs text-muted-foreground">
+                暂无缓存
+              </p>
+            ) : (
+              visibleDetails.map((item) => {
                 const Icon = CATEGORY_ICONS[item.category];
-                const empty =
-                  item.category === "webview"
-                    ? item.size <= 0
-                    : item.count === 0;
-                if (empty) return null;
                 return (
                   <div
                     key={item.category}
@@ -175,7 +191,8 @@ export function StreamCacheSetting() {
                     )}
                   </div>
                 );
-              })}
+              })
+            )}
           </div>
 
           <Button

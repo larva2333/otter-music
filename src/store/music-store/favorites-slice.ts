@@ -24,7 +24,6 @@ export const createFavoritesSlice: StateCreator<
 > = (set, get) => ({
   favorites: [],
   addToFavorites: (track) => {
-    if (track.source === "local") return "本地音乐不支持喜欢";
     const { favorites } = get();
     const existing = favorites.find((t) => t.id === track.id);
     if (existing && !existing.is_deleted) return "已在「我的喜欢」中";
@@ -54,15 +53,14 @@ export const createFavoritesSlice: StateCreator<
   isFavorite: (id) => get().favorites.some((t) => t.id === id && !t.is_deleted),
   addBatchToFavorites: (tracks) =>
     set((s) => {
-      const eligible = tracks.filter((t) => t.source !== "local");
-      if (!eligible.length) return s;
+      if (!tracks.length) return s;
       const deletedIds = new Set(
         s.favorites.filter((t) => t.is_deleted).map((t) => t.id)
       );
       const activeIds = new Set(
         s.favorites.filter((t) => !t.is_deleted).map((t) => t.id)
       );
-      const toAdd = eligible
+      const toAdd = tracks
         .filter((t) => !activeIds.has(t.id))
         .map((t) => ({ ...withMeta(t), is_deleted: false }));
       if (!toAdd.length) return s;

@@ -2,7 +2,6 @@ import type { StateCreator } from "zustand";
 import type { MusicState } from "./types";
 import type { MusicTrack, Playlist } from "@/types/music";
 import { v4 as uuidv4 } from "uuid";
-import { toastUtils } from "@/lib/utils/toast";
 import { withMeta, updateList, replaceActiveWithTombstones } from "./shared";
 
 export interface PlaylistSlice {
@@ -74,24 +73,18 @@ export const createPlaylistSlice: StateCreator<
       }),
     })),
   addToPlaylist: (pid, track) =>
-    set((s) => {
-      if (track.source === "local") {
-        toastUtils.info("本地音乐不支持添加歌单");
-        return s;
-      }
-      return {
-        playlists: updateList(s.playlists, pid, (p) => {
-          const nextTrack = { ...withMeta(track), is_deleted: false };
-          const exists = p.tracks.find((t) => t.id === track.id);
-          return {
-            tracks: exists
-              ? updateList(p.tracks, track.id, nextTrack)
-              : [nextTrack, ...p.tracks],
-            is_deleted: false,
-          };
-        }),
-      };
-    }),
+    set((s) => ({
+      playlists: updateList(s.playlists, pid, (p) => {
+        const nextTrack = { ...withMeta(track), is_deleted: false };
+        const exists = p.tracks.find((t) => t.id === track.id);
+        return {
+          tracks: exists
+            ? updateList(p.tracks, track.id, nextTrack)
+            : [nextTrack, ...p.tracks],
+          is_deleted: false,
+        };
+      }),
+    })),
   removeFromPlaylist: (pid, tid) =>
     set((s) => ({
       playlists: updateList(s.playlists, pid, (p) => ({
@@ -100,16 +93,15 @@ export const createPlaylistSlice: StateCreator<
     })),
   addBatchToPlaylist: (pid, tracks) =>
     set((s) => {
-      const eligible = tracks.filter((t) => t.source !== "local");
-      if (!eligible.length) return s;
+      if (!tracks.length) return s;
       return {
         playlists: updateList(s.playlists, pid, (p) => {
           const existingIds = new Set(p.tracks.map((t) => t.id));
-          const toAdd = eligible
+          const toAdd = tracks
             .filter((t) => !existingIds.has(t.id))
             .map((t) => ({ ...withMeta(t), is_deleted: false }));
           const updatedTracks = p.tracks.map((t) => {
-            const incoming = eligible.find((e) => e.id === t.id);
+            const incoming = tracks.find((e) => e.id === t.id);
             return incoming ? { ...withMeta(incoming), is_deleted: false } : t;
           });
           return {

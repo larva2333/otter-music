@@ -27,12 +27,8 @@ import { useMusicStore, type LyricAlign } from "@/store/music-store";
 import { useShallow } from "zustand/react/shallow";
 import { useScrimSystemBars } from "@/hooks/useScrimSystemBars";
 import { onPageScrollToTop } from "@/lib/scroll-to-top";
-import {
-  findActiveLyricIndex,
-  parseLrc,
-  type LyricLine,
-  type LyricWord,
-} from "@/lib/lyrics";
+import { findActiveLyricIndex, parseLrc, type LyricLine } from "@/lib/lyrics";
+import { KaraokeText } from "./KaraokeText";
 
 interface LyricsPanelProps {
   track: MusicTrack | null;
@@ -79,112 +75,6 @@ function formatTime(seconds: number): string {
   return `${mins}:${secs.toString().padStart(2, "0")}`;
 }
 
-/** 逐字高亮刷新节流：30fps 足够跟唱，别让 WebView 每帧重渲染 */
-const KARAOKE_FRAME_MS = 33;
-
-/**
- * 当前行的卡拉OK文字。播放进度直接读 audio 元素（store 的 currentAudioTime
- * 被节流到 1 秒，逐字会明显跳字），拿不到 audio 时回退 store。
- */
-const KaraokeText = memo(function KaraokeText({
-  words,
-  lineTime,
-  lyricOffset,
-  fontSize,
-  enabled,
-}: {
-  words: LyricWord[];
-  lineTime: number;
-  lyricOffset: number;
-  fontSize: number;
-  enabled: boolean;
-}) {
-  const [progress, setProgress] = useState({ index: -1, ratio: 0 });
-  const progressRef = useRef(progress);
-
-  useEffect(() => {
-    progressRef.current = { index: -1, ratio: 0 };
-    setProgress(progressRef.current);
-
-    // 非当前行只借用同一套排版，不跑逐字动画，颜色交给外层 lyric-line
-    if (!enabled) return;
-
-    const audio = document.querySelector("audio");
-    let raf = 0;
-    let last = 0;
-
-    const tick = (now: number) => {
-      raf = requestAnimationFrame(tick);
-      if (now - last < KARAOKE_FRAME_MS) return;
-      last = now;
-
-      const current =
-        audio?.currentTime ?? useMusicStore.getState().currentAudioTime;
-      const ms = (current - lineTime - lyricOffset) * 1000;
-
-      let index = -1;
-      let ratio = 0;
-      for (let i = 0; i < words.length; i++) {
-        const w = words[i];
-        if (ms >= w.end) {
-          index = i;
-          ratio = 1;
-          continue;
-        }
-        if (ms >= w.start) {
-          index = i;
-          ratio = (ms - w.start) / Math.max(1, w.end - w.start);
-        }
-        break;
-      }
-
-      const prev = progressRef.current;
-      if (prev.index !== index || Math.abs(prev.ratio - ratio) > 0.01) {
-        progressRef.current = { index, ratio };
-        setProgress(progressRef.current);
-      }
-    };
-
-    raf = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(raf);
-  }, [words, lineTime, lyricOffset, enabled]);
-
-  return (
-    <p
-      className="lyric-main font-medium leading-relaxed tracking-wide break-words"
-      style={{ fontSize: `${fontSize}px` }}
-    >
-      {words.map((w, i) => {
-        const done = i < progress.index;
-        const singing = enabled && i === progress.index;
-        // 唱完就保持 100%，覆盖层不消失，避免唱完瞬间白色「缩回」看着像抖
-        const pct = done ? 100 : singing ? Math.round(progress.ratio * 100) : 0;
-
-        return (
-          <span
-            key={`${w.start}-${i}`}
-            className="relative inline-block whitespace-pre"
-          >
-            {/* 底层：未唱淡色。非当前行不覆盖，继承整行的 future/past 色 */}
-            <span className={cn(enabled && "text-white/15")}>{w.text}</span>
-            {/* 顶层：宽度固定铺满，只用 clip-path 裁切缝。用 width 裁会让
-                带尾部空格的字在临界宽度反复重排，看着就是「抖一下」。 */}
-            {enabled && pct > 0 && (
-              <span
-                aria-hidden="true"
-                className="absolute inset-0 whitespace-pre text-white"
-                style={{ clipPath: `inset(0 ${100 - pct}% 0 0)` }}
-              >
-                {w.text}
-              </span>
-            )}
-          </span>
-        );
-      })}
-    </p>
-  );
-});
-
 const LyricLineView = memo(function LyricLineView({
   line,
   isActive,
@@ -207,7 +97,7 @@ const LyricLineView = memo(function LyricLineView({
   return (
     <div
       className={cn(
-        "lyric-line w-full max-w-3xl px-6 sm:px-8",
+        "lyric-line w-full min-w-0 max-w-3xl px-6 sm:px-8",
         "select-none",
         "transition-all duration-300 ease-out",
         "origin-center",
@@ -236,12 +126,13 @@ const LyricLineView = memo(function LyricLineView({
           words={line.words}
           lineTime={line.time}
           lyricOffset={lyricOffset}
-          fontSize={fontSize}
           enabled={isActive}
+          className="lyric-main font-medium leading-relaxed tracking-wide wrap-anywhere"
+          style={{ fontSize: `${fontSize}px` }}
         />
       ) : (
         <p
-          className="lyric-main font-medium leading-relaxed tracking-wide break-words"
+          className="lyric-main font-medium leading-relaxed tracking-wide wrap-anywhere"
           style={{ fontSize: `${fontSize}px` }}
         >
           {line.text}
@@ -897,6 +788,7 @@ export function LyricsPanel({
       <ScrollArea
         className={cn(
           "h-full w-full",
+          "[&_[data-slot=scroll-area-viewport]>div]:!block",
           "**:data-[slot=scroll-area-scrollbar]:w-1.5",
           "**:data-[slot=scroll-area-thumb]:bg-white/10",
           "**:data-[slot=scroll-area-thumb]:hover:bg-white/30"

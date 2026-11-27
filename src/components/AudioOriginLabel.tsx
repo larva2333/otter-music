@@ -8,9 +8,9 @@ import type { AudioOriginVia } from "@/store/music-store/playback-slice";
 
 /** 非「平台音源」场景的说明文案 */
 const NON_PLATFORM_LABELS: Partial<Record<AudioOriginVia, string>> = {
-  download: "本地下载",
-  offline: "离线缓存",
-  local: "本地文件",
+  download: "本地",
+  offline: "本地",
+  local: "本地",
   // 嗨歌曲兜底只换直链、曲目还是原平台，这里必须写死音源名，
   // 否则 getSourceLabel(origin.source) 会显示曲目原平台（qq 等）造成误导
   higequ: "嗨歌曲",

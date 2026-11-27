@@ -124,16 +124,30 @@ function parseEntryName(name: string): {
   return { kind: "auto", date: base.slice(AUTO_PREFIX.length) };
 }
 
-/** 从原始 music store JSON 里数一下规模，用于跳过空库备份 + 界面上给用户看 */
+/** 从原始 music store JSON 里数一下有效（未删除）规模，用于跳过空库备份 + 界面上给用户看 */
 function summarizeMusicStore(raw?: string): AutoBackupSummary {
   const empty = { favorites: 0, playlists: 0, queue: 0 };
   if (!raw) return empty;
   try {
     const parsed = JSON.parse(raw) as { state?: Record<string, unknown> };
     const state = parsed.state ?? {};
+    const countActive = (list: unknown): number => {
+      if (!Array.isArray(list)) return 0;
+      let count = 0;
+      for (const item of list) {
+        if (
+          !item ||
+          typeof item !== "object" ||
+          (item as { is_deleted?: boolean }).is_deleted !== true
+        ) {
+          count++;
+        }
+      }
+      return count;
+    };
     return {
-      favorites: Array.isArray(state.favorites) ? state.favorites.length : 0,
-      playlists: Array.isArray(state.playlists) ? state.playlists.length : 0,
+      favorites: countActive(state.favorites),
+      playlists: countActive(state.playlists),
       queue: Array.isArray(state.queue) ? state.queue.length : 0,
     };
   } catch {
@@ -382,7 +396,9 @@ export async function listAutoBackups(): Promise<AutoBackupEntry[]> {
           encoding: Encoding.UTF8,
         });
         if (typeof data === "string") {
-          summary = (JSON.parse(data) as AutoBackupEnvelope).summary;
+          const envelope = JSON.parse(data) as AutoBackupEnvelope;
+          const musicRaw = envelope.stores?.[storeKey.MusicStore];
+          summary = musicRaw ? summarizeMusicStore(musicRaw) : envelope.summary;
         }
       } catch {
         // 读不出来就只显示文件信息，不影响列表

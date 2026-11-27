@@ -126,15 +126,16 @@ describe("MusicStore", () => {
       expect(useMusicStore.getState().favorites).toHaveLength(1);
     });
 
-    it("should handle local tracks (not supported)", () => {
+    it("should allow adding local tracks to favorites", () => {
       const track = {
         ...createTrack("local1", "Local Song"),
         source: "local" as const,
       };
       const result = useMusicStore.getState().addToFavorites(track);
 
-      expect(result).toBe("本地音乐不支持喜欢");
-      expect(useMusicStore.getState().favorites).toHaveLength(0);
+      expect(result).toBeNull();
+      expect(useMusicStore.getState().favorites).toHaveLength(1);
+      expect(useMusicStore.getState().isFavorite("local1")).toBe(true);
     });
 
     it("should remove and restore favorites", () => {
@@ -167,7 +168,7 @@ describe("MusicStore", () => {
       );
     });
 
-    it("should skip local tracks", () => {
+    it("should allow adding local tracks in batch", () => {
       const tracks = [
         createTrack("1", "Song 1"),
         { ...createTrack("local1", "Local Song"), source: "local" as const },
@@ -175,8 +176,10 @@ describe("MusicStore", () => {
       useMusicStore.getState().addBatchToFavorites(tracks);
 
       const favorites = useMusicStore.getState().favorites;
-      expect(favorites).toHaveLength(1);
-      expect(favorites[0].id).toBe("1");
+      expect(favorites).toHaveLength(2);
+      expect(favorites.map((t) => t.id)).toEqual(
+        expect.arrayContaining(["1", "local1"])
+      );
     });
 
     it("should not add duplicates already in favorites", () => {
@@ -205,13 +208,14 @@ describe("MusicStore", () => {
       expect(useMusicStore.getState().isFavorite("1")).toBe(true);
     });
 
-    it("should do nothing if all tracks are local", () => {
+    it("should add batch when all tracks are local", () => {
       useMusicStore
         .getState()
         .addBatchToFavorites([
           { ...createTrack("l1", "L1"), source: "local" as const },
         ]);
-      expect(useMusicStore.getState().favorites).toHaveLength(0);
+      expect(useMusicStore.getState().favorites).toHaveLength(1);
+      expect(useMusicStore.getState().favorites[0].id).toBe("l1");
     });
 
     it("should preserve deleted favorites when replacing active favorites", () => {
@@ -246,20 +250,27 @@ describe("MusicStore", () => {
       expect(playlist?.tracks).toHaveLength(2);
     });
 
-    it("should skip local tracks", () => {
+    it("should allow adding local tracks individually and in batch", () => {
       const pid = useMusicStore.getState().createPlaylist("Test");
+      useMusicStore.getState().addToPlaylist(pid, {
+        ...createTrack("l0", "Local 0"),
+        source: "local" as const,
+      });
       useMusicStore
         .getState()
         .addBatchToPlaylist(pid, [
           createTrack("1", "Song 1"),
-          { ...createTrack("l1", "Local"), source: "local" as const },
+          { ...createTrack("l1", "Local 1"), source: "local" as const },
         ]);
 
       const playlist = useMusicStore
         .getState()
         .playlists.find((p) => p.id === pid);
-      expect(playlist?.tracks).toHaveLength(1);
-      expect(playlist?.tracks[0].id).toBe("1");
+      const ids = playlist?.tracks.map((t) => t.id) ?? [];
+      expect(ids).toContain("l0");
+      expect(ids).toContain("l1");
+      expect(ids).toContain("1");
+      expect(playlist?.tracks).toHaveLength(3);
     });
 
     it("should not create duplicates in playlist", () => {

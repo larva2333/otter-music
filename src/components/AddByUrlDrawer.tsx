@@ -139,7 +139,7 @@ export function AddByUrlDrawer({
             <div className="relative">
               <Music2 className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
               <Input
-                className="pl-9 h-11 bg-muted/40 border-none rounded-xl focus-visible:ring-1"
+                className="pl-9 h-11 bg-muted/40 border border-transparent rounded-xl focus-visible:border-foreground/35 focus-visible:bg-muted/60"
                 placeholder="歌曲标题"
                 value={formData.title}
                 onChange={(e) => updateField("title", e.target.value)}
@@ -149,7 +149,7 @@ export function AddByUrlDrawer({
             <div className="relative">
               <User className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
               <Input
-                className="pl-9 h-11 bg-muted/40 border-none rounded-xl focus-visible:ring-1"
+                className="pl-9 h-11 bg-muted/40 border border-transparent rounded-xl focus-visible:border-foreground/35 focus-visible:bg-muted/60"
                 placeholder="歌手 (可选)"
                 value={formData.artist}
                 onChange={(e) => updateField("artist", e.target.value)}
@@ -159,7 +159,7 @@ export function AddByUrlDrawer({
             <div className="relative">
               <Link className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
               <Input
-                className="pl-9 h-11 bg-muted/40 border-none rounded-xl focus-visible:ring-1 font-mono text-sm"
+                className="pl-9 h-11 bg-muted/40 border border-transparent rounded-xl focus-visible:border-foreground/35 focus-visible:bg-muted/60 font-mono text-sm"
                 type="text"
                 placeholder="音频 URL 或 标题 + URL"
                 value={formData.url}

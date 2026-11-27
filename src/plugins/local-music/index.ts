@@ -11,6 +11,11 @@ export interface LocalMusicFile {
   localPath: string;
   fileSize: number;
   modifiedTime?: number;
+  /** 在线匹配到的封面 URL（无内嵌封面时），随本地音乐列表持久化 */
+  matchedCoverUrl?: string;
+  /** 在线匹配到的歌词（无内嵌歌词时），随本地音乐列表持久化 */
+  matchedLyric?: string;
+  matchedTlyric?: string;
 }
 
 export interface ScanResult {

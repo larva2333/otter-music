@@ -383,7 +383,7 @@ export function PlaylistImportDrawer({
                 <div className="relative">
                   <Link2 className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
                   <Input
-                    className="pl-9 h-11 bg-muted/40 border-none rounded-xl focus-visible:ring-1 font-mono text-sm"
+                    className="pl-9 h-11 bg-muted/40 border border-transparent rounded-xl focus-visible:border-foreground/35 focus-visible:bg-muted/60 font-mono text-sm"
                     placeholder="输入歌单链接..."
                     value={url}
                     onChange={(e) => setUrl(e.target.value)}
@@ -474,7 +474,7 @@ export function PlaylistImportDrawer({
             <div className="flex-1 overflow-y-auto space-y-3 min-h-0">
               {/* JSON 输入区 */}
               <Textarea
-                className="min-h-32 max-h-48 bg-muted/40 border-none rounded-xl focus-visible:ring-1 font-mono text-sm resize-none overflow-y-auto"
+                className="min-h-32 max-h-48 bg-muted/40 border border-transparent rounded-xl focus-visible:border-foreground/35 focus-visible:bg-muted/60 font-mono text-sm resize-none overflow-y-auto"
                 placeholder={`{\n  "name": "歌单名称",\n  "tracks": [\n    { "name": "歌名", "artist": ["歌手"] }\n  ]\n}`}
                 value={textInput}
                 onChange={(e) => {

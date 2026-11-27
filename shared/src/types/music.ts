@@ -39,6 +39,8 @@ export const searchOptions: Record<string, string> = {
   qq: "QQ音乐",
   higequ: "Higequ",
   jamendo: "Jamendo",
+  local: "本地",
+  podcast: "播客",
 };
 
 export const sourceLabels: Record<string, string> = {
@@ -52,6 +54,8 @@ export const sourceLabels: Record<string, string> = {
   higequ: "Higequ",
   jamendo: "Jamendo",
   alist: "Alist",
+  local: "本地",
+  podcast: "播客",
 };
 
 export const aggregatedSourceOptions: {
@@ -183,6 +187,8 @@ export interface MusicTrack {
   artist_ids?: string[];
   album_id?: string;
   audioFormat?: AudioFormat;
+  /** 批量直接切源后的原音源：仅切换了 source 标签尚未查目标源 id，待实际播放时再解析 */
+  pendingSourceFrom?: MusicSource;
 }
 
 export interface Playlist {

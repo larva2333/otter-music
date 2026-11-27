@@ -12,8 +12,9 @@ import {
   DrawerDescription,
   DrawerTrigger,
 } from "@/components/ui/drawer";
-import { MusicCover } from "@/components/MusicCover";
+import { CachedImage } from "@/components/CachedImage";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { useVirtualizer } from "@tanstack/react-virtual";
 import { useMusicCover } from "@/hooks/useMusicCover";
 import { cn } from "@/lib/utils";
 import { useHistoryStore } from "@/store/history-store";
@@ -43,7 +44,6 @@ interface QueueTrackItemProps {
   isPlaying: boolean;
   onSelect: () => void;
   onRemove: () => void;
-  itemRef?: (el: HTMLDivElement | null) => void;
 }
 
 function QueueTrackItem({
@@ -52,9 +52,10 @@ function QueueTrackItem({
   isPlaying,
   onSelect,
   onRemove,
-  itemRef,
 }: QueueTrackItemProps) {
-  const coverUrl = useMusicCover(track);
+  // 与主列表 TrackCoverThumb 使用一致的小尺寸（120）与 CachedImage(size=80)，
+  // 共享缓存并复用离屏解码池，避免二次打开抽屉重新下载/解码 800px 大图。
+  const coverUrl = useMusicCover(track, true, 120);
 
   const handleRemove = async (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -73,7 +74,6 @@ function QueueTrackItem({
 
   return (
     <div
-      ref={itemRef}
       role="button"
       tabIndex={0}
       aria-label={`播放 ${t2s(track.name)}`}
@@ -89,13 +89,8 @@ function QueueTrackItem({
         onSelect();
       }}
     >
-      <div className="relative h-9 w-9 shrink-0 overflow-hidden rounded-lg">
-        <MusicCover
-          src={coverUrl}
-          alt=""
-          className="rounded-lg"
-          iconClassName="h-4 w-4 text-muted-foreground/40"
-        />
+      <div className="relative h-9 w-9 shrink-0 overflow-hidden rounded-lg bg-muted">
+        <CachedImage src={coverUrl} alt="" size={80} className="rounded-lg" />
 
         {/* 极致小巧的顺序波动动画 */}
         {isCurrent && isPlaying && (
@@ -157,31 +152,59 @@ export function PlayerQueueDrawer({
   }, [open, onOpenChange]);
   const [activeTab, setActiveTab] = useState<"queue" | "history">("queue");
   const { history, removeFromHistory, clearHistory } = useHistoryStore();
-  const scrollRef = useRef<HTMLDivElement>(null);
   const viewportRef = useRef<HTMLDivElement>(null);
   const hasScrolledOnOpen = useRef(false);
+  // Drawer 内容在展开动画里才挂载；等视口就绪再交给 virtualizer 监听滚动，
+  // 否则它拿不到 scrollElement，定位后行窗口不会跟着更新。
+  const [viewportReady, setViewportReady] = useState(false);
+  const listItems = activeTab === "queue" ? queue : history;
+  const ROW_HEIGHT = 50;
+  // 两个 tab 都能定位到「当前播放」：队列按序号，历史按 id 找同一首歌
+  const currentTrackId = queue[currentIndex]?.id;
+  const targetIndex =
+    activeTab === "queue"
+      ? currentIndex
+      : history.findIndex((track) => track.id === currentTrackId);
+
+  // 队列动辄几百首：整列表挂载会让每行各自请求封面，抽屉打开明显卡。
+  // 复用 MusicTrackList 的虚拟滚动，只渲染视口附近十几行。
+  const virtualizer = useVirtualizer({
+    count: listItems.length,
+    getScrollElement: () => (viewportReady ? viewportRef.current : null),
+    estimateSize: () => ROW_HEIGHT,
+    overscan: 6,
+    initialRect: { width: 0, height: 600 },
+  });
 
   useEffect(() => {
     hasScrolledOnOpen.current = false;
+    if (!open) setViewportReady(false);
   }, [open]);
 
   useEffect(() => {
-    if (!open || hasScrolledOnOpen.current) return;
+    if (!open || targetIndex < 0 || hasScrolledOnOpen.current) return;
     hasScrolledOnOpen.current = true;
 
-    const id = requestAnimationFrame(() => {
-      scrollRef.current?.scrollIntoView({
-        block: "center",
-        behavior: "instant",
-      });
-    });
+    // 抽屉内容（滚动视口）在展开动画里才挂载。virtualizer.scrollToIndex
+    // 在 scrollElement 尚未注册时会静默失效，直接设 viewport 的 scrollTop 最稳。
+    const timer = window.setTimeout(() => {
+      if (viewportRef.current) setViewportReady(true);
+    }, 400);
 
-    return () => cancelAnimationFrame(id);
-  }, [open, currentIndex]);
+    return () => window.clearTimeout(timer);
+  }, [open, targetIndex]);
 
-  const setCurrentRef = (el: HTMLDivElement | null) => {
-    if (el) scrollRef.current = el;
-  };
+  // 视口注册到 virtualizer 之后，由它自己滚动并同步行窗口；
+  // 直接改 scrollTop 会被 virtualizer 的初始 offset 覆盖成空白。
+  useEffect(() => {
+    if (!viewportReady || targetIndex < 0) return;
+    const timers = [50, 300].map((delay) =>
+      window.setTimeout(() => {
+        virtualizer.scrollToIndex(targetIndex, { align: "center" });
+      }, delay)
+    );
+    return () => timers.forEach((t) => window.clearTimeout(t));
+  }, [viewportReady, targetIndex, virtualizer]);
 
   const handleTabChange = (tab: "queue" | "history") => {
     setActiveTab(tab);
@@ -190,10 +213,12 @@ export function PlayerQueueDrawer({
 
   /** 滚回当前播放的歌曲（用户在长列表里翻走后一键归位） */
   const scrollToCurrent = () => {
-    scrollRef.current?.scrollIntoView({
-      block: "center",
-      behavior: "smooth",
-    });
+    if (targetIndex >= 0) {
+      virtualizer.scrollToIndex(targetIndex, {
+        align: "center",
+        behavior: "smooth",
+      });
+    }
   };
 
   return (
@@ -257,7 +282,7 @@ export function PlayerQueueDrawer({
                   <Dices className="h-4 w-4" />
                 </Button>
               )}
-              {activeTab === "queue" && currentIndex >= 0 && (
+              {targetIndex >= 0 && (
                 <Button
                   variant="ghost"
                   size="icon"
@@ -275,7 +300,11 @@ export function PlayerQueueDrawer({
                 onClick={() => {
                   setOpen(false);
                   useMusicStore.getState().setIsFullScreenPlayer(false);
-                  navigate(activeTab === "queue" ? "/queue" : "/history");
+                  navigate(
+                    activeTab === "queue"
+                      ? "/mine?type=queue"
+                      : "/mine?type=history"
+                  );
                 }}
                 title={activeTab === "queue" ? "展开播放列表" : "展开历史记录"}
               >
@@ -322,38 +351,48 @@ export function PlayerQueueDrawer({
         <div className="min-h-0 flex-1 px-3 pb-[calc(0.75rem+var(--safe-area-bottom))]">
           <div className="h-full border-y border-border">
             <ScrollArea className="h-full" viewportRef={viewportRef}>
-              <div className="px-1 pt-1 pb-2 flex flex-col gap-0.5">
-                {activeTab === "queue"
-                  ? queue.map((track, i) => (
+              <div
+                className="relative w-full"
+                style={{ height: virtualizer.getTotalSize() }}
+              >
+                {virtualizer.getVirtualItems().map((item) => {
+                  const i = item.index;
+                  const track = listItems[i];
+                  const isQueue = activeTab === "queue";
+                  const isCurrentTrack = isQueue
+                    ? i === currentIndex
+                    : track.id === queue[currentIndex]?.id;
+
+                  return (
+                    <div
+                      key={item.key}
+                      data-index={i}
+                      ref={virtualizer.measureElement}
+                      className="absolute left-0 top-0 w-full px-1 pb-0.5"
+                      style={{ transform: `translateY(${item.start}px)` }}
+                    >
                       <QueueTrackItem
-                        key={`${track.id}-${i}`}
                         track={track}
-                        isCurrent={i === currentIndex}
-                        isPlaying={isPlaying}
+                        isCurrent={isCurrentTrack}
+                        isPlaying={isCurrentTrack && isPlaying}
                         onSelect={() => {
-                          onPlay(i);
+                          if (isQueue) {
+                            onPlay(i);
+                          } else {
+                            // 历史歌曲先加入队列再播放
+                            onPlayTrack?.(track);
+                          }
                           setOpen(false);
                         }}
-                        onRemove={() => onRemove(track)}
-                        itemRef={i === currentIndex ? setCurrentRef : undefined}
-                      />
-                    ))
-                  : history.map((track, i) => (
-                      <QueueTrackItem
-                        key={`${track.id}-${i}`}
-                        track={track}
-                        isCurrent={track.id === queue[currentIndex]?.id}
-                        isPlaying={
-                          isPlaying && track.id === queue[currentIndex]?.id
+                        onRemove={() =>
+                          isQueue
+                            ? onRemove(track)
+                            : removeFromHistory(track.id)
                         }
-                        onSelect={() => {
-                          // 将历史歌曲加入队列并播放
-                          onPlayTrack?.(track);
-                          setOpen(false);
-                        }}
-                        onRemove={() => removeFromHistory(track.id)}
                       />
-                    ))}
+                    </div>
+                  );
+                })}
               </div>
             </ScrollArea>
           </div>

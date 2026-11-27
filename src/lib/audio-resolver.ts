@@ -20,6 +20,7 @@ import {
   getSongDetail as getNeteaseSongDetail,
   convertSongToMusicTrack,
 } from "@/lib/netease/netease-api";
+import { resolvePendingSourceMatch } from "@/lib/audio-match";
 import { useMusicStore } from "@/store/music-store";
 import type { AudioOrigin } from "@/store/music-store/playback-slice";
 import type { MusicSource, MusicTrack } from "@/types/music";
@@ -160,14 +161,25 @@ async function resolveTrackUrlInner(
   fromLx?: boolean;
   origin?: AudioOrigin;
 }> {
-  const { id: trackId, source, url_id: urlId } = track;
-  const trackKey = buildUrlCacheKey(source, trackId, urlId, String(quality));
   const forceRefresh = options?.forceRefresh ?? false;
 
   // 冷启动时 IndexedDB 里的 URL 缓存是异步恢复的。不等它读完就查，
   // 会和「没有缓存」一样重新取一遍链 —— 这正是「上一首切回来又查一次」的成因之一。
   // 最多等 1.5 秒，真读不出来照常走网络解析。
   await whenUrlCacheReady();
+
+  // 批量直接切换过音源标签的曲目，到实际播放/预加载时才向目标音源搜索同曲拿真实 id 与元数据
+  let workingTrack = track;
+  if (workingTrack.pendingSourceFrom) {
+    const matched = await resolvePendingSourceMatch(workingTrack);
+    if (!matched) {
+      throw new Error("PENDING_SOURCE_NOT_FOUND");
+    }
+    workingTrack = matched;
+  }
+
+  const { id: trackId, source, url_id: urlId } = workingTrack;
+  const trackKey = buildUrlCacheKey(source, trackId, urlId, String(quality));
 
   // Native 本地下载资源
   if (IS_NATIVE && source !== "local") {
@@ -184,7 +196,7 @@ async function resolveTrackUrlInner(
   const cacheStore = useUrlCacheStore.getState();
 
   // 手动指定了某个洛雪源：直接用它的直链，优先级高于缓存（用户是显式选的）
-  const override = getLxUrlOverride(track);
+  const override = getLxUrlOverride(workingTrack);
   if (override) {
     const lxName = getSourceLabel(override.sourceId);
     cacheStore.set(trackKey, override.url, { via: "lx", lxName });
@@ -197,9 +209,8 @@ async function resolveTrackUrlInner(
 
   // 老数据补齐 VIP 标记：补齐后之前缓存的「官方 30 秒试听直链」必须作废，
   // 否则下面虽然判定为会员曲，却还是会把试听片段当成正式直链播出去
-  let workingTrack = track;
-  const filledTrack = await fillMissingNeteasePrivilege(track);
-  if (filledTrack !== track) {
+  const filledTrack = await fillMissingNeteasePrivilege(workingTrack);
+  if (filledTrack !== workingTrack) {
     workingTrack = filledTrack;
     cacheStore.delete(trackKey);
   }

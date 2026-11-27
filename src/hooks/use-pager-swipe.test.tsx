@@ -417,5 +417,103 @@ describe("usePagerSwipe 歌单页横向分页", () => {
       expect(track?.style.transition).toBe("none");
       expect(track?.style.transform).toContain("-1200px");
     });
+
+    it("悬浮播放条上下保护带内侧滑不触发页面切换，正文中可正常侧滑", () => {
+      const onChange = vi.fn();
+      const { viewport } = mount(0, onChange);
+
+      const bar = document.createElement("div");
+      bar.setAttribute("data-now-playing-bar", "");
+      vi.spyOn(bar, "getBoundingClientRect").mockReturnValue({
+        left: 12,
+        right: 388,
+        top: 680,
+        bottom: 730,
+        width: 376,
+        height: 50,
+        x: 12,
+        y: 680,
+        toJSON: () => ({}),
+      });
+      document.body.appendChild(bar);
+
+      try {
+        // 播放条上方紧邻区（680 - 15 = 665）侧滑：忽略
+        gesture(viewport, [300, 665], [160, 665]);
+        // 播放条下方紧邻区（730 + 15 = 745）侧滑：忽略
+        gesture(viewport, [300, 745], [160, 745]);
+        act(() => vi.advanceTimersByTime(300));
+        expect(onChange).not.toHaveBeenCalled();
+
+        // 正文区（clientY = 300）侧滑：正常切页
+        gesture(viewport, [300, 300], [160, 300]);
+        act(() => vi.advanceTimersByTime(300));
+        expect(onChange).toHaveBeenCalledWith(1);
+      } finally {
+        bar.remove();
+      }
+    });
+
+    it("enabled 从 false 变为 true 且视口延后挂载时，仍可正常绑定横向滑动切换", () => {
+      const onChange = vi.fn();
+      function DelayedHarness({ open }: { open: boolean }) {
+        const viewportRef = useRef<HTMLDivElement>(null);
+        const trackRef = useRef<HTMLDivElement>(null);
+        usePagerSwipe(
+          { viewportRef, trackRef },
+          { count: 2, index: 0, onChange, enabled: open }
+        );
+        if (!open) return null;
+        return (
+          <div data-slot="drawer-content">
+            <div ref={viewportRef} data-testid="delayed-viewport">
+              <div ref={trackRef} data-testid="delayed-track">
+                <div>热门评论</div>
+                <div>最新评论</div>
+              </div>
+            </div>
+          </div>
+        );
+      }
+
+      container = document.createElement("div");
+      document.body.appendChild(container);
+      root = createRoot(container);
+
+      act(() => root!.render(<DelayedHarness open={false} />));
+      act(() => root!.render(<DelayedHarness open={true} />));
+
+      const viewport = container.querySelector(
+        '[data-testid="delayed-viewport"]'
+      ) as HTMLElement;
+      Object.defineProperty(viewport, "clientWidth", {
+        configurable: true,
+        value: WIDTH,
+      });
+
+      const bar = document.createElement("div");
+      bar.setAttribute("data-now-playing-bar", "");
+      vi.spyOn(bar, "getBoundingClientRect").mockReturnValue({
+        left: 12,
+        right: 388,
+        top: 680,
+        bottom: 730,
+        width: 376,
+        height: 50,
+        x: 12,
+        y: 680,
+        toJSON: () => ({}),
+      });
+      document.body.appendChild(bar);
+
+      try {
+        // 抽屉内的横向滑动即使落在播放条 Y 区间内也应正常切换
+        gesture(viewport, [300, 700], [150, 700]);
+        act(() => vi.advanceTimersByTime(300));
+        expect(onChange).toHaveBeenCalledWith(1);
+      } finally {
+        bar.remove();
+      }
+    });
   });
 });

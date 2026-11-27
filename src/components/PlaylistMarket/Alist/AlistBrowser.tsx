@@ -568,9 +568,12 @@ export function AlistBrowser({
       {/* 搜索栏 + 排序按钮 */}
       <div className="flex items-center gap-2 px-4 py-2 border-b border-border/30 bg-background/50">
         <div className="relative flex-1">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground/50 pointer-events-none" />
+          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground pointer-events-none" />
           <Input
-            className="pl-9 pr-8 h-9 bg-background/60"
+            className={cn(
+              "h-9 w-full rounded-full pl-9 text-sm",
+              searchInput && "pr-9"
+            )}
             placeholder="回车搜索当前目录"
             value={searchInput}
             onChange={(e) => {
@@ -581,10 +584,12 @@ export function AlistBrowser({
           />
           {searchInput && (
             <button
+              type="button"
               onClick={clearSearch}
-              className="absolute right-2.5 top-1/2 -translate-y-1/2 p-0.5 rounded-full text-muted-foreground/50 hover:text-foreground transition-colors"
+              aria-label="清除搜索"
+              className="absolute right-2.5 top-1/2 flex h-5 w-5 -translate-y-1/2 items-center justify-center rounded-full bg-muted-foreground/20 text-muted-foreground transition-colors hover:bg-muted-foreground/30 hover:text-foreground"
             >
-              <X className="w-4 h-4" />
+              <X className="h-3 w-3" />
             </button>
           )}
         </div>

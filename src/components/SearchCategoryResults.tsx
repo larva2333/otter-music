@@ -1,6 +1,7 @@
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useRef,
   useState,
   type RefObject,
@@ -9,6 +10,10 @@ import { Loader2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAutoLoadMore } from "@/hooks/use-auto-load-more";
 import { usePagerSwipe } from "@/hooks/use-pager-swipe";
+import {
+  saveScrollPositions,
+  restoreScrollPositions,
+} from "@/lib/scroll-snapshot";
 import {
   EMPTY_SEARCH_CATEGORIES,
   SEARCH_RESULT_TABS,
@@ -37,6 +42,9 @@ interface SearchCategoryResultsProps {
   categoryLoading?: boolean;
   onLoadMoreCategories?: () => void;
 }
+
+const INDICATOR_SETTLE_MS = 280;
+const INDICATOR_EASING = "cubic-bezier(0.32, 0.72, 0, 1)";
 
 const EMPTY_LABEL: Record<SearchResultTab, string> = {
   artist: "暂无歌手",
@@ -82,51 +90,115 @@ export function SearchCategoryResults({
 }: SearchCategoryResultsProps) {
   const viewportRef = useRef<HTMLDivElement>(null);
   const trackRef = useRef<HTMLDivElement>(null);
+  const indicatorRef = useRef<HTMLDivElement>(null);
+  const indicatorSettlingUntilRef = useRef(0);
+  const settledIndexRef = useRef<number | null>(null);
+  const firstIndicatorRef = useRef(true);
+  const songScrollRef = useRef<HTMLDivElement>(null);
   const paneRefs = useRef<
     Partial<Record<SearchResultTab, HTMLDivElement | null>>
   >({});
 
-  // 手势拖动时临时挂载相邻页以露出真实内容，静止时仅保留当前激活 Tab
-  const [revealedTabs, setRevealedTabs] = useState<Set<SearchResultTab>>(
-    () => new Set()
+  // 已访问过的 Tab 保持挂载（不卸载），避免来回切换时反复重建/闪骨架屏
+  const [visitedTabs, setVisitedTabs] = useState<Set<SearchResultTab>>(
+    () => new Set([tab])
   );
-  const clearTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  const scheduleCleanup = useCallback(() => {
-    if (clearTimerRef.current !== null) clearTimeout(clearTimerRef.current);
-    clearTimerRef.current = setTimeout(() => {
-      clearTimerRef.current = null;
-      setRevealedTabs((prev) => (prev.size === 0 ? prev : new Set()));
-    }, 360);
-  }, []);
-
-  useEffect(
-    () => () => {
-      if (clearTimerRef.current !== null) clearTimeout(clearTimerRef.current);
-    },
-    []
-  );
-
-  const handleNeighborIntent = useCallback(
-    (index: number) => {
-      const target = SEARCH_RESULT_TABS[index]?.id;
-      if (!target) return;
-      if (clearTimerRef.current !== null) {
-        clearTimeout(clearTimerRef.current);
-        clearTimerRef.current = null;
-      }
-      setRevealedTabs((prev) =>
-        prev.has(target) ? prev : new Set(prev).add(target)
-      );
-      scheduleCleanup();
-    },
-    [scheduleCleanup]
-  );
+  if (!visitedTabs.has(tab)) {
+    setVisitedTabs((prev) => new Set(prev).add(tab));
+  }
 
   const activeIndex = Math.max(
     0,
     SEARCH_RESULT_TABS.findIndex((t) => t.id === tab)
   );
+
+  // 空闲时预挂载左右直接相邻的 Tab，滑动瞬间 0 挂载卡顿
+  useEffect(() => {
+    const neighbors = [
+      SEARCH_RESULT_TABS[activeIndex - 1]?.id,
+      SEARCH_RESULT_TABS[activeIndex + 1]?.id,
+    ].filter((id): id is SearchResultTab => Boolean(id));
+    if (neighbors.every((id) => visitedTabs.has(id))) return;
+
+    const timer = window.setTimeout(() => {
+      setVisitedTabs((prev) => {
+        if (neighbors.every((id) => prev.has(id))) return prev;
+        const next = new Set(prev);
+        neighbors.forEach((id) => next.add(id));
+        return next;
+      });
+    }, 180);
+    return () => window.clearTimeout(timer);
+  }, [activeIndex, visitedTabs]);
+
+  const handleNeighborIntent = useCallback((index: number) => {
+    const target = SEARCH_RESULT_TABS[index]?.id;
+    if (!target) return;
+    setVisitedTabs((prev) =>
+      prev.has(target) ? prev : new Set(prev).add(target)
+    );
+  }, []);
+
+  const applyIndicator = useCallback((posIndex: number, animate: boolean) => {
+    const node = indicatorRef.current;
+    if (!node) return;
+    indicatorSettlingUntilRef.current = animate
+      ? Date.now() + INDICATOR_SETTLE_MS
+      : 0;
+    settledIndexRef.current = posIndex;
+    node.style.transition = animate
+      ? `transform ${INDICATOR_SETTLE_MS}ms ${INDICATOR_EASING}`
+      : "none";
+    node.style.transform = `translate3d(${posIndex * 100}%, 0, 0)`;
+  }, []);
+
+  const handleTrackDrag = useCallback((index: number, ratio: number) => {
+    const node = indicatorRef.current;
+    if (!node) return;
+    indicatorSettlingUntilRef.current = 0;
+    settledIndexRef.current = null;
+    node.style.transition = "none";
+    node.style.transform = `translate3d(${(index + ratio) * 100}%, 0, 0)`;
+  }, []);
+
+  const handleTrackSettle = useCallback(
+    (targetIndex: number, animate: boolean) => {
+      applyIndicator(targetIndex, animate);
+    },
+    [applyIndicator]
+  );
+
+  // 点击顶部 Tab 切换时同步滑行下划线；若松手滑行已到位则不重复触发过渡
+  useLayoutEffect(() => {
+    if (firstIndicatorRef.current) {
+      firstIndicatorRef.current = false;
+      applyIndicator(activeIndex, false);
+      return;
+    }
+    if (
+      settledIndexRef.current === activeIndex &&
+      Date.now() <= indicatorSettlingUntilRef.current + 50
+    ) {
+      return;
+    }
+    applyIndicator(activeIndex, true);
+  }, [activeIndex, applyIndicator]);
+
+  // 非邻近面板用 hidden 移出绘制树，切出前保存 scrollTop、切近时同步还原
+  const prevIndexRef = useRef(activeIndex);
+  useLayoutEffect(() => {
+    const prevIdx = prevIndexRef.current;
+    prevIndexRef.current = activeIndex;
+    if (prevIdx === activeIndex) return;
+    SEARCH_RESULT_TABS.forEach((item, idx) => {
+      const el = paneRefs.current[item.id];
+      if (!el) return;
+      const wasNear = Math.abs(idx - prevIdx) <= 1;
+      const isNear = Math.abs(idx - activeIndex) <= 1;
+      if (wasNear && !isNear) saveScrollPositions(el);
+      else if (!wasNear && isNear) restoreScrollPositions(el);
+    });
+  }, [activeIndex]);
 
   usePagerSwipe(
     { viewportRef, trackRef },
@@ -135,12 +207,11 @@ export function SearchCategoryResults({
       index: activeIndex,
       onChange: (idx) => {
         const next = SEARCH_RESULT_TABS[idx]?.id;
-        if (next) {
-          onTabChange(next);
-          scheduleCleanup();
-        }
+        if (next) onTabChange(next);
       },
       onNeighborIntent: handleNeighborIntent,
+      onTrackDrag: handleTrackDrag,
+      onTrackSettle: handleTrackSettle,
     }
   );
 
@@ -168,15 +239,20 @@ export function SearchCategoryResults({
     contentKey: categoryCount,
   });
 
-  // 搜索结果重新加载完成/重置时回到顶部
+  // 仅在新搜索结果到来/重置时将各面板滚回顶部，切换 Tab 保留各自滚动位置
   useEffect(() => {
-    const el = paneRefs.current[tab];
-    if (el) el.scrollTop = 0;
-  }, [tab, categories]);
+    SEARCH_RESULT_TABS.forEach((item) => {
+      const el = paneRefs.current[item.id];
+      if (el) el.scrollTop = 0;
+    });
+  }, [categories]);
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <div className="flex shrink-0 border-b border-border/40" role="tablist">
+      <div
+        className="relative flex shrink-0 border-b border-border/40"
+        role="tablist"
+      >
         {SEARCH_RESULT_TABS.map((item) => {
           const active = item.id === tab;
           return (
@@ -187,16 +263,20 @@ export function SearchCategoryResults({
               aria-selected={active}
               onClick={() => onTabChange(item.id)}
               className={cn(
-                "flex-1 border-b-2 py-2.5 text-sm transition-colors",
-                active
-                  ? "border-foreground font-medium text-foreground"
-                  : "border-transparent text-muted-foreground"
+                "flex-1 py-2.5 text-sm transition-colors",
+                active ? "font-medium text-foreground" : "text-muted-foreground"
               )}
             >
               {item.label}
             </button>
           );
         })}
+        <div
+          ref={indicatorRef}
+          aria-hidden
+          className="pointer-events-none absolute bottom-0 left-0 h-0.5 bg-foreground will-change-transform"
+          style={{ width: `${100 / SEARCH_RESULT_TABS.length}%` }}
+        />
       </div>
 
       <div
@@ -209,50 +289,56 @@ export function SearchCategoryResults({
           data-search-track
           className="flex h-full will-change-transform"
         >
-          {SEARCH_RESULT_TABS.map((item) => {
+          {SEARCH_RESULT_TABS.map((item, idx) => {
             const active = item.id === tab;
-            const shouldMount = active || revealedTabs.has(item.id);
+            const shouldMount = visitedTabs.has(item.id);
+            const isFar = Math.abs(idx - activeIndex) > 1;
 
             return (
-              <div
-                key={item.id}
-                ref={(node) => {
-                  paneRefs.current[item.id] = node;
-                  if (active) scrollContainerRef.current = node;
-                }}
-                data-page-scroll={active ? "" : undefined}
-                data-page-active={active ? "true" : "false"}
-                aria-hidden={!active || undefined}
-                className="h-full w-full shrink-0 overflow-y-auto"
-              >
-                {!shouldMount ? (
-                  <SearchPaneSkeleton />
-                ) : item.id === "song" ? (
-                  <MusicTrackList
-                    tracks={tracks}
-                    scrollContainerRef={scrollContainerRef}
-                    onPlay={onPlay}
-                    currentTrackId={currentTrackId}
-                    isPlaying={isPlaying}
-                    loading={loading}
-                    hasMore={hasMore}
-                    autoLoadMore
-                    onLoadMore={onLoadMore}
-                    emptyMessage={loading ? "搜索中..." : EMPTY_LABEL.song}
-                    showSourceBadge
-                  />
-                ) : (
-                  <CategoryPanel
-                    tab={item.id}
-                    categories={groups}
-                    loading={loading && categories === null}
-                    loadingMore={active ? categoryLoading : false}
-                    hasMore={active ? categoryHasMore : false}
-                    onOpenArtist={onOpenArtist}
-                    onOpenAlbum={onOpenAlbum}
-                    onOpenPlaylist={onOpenPlaylist}
-                  />
-                )}
+              <div key={item.id} className="h-full w-full shrink-0">
+                <div
+                  ref={(node) => {
+                    paneRefs.current[item.id] = node;
+                    if (item.id === "song") songScrollRef.current = node;
+                    if (active) scrollContainerRef.current = node;
+                  }}
+                  data-page-scroll={active ? "" : undefined}
+                  data-page-active={active ? "true" : "false"}
+                  aria-hidden={!active || undefined}
+                  className={cn(
+                    "h-full w-full overflow-y-auto [contain:layout_style_paint]",
+                    isFar && "hidden"
+                  )}
+                >
+                  {!shouldMount ? (
+                    <SearchPaneSkeleton />
+                  ) : item.id === "song" ? (
+                    <MusicTrackList
+                      tracks={tracks}
+                      scrollContainerRef={songScrollRef}
+                      onPlay={onPlay}
+                      currentTrackId={currentTrackId}
+                      isPlaying={isPlaying}
+                      loading={loading}
+                      hasMore={hasMore}
+                      autoLoadMore
+                      onLoadMore={onLoadMore}
+                      emptyMessage={loading ? "搜索中..." : EMPTY_LABEL.song}
+                      showSourceBadge
+                    />
+                  ) : (
+                    <CategoryPanel
+                      tab={item.id}
+                      categories={groups}
+                      loading={loading && categories === null}
+                      loadingMore={active ? categoryLoading : false}
+                      hasMore={active ? categoryHasMore : false}
+                      onOpenArtist={onOpenArtist}
+                      onOpenAlbum={onOpenAlbum}
+                      onOpenPlaylist={onOpenPlaylist}
+                    />
+                  )}
+                </div>
               </div>
             );
           })}

@@ -69,10 +69,12 @@ function TrackCoverThumb({
   track,
   isCurrent,
   isPlaying,
+  size = "md",
 }: {
   track: MusicTrack | MergedMusicTrack;
   isCurrent?: boolean;
   isPlaying?: boolean;
+  size?: "sm" | "md";
 }) {
   const [src, setSrc] = useState<string | null>(() =>
     track.pic_id?.startsWith("http") ? track.pic_id : null
@@ -98,7 +100,12 @@ function TrackCoverThumb({
   }, [picId, source]);
 
   return (
-    <div className="relative h-10 w-10 shrink-0 overflow-hidden rounded-md bg-muted">
+    <div
+      className={cn(
+        "relative shrink-0 overflow-hidden rounded-md bg-muted",
+        size === "sm" ? "h-9 w-9" : "h-10 w-10"
+      )}
+    >
       <CachedImage src={src} alt={track.name} size={80} />
       {isCurrent && (
         <div className="absolute inset-0 flex items-center justify-center bg-black/40">
@@ -133,6 +140,8 @@ interface MusicTrackItemProps {
   showSourceBadge?: boolean;
   /** 行首显示封面（代替序号）。推荐流这类「无表头」列表用 */
   showCover?: boolean;
+  /** 第二列信息左侧显示小封面（保留第一列序号），对齐「我的歌单」列表样式 */
+  showInlineCover?: boolean;
   className?: string;
   style?: React.CSSProperties;
   dragHandleProps?: React.HTMLAttributes<HTMLDivElement>;
@@ -157,6 +166,7 @@ export function MusicTrackItem({
   quality = "192",
   showSourceBadge = true,
   showCover,
+  showInlineCover,
   className,
   style,
   dragHandleProps,
@@ -308,50 +318,71 @@ export function MusicTrackItem({
           )}
         </div>
 
-        <div className="min-w-0 flex flex-col gap-0.5">
+        <div
+          className={cn(
+            "min-w-0",
+            showInlineCover
+              ? "flex items-center gap-2.5"
+              : "flex flex-col gap-0.5"
+          )}
+        >
+          {showInlineCover && (
+            <TrackCoverThumb
+              key={`${track.source}:${track.id}:${track.pic_id ?? ""}`}
+              track={track}
+              size="sm"
+            />
+          )}
           <div
             className={cn(
-              "font-medium flex items-center gap-1.5",
-              isCurrent && "text-primary"
+              "min-w-0 flex flex-col gap-0.5",
+              showInlineCover && "flex-1"
             )}
           >
-            <span className="truncate" title={t2s(track.name)}>
-              {t2s(track.name)}
-            </span>
+            <div
+              className={cn(
+                "font-medium flex items-center gap-1.5",
+                isCurrent && "text-primary"
+              )}
+            >
+              <span className="truncate" title={t2s(track.name)}>
+                {t2s(track.name)}
+              </span>
 
-            {showSourceBadge && (
-              <Badge
-                variant="outline"
-                className={cn(
-                  "shrink-0 text-2xs px-1 py-0 h-3.5 leading-none font-normal",
-                  sourceBadgeStyles[track.source] || sourceBadgeStyles.default
-                )}
-              >
-                <TrackSourceLabel track={track} />
-              </Badge>
-            )}
+              {showSourceBadge && (
+                <Badge
+                  variant="outline"
+                  className={cn(
+                    "shrink-0 text-2xs px-1 py-0 h-3.5 leading-none font-normal",
+                    sourceBadgeStyles[track.source] || sourceBadgeStyles.default
+                  )}
+                >
+                  <TrackSourceLabel track={track} />
+                </Badge>
+              )}
 
-            {badge && (
-              <Badge
-                variant="secondary"
-                className={cn(
-                  "h-3.5 px-1 text-2xs gap-0.5 flex items-center leading-none font-bold border",
-                  badge.className
-                )}
-              >
-                <badge.icon className="h-2.5 w-2.5" />
-                {badge.label}
-              </Badge>
-            )}
+              {badge && (
+                <Badge
+                  variant="secondary"
+                  className={cn(
+                    "h-3.5 px-1 text-2xs gap-0.5 flex items-center leading-none font-bold border",
+                    badge.className
+                  )}
+                >
+                  <badge.icon className="h-2.5 w-2.5" />
+                  {badge.label}
+                </Badge>
+              )}
 
-            {isDownloadedFinal && (
-              <DatabaseZap className="h-3.5 w-3.5 text-muted-foreground/60" />
-            )}
-            <MusicTrackVariants variants={variants} />
-          </div>
-          <div className="text-xs text-muted-foreground truncate opacity-70">
-            {t2sArtists(track.artist).join(" / ")}
-            {track.album && ` • ${t2s(track.album)}`}
+              {isDownloadedFinal && (
+                <DatabaseZap className="h-3.5 w-3.5 text-muted-foreground/60" />
+              )}
+              <MusicTrackVariants variants={variants} />
+            </div>
+            <div className="text-xs text-muted-foreground truncate opacity-70">
+              {t2sArtists(track.artist).join(" / ")}
+              {track.album && ` • ${t2s(track.album)}`}
+            </div>
           </div>
         </div>
       </div>

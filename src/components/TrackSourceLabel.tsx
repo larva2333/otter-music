@@ -11,9 +11,9 @@ import type { MusicTrack } from "@/types/music";
 
 /** 非「平台音源」场景的说明文案 */
 const NON_PLATFORM_LABELS: Partial<Record<AudioOriginVia, string>> = {
-  download: "本地下载",
-  offline: "离线缓存",
-  local: "本地文件",
+  download: "本地",
+  offline: "本地",
+  local: "本地",
 };
 
 export interface TrackSourceLabelProps {
